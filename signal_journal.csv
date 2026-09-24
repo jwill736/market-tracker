@@ -1,0 +1,16 @@
+date,symbol,asset_class,price,score,label,coverage,trend,momentum,smart_money,insider,news
+2026-09-24,AAPL,stock,335.92,78.0,Strong bullish,0.65,100.0,72.0,,,51.4
+2026-09-24,AMZN,stock,249.38,49.4,Strong bullish,0.65,50.0,49.4,,,48.5
+2026-09-24,BRK-B,stock,505.18,30.2,Bullish,0.65,50.0,14.5,,,23.3
+2026-09-24,BTC-USD,crypto,84404.71,40.5,Strong bullish,0.65,100.0,-30.6,,,60.0
+2026-09-24,ETH-USD,crypto,2689.49,47.4,Strong bullish,0.65,100.0,-36.7,,,100.0
+2026-09-24,GOOGL,stock,342.36,50.4,Strong bullish,0.65,50.0,83.7,,,-4.4
+2026-09-24,JPM,stock,338.56,57.9,Strong bullish,0.65,50.0,62.0,,,64.1
+2026-09-24,META,stock,777.59,7.0,Neutral,0.65,50.0,-73.0,,,68.9
+2026-09-24,MSFT,stock,497.93,48.5,Strong bullish,0.65,100.0,-8.2,,,57.3
+2026-09-24,NVDA,stock,224.58,72.6,Strong bullish,0.65,100.0,47.8,,,68.3
+2026-09-24,QQQ,stock,741.1,62.1,Strong bullish,0.65,100.0,74.8,,,-22.2
+2026-09-24,SOL-USD,crypto,117.1,46.5,Strong bullish,0.65,100.0,-39.1,,,100.0
+2026-09-24,SPY,stock,767.18,75.3,Strong bullish,0.65,100.0,85.4,,,17.5
+2026-09-24,TSLA,stock,377.94,-25.3,Bearish,0.65,-50.0,-36.4,,,34.4
+2026-09-24,XOM,stock,162.14,98.4,Strong bullish,0.65,100.0,96.0,,,100.0
