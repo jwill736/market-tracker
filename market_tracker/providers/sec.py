@@ -180,6 +180,12 @@ def _infotable_url(cik: str, accession: str) -> str:
     return ARCHIVE.format(cik=int(cik), acc=acc) + "/" + xmls[0]
 
 
+def verify_investor(inv: Investor) -> tuple[str, bool]:
+    """Return EDGAR's filer name for the investor's CIK and whether it matches expectations."""
+    name = _sec_get(SUBMISSIONS.format(cik=inv.cik), ttl=86400).get("name", "")
+    return name, inv.expected_name in name.upper()
+
+
 def get_13f_filings(inv: Investor, count: int = 2) -> list[Filing13F]:
     """Most recent `count` 13F-HR filings (amendments excluded), newest first."""
     filer_name, rows = _recent_filings(inv.cik, {"13F-HR"})

@@ -154,3 +154,21 @@ def test_research_endpoint_streams_sse(client, fake_market, monkeypatch):
     assert types[0] == "status" and "text" in types and types[-1] == "end"
     verdict = next(e for e in events if e["type"] == "verdict")
     assert verdict["verdict"]["rating"] == "Hold"
+
+
+def test_journal_endpoints(client, fake_market, tmp_path, monkeypatch):
+    monkeypatch.setenv("MT_JOURNAL_PATH", str(tmp_path / "j.csv"))
+    assert client.get("/api/journal/report").json()["entries"] == 0
+    client.post("/api/watchlist/AAPL")
+    r = client.post("/api/journal/record").json()
+    assert r["recorded"] == 1 and r["skipped"] == []
+    rep = client.get("/api/journal/report").json()
+    assert rep["entries"] == 1 and rep["verdict"].startswith("Too early")
+
+
+def test_verify_investor(monkeypatch):
+    from market_tracker.investors import by_key
+    from market_tracker.providers import sec
+    monkeypatch.setattr(sec, "_sec_get", lambda url, ttl=0, as_json=True: {"name": "BERKSHIRE HATHAWAY INC"})
+    assert sec.verify_investor(by_key("buffett")) == ("BERKSHIRE HATHAWAY INC", True)
+    assert sec.verify_investor(by_key("ackman"))[1] is False

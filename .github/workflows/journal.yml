@@ -1,0 +1,56 @@
+name: Signal journal
+
+# Records the composite score for the default universe every weekday after the US close and
+# commits the CSV to the `journal-data` branch (main is protected; this branch is data only).
+# The job summary shows the current track record.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: journal
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT || 'market-tracker github.com/jwill736/market-tracker' }}
+      MT_JOURNAL_PATH: ${{ runner.temp }}/signal_journal.csv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Load existing journal
+        run: |
+          if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
+            git show origin/journal-data:signal_journal.csv > "$MT_JOURNAL_PATH"
+            echo "Loaded $(($(wc -l < "$MT_JOURNAL_PATH") - 1)) existing entries"
+          fi
+      - name: Record today's scores
+        run: mt journal record --default-universe
+      - name: Track record
+        run: mt journal report --summary-file "$GITHUB_STEP_SUMMARY"
+      - name: Commit to journal-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse --verify -q refs/remotes/origin/journal-data >/dev/null; then
+            git checkout -B journal-data origin/journal-data
+          else
+            git checkout --orphan journal-data
+            git rm -rfq .
+          fi
+          cp "$MT_JOURNAL_PATH" signal_journal.csv
+          git add signal_journal.csv
+          git commit -qm "Journal $(date -u +%F)" || { echo "No changes"; exit 0; }
+          git push origin journal-data
