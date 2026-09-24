@@ -162,14 +162,17 @@ SEC_TITLES = [("AAPL", "Apple Inc."), ("BAC", "BANK OF AMERICA CORP /DE/"), ("AX
               ("COF", "CAPITAL ONE FINANCIAL CORP"), ("JEF", "Jefferies Financial Group Inc."),
               ("LPX", "LOUISIANA-PACIFIC CORP"), ("SPGI", "S&P Global Inc."), ("DPZ", "DOMINO'S PIZZA, INC."),
               ("MA", "Mastercard Inc"), ("UNH", "UNITEDHEALTH GROUP INC"), ("APLE", "Apple Hospitality REIT, Inc."),
-              ("BAC-PL", "BANK OF AMERICA CORP /DE/"), ("LLYVA", "Liberty Media Corp")]
+              ("BAC-PL", "BANK OF AMERICA CORP /DE/"), ("LLYVA", "Liberty Media Corp"),
+              # The three the first live run left unmapped (run 36062955884):
+              ("SIRI", "Sirius XM Holdings Inc."), ("VRSN", "VERISIGN INC/CA"), ("DHI", "HORTON D R INC /DE/")]
 THIRTEEN_F = {"APPLE INC": "AAPL", "BANK AMER CORP": "BAC", "AMERICAN EXPRESS CO": "AXP", "COCA COLA CO": "KO",
               "CHEVRON CORP NEW": "CVX", "OCCIDENTAL PETE CORP": "OXY", "CHUBB LIMITED": "CB",
               "KRAFT HEINZ CO": "KHC", "MOODYS CORP": "MCO", "DIAGEO P L C": "DEO",
               "CHARTER COMMUNICATIONS INC N": "CHTR", "CAPITAL ONE FINL CORP": "COF",
               "JEFFERIES FINL GROUP INC": "JEF", "LOUISIANA PAC CORP": "LPX", "S&P GLOBAL INC": "SPGI",
               "DOMINOS PIZZA INC": "DPZ", "MASTERCARD INCORPORATED": "MA", "UNITEDHEALTH GROUP INC": "UNH",
-              "LIBERTY MEDIA CORP DEL": "LLYVA"}
+              "LIBERTY MEDIA CORP DEL": "LLYVA", "SIRIUSXM HOLDINGS INC": "SIRI", "VERISIGN INC": "VRSN",
+              "D R HORTON INC": "DHI"}
 
 
 def test_ticker_map_handles_13f_abbreviations():

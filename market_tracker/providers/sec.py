@@ -77,6 +77,7 @@ _ABBREV = {"AMER": "AMERICA", "AMERN": "AMERICAN", "FINL": "FINANCIAL", "PETE": 
 
 def company_tokens(name: str) -> tuple[str, ...]:
     name = re.sub(r"['’]", "", name.upper())  # DOMINO'S -> DOMINOS
+    name = re.sub(r"/\s*[A-Z]{2,4}\s*/?", " ", name)  # state tags: "VERISIGN INC/CA", "/DE/"
     words = re.sub(r"[^A-Z0-9 ]", " ", name.replace("&", " AND ")).split()
     # Re-join spelled-out initials ("P L C" -> "PLC"); "&" was turned into AND above, so
     # "S&P" stays two letters on both sides and still matches.
@@ -109,6 +110,8 @@ class TickerMap:
     by_name: dict[str, str]
     # (first two tokens) -> [(tokens, ticker)] in company_tickers order (largest first)
     by_prefix: dict[tuple[str, ...], list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
+    by_compact: dict[str, str] = field(default_factory=dict)
+    by_sorted: dict[str, str] = field(default_factory=dict)
 
     def cik_for(self, ticker: str) -> str | None:
         row = self.by_ticker.get(ticker.upper())
@@ -116,7 +119,9 @@ class TickerMap:
 
     def ticker_for_issuer(self, issuer: str) -> str | None:
         tokens = company_tokens(issuer)
-        exact = self.by_name.get(" ".join(tokens))
+        # Same words, different spacing ("SIRIUSXM" vs "SIRIUS XM") or order ("HORTON D R").
+        exact = (self.by_name.get(" ".join(tokens)) or self.by_compact.get("".join(tokens))
+                 or (self.by_sorted.get(" ".join(sorted(tokens))) if len(tokens) >= 2 else None))
         if exact or len(tokens) < 2:
             # Single-word names only match exactly: "APPLE" must not become "APPLE HOSPITALITY".
             return exact
@@ -133,6 +138,8 @@ def build_ticker_map(raw: dict) -> TickerMap:
     by_ticker: dict[str, dict] = {}
     by_name: dict[str, str] = {}
     by_prefix: dict[tuple[str, ...], list[tuple[tuple[str, ...], str]]] = {}
+    by_compact: dict[str, str] = {}
+    by_sorted: dict[str, str] = {}
     for row in raw.values():
         ticker = row["ticker"].upper()
         by_ticker[ticker] = row
@@ -140,9 +147,11 @@ def build_ticker_map(raw: dict) -> TickerMap:
         # First (lowest index = largest company) ticker wins for a name, which prefers
         # the primary share class.
         by_name.setdefault(" ".join(tokens), ticker)
+        by_compact.setdefault("".join(tokens), ticker)
         if len(tokens) >= 2:
+            by_sorted.setdefault(" ".join(sorted(tokens)), ticker)
             by_prefix.setdefault(tokens[:2], []).append((tokens, ticker))
-    return TickerMap(by_ticker, by_name, by_prefix)
+    return TickerMap(by_ticker, by_name, by_prefix, by_compact, by_sorted)
 
 
 _ticker_map: TickerMap | None = None
