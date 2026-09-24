@@ -128,3 +128,11 @@ def test_merge_csv_text(jpath):
              "2026-01-03,MSFT,stock,400,5,Neutral,0.5,,,,,\n"
     journal.merge_csv_text(remote)
     assert [r["symbol"] for r in journal.load()] == ["AAPL", "MSFT"]
+
+
+def test_empty_sec_user_agent_falls_back_to_default(monkeypatch):
+    from market_tracker.config import Settings
+    monkeypatch.setenv("SEC_USER_AGENT", "")
+    assert Settings().sec_user_agent == "market-tracker contact@example.com"
+    monkeypatch.setenv("SEC_USER_AGENT", "app me@x.com")
+    assert Settings().sec_user_agent == "app me@x.com"

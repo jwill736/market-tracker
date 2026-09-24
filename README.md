@@ -120,8 +120,9 @@ market_tracker/
 | `live-smoke.yml` | every PR, daily, on demand | calls every real data source and reports PASS/FAIL per source in the job summary. Not required to merge, so an upstream outage can't block you |
 | `journal.yml` | weekdays after the US close, on demand | records the 15-symbol universe and commits `signal_journal.csv` to the `journal-data` branch; the job summary shows the track record |
 
-Set a repository variable `SEC_USER_AGENT` (Settings → Secrets and variables → Actions → Variables) to
-`"market-tracker your@email.com"`. The SEC asks for a contact email and may throttle or block requests without one.
+Add a repository **secret** `SEC_USER_AGENT` (Settings → Secrets and variables → Actions → New repository secret)
+set to `market-tracker your@email.com`. The SEC returns 403 to requests without a contact email. Use a secret, not a
+variable: this repo is public, so Actions logs are public, and only secrets are masked in them.
 
 Run the tests with `pytest`. They use recorded fixtures for SEC XML, RSS, and Yahoo JSON, plus a mocked Claude client,
 so they need no network access.

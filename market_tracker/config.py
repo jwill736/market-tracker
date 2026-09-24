@@ -24,7 +24,8 @@ def _load_dotenv(path: str = ".env") -> None:
 @dataclass(frozen=True)
 class Settings:
     sec_user_agent: str = field(
-        default_factory=lambda: os.environ.get("SEC_USER_AGENT", "market-tracker contact@example.com")
+        # `or`, not a get() default: CI passes an empty string when the secret is unset.
+        default_factory=lambda: os.environ.get("SEC_USER_AGENT") or "market-tracker contact@example.com"
     )
     finnhub_api_key: str | None = field(default_factory=lambda: os.environ.get("FINNHUB_API_KEY") or None)
     research_model: str = field(default_factory=lambda: os.environ.get("MT_RESEARCH_MODEL", "claude-opus-5"))

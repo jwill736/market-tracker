@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT || 'market-tracker github.com/jwill736/market-tracker' }}
-      MT_JOURNAL_PATH: ${{ runner.temp }}/signal_journal.csv
+      # A secret, not a variable: it contains a contact email and this repo's logs are public.
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,6 +32,9 @@ jobs:
       - run: pip install -e .
       - name: Load existing journal
         run: |
+          # Keep the working copy outside the checkout so switching branches later can't clash.
+          echo "MT_JOURNAL_PATH=$RUNNER_TEMP/signal_journal.csv" >> "$GITHUB_ENV"
+          export MT_JOURNAL_PATH="$RUNNER_TEMP/signal_journal.csv"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
             git show origin/journal-data:signal_journal.csv > "$MT_JOURNAL_PATH"
             echo "Loaded $(($(wc -l < "$MT_JOURNAL_PATH") - 1)) existing entries"

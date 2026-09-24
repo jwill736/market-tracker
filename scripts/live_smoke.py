@@ -121,17 +121,24 @@ def _():
 
 
 def main() -> int:
-    ua = os.environ.get("SEC_USER_AGENT", "")
-    lines = ["## Live data smoke test", "", f"SEC User-Agent: `{ua or '(default)'}`", "",
-             "| Check | Result | Detail |", "|---|---|---|"]
+    # Never print the User-Agent itself: it holds a contact email and CI logs may be public.
+    ua_set = bool(os.environ.get("SEC_USER_AGENT"))
+    lines = ["## Live data smoke test", "",
+             f"SEC User-Agent: {'set (hidden)' if ua_set else '**not set** — SEC blocks requests without a contact email'}",
+             "", "| Check | Result | Detail |", "|---|---|---|"]
     for name, ok, detail in results:
         print(f"{'PASS' if ok else 'FAIL'}  {name}: {detail}")
         lines.append(f"| {name} | {'✅ pass' if ok else '❌ FAIL'} | {detail.replace('|', '/')} |")
+    failed = [r for r in results if not r[1]]
+    if not ua_set and any("sec.gov" in detail and "403" in detail for _, ok, detail in failed):
+        hint = ("SEC returned 403: add a repository secret SEC_USER_AGENT such as "
+                "'market-tracker you@example.com' (Settings → Secrets and variables → Actions).")
+        print(hint)
+        lines += ["", f"> {hint}"]
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-    failed = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
     return 1 if failed else 0
 

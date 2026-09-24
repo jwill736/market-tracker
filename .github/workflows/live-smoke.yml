@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT || 'market-tracker github.com/jwill736/market-tracker' }}
+      # A secret, not a variable: it contains a contact email and this repo's logs are public.
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
