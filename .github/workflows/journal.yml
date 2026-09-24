@@ -40,6 +40,8 @@ jobs:
             echo "Loaded $(($(wc -l < "$MT_JOURNAL_PATH") - 1)) existing entries"
           fi
       - name: Record today's scores
+        # Includes the 13F (smart money) and Form 4 (insider) components by default, the ones
+        # the track record most needs to test. Adds roughly a minute or two per run.
         run: mt journal record --default-universe
       - name: Track record
         run: mt journal report --summary-file "$GITHUB_STEP_SUMMARY"

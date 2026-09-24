@@ -260,7 +260,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["record", "report", "sync"])
     s.add_argument("symbols", nargs="*")
     s.add_argument("--default-universe", action="store_true", help="Record the built-in 15-symbol universe")
-    s.add_argument("--sec", action="store_true", help="Include 13F/insider components (slow)")
+    s.add_argument("--no-sec", dest="sec", action="store_false",
+                   help="Skip 13F/insider components (faster, but rows won't match the daily job's)")
     s.add_argument("--summary-file", help="Also append the Markdown report to this file")
     s.set_defaults(func=cmd_journal)
 

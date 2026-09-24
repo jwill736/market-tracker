@@ -439,7 +439,8 @@ async function loadJournal() {
   try {
     const r = await api("/api/journal/report");
     $("#journal-status").textContent = r.entries
-      ? `${r.entries} entries · ${r.symbols} symbols · ${r.first_date} → ${r.last_date}` : "";
+      ? `${r.entries} entries · ${r.symbols} symbols · ${r.first_date} → ${r.last_date}` +
+        (r.excluded_other_versions ? ` · ${r.excluded_other_versions} older-formula entries excluded` : "") : "";
     $("#journal-verdict").textContent = r.verdict;
     $("#journal-out").innerHTML = r.horizons.map((h) => `<div class="card">
       <h2>${h.horizon_days}-day outcomes</h2>
@@ -453,7 +454,7 @@ async function loadJournal() {
   } catch (err) { $("#journal-status").textContent = err.message; }
 }
 $("#journal-record").addEventListener("click", async () => {
-  $("#journal-status").textContent = "Recording today's scores for your watchlist…";
+  $("#journal-status").textContent = "Recording today's scores for your watchlist (includes SEC data; first run takes about a minute)…";
   try {
     const r = await api("/api/journal/record", { method: "POST" });
     $("#journal-status").textContent = `Recorded ${r.recorded} entries` + (r.skipped.length ? ` (skipped ${r.skipped.join(", ")})` : "");

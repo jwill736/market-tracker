@@ -145,10 +145,11 @@ def top_terms(articles: list[Article], n: int = 12) -> list[tuple[str, int]]:
 
 
 def summarize(articles: list[Article]) -> dict:
-    scored = [a.sentiment for a in articles if a.sentiment]
+    # Average over every headline, neutral ones included. Averaging only the headlines that
+    # hit a sentiment word let 3 positive headlines out of 40 read as maximum optimism.
     return {
         "count": len(articles),
-        "avg_sentiment": sum(scored) / len(scored) if scored else 0.0,
+        "avg_sentiment": sum(a.sentiment for a in articles) / len(articles) if articles else 0.0,
         "positive": sum(1 for a in articles if a.sentiment > 0.1),
         "negative": sum(1 for a in articles if a.sentiment < -0.1),
         "top_terms": top_terms(articles),
