@@ -151,3 +151,37 @@ def test_parse_google_rss_strips_publisher_and_dedupes():
     summary = news.summarize(deduped)
     assert summary["positive"] == 1 and summary["negative"] == 1
     assert ("nvidia", 2) in summary["top_terms"]
+
+
+# company_tickers.json titles (largest companies first, as SEC orders them) vs. the
+# abbreviated, truncated issuer names that appear in real 13F information tables.
+SEC_TITLES = [("AAPL", "Apple Inc."), ("BAC", "BANK OF AMERICA CORP /DE/"), ("AXP", "AMERICAN EXPRESS CO"),
+              ("KO", "COCA COLA CO"), ("CVX", "CHEVRON CORP"), ("OXY", "OCCIDENTAL PETROLEUM CORP /DE/"),
+              ("CB", "Chubb Ltd"), ("KHC", "Kraft Heinz Co"), ("MCO", "MOODYS CORP /DE/"),
+              ("DEO", "DIAGEO PLC"), ("CHTR", "CHARTER COMMUNICATIONS, INC. /MO/"),
+              ("COF", "CAPITAL ONE FINANCIAL CORP"), ("JEF", "Jefferies Financial Group Inc."),
+              ("LPX", "LOUISIANA-PACIFIC CORP"), ("SPGI", "S&P Global Inc."), ("DPZ", "DOMINO'S PIZZA, INC."),
+              ("MA", "Mastercard Inc"), ("UNH", "UNITEDHEALTH GROUP INC"), ("APLE", "Apple Hospitality REIT, Inc."),
+              ("BAC-PL", "BANK OF AMERICA CORP /DE/"), ("LLYVA", "Liberty Media Corp")]
+THIRTEEN_F = {"APPLE INC": "AAPL", "BANK AMER CORP": "BAC", "AMERICAN EXPRESS CO": "AXP", "COCA COLA CO": "KO",
+              "CHEVRON CORP NEW": "CVX", "OCCIDENTAL PETE CORP": "OXY", "CHUBB LIMITED": "CB",
+              "KRAFT HEINZ CO": "KHC", "MOODYS CORP": "MCO", "DIAGEO P L C": "DEO",
+              "CHARTER COMMUNICATIONS INC N": "CHTR", "CAPITAL ONE FINL CORP": "COF",
+              "JEFFERIES FINL GROUP INC": "JEF", "LOUISIANA PAC CORP": "LPX", "S&P GLOBAL INC": "SPGI",
+              "DOMINOS PIZZA INC": "DPZ", "MASTERCARD INCORPORATED": "MA", "UNITEDHEALTH GROUP INC": "UNH",
+              "LIBERTY MEDIA CORP DEL": "LLYVA"}
+
+
+def test_ticker_map_handles_13f_abbreviations():
+    raw = {str(i): {"cik_str": i + 1, "ticker": t, "title": title} for i, (t, title) in enumerate(SEC_TITLES)}
+    tmap = sec.build_ticker_map(raw)
+    got = {issuer: tmap.ticker_for_issuer(issuer) for issuer in THIRTEEN_F}
+    assert got == THIRTEEN_F
+
+
+def test_ticker_map_avoids_false_matches():
+    raw = {"0": {"cik_str": 1, "ticker": "APLE", "title": "Apple Hospitality REIT, Inc."},
+           "1": {"cik_str": 2, "ticker": "BACX", "title": "Bank of Hawaii Corp"}}
+    tmap = sec.build_ticker_map(raw)
+    assert tmap.ticker_for_issuer("APPLE INC") is None  # one word never prefix-matches
+    assert tmap.ticker_for_issuer("BANK AMER CORP") is None

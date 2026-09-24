@@ -57,39 +57,92 @@ def _num(txt: str) -> float:
 
 # ------------------------------------------------------------------ ticker map
 
-_NAME_NOISE = re.compile(
-    r"\b(INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LIMITED|PLC|HLDGS?|HOLDINGS?|GROUP|"
-    r"CLASS|CL|COM|NEW|DEL|THE|SA|NV|AG|LP|LLC|TRUST|ADR|SPONSORED|ORD|SHS|A|B|C)\b")
+# Words that carry no identity. "DE"/"DEL"/"MO"/"N" are state-of-incorporation tags and
+# 13F truncations ("... INC N" is "INC NEW" cut at the column limit).
+_NOISE = {"INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "LIMITED", "PLC",
+          "HLDG", "HLDGS", "HOLDING", "HOLDINGS", "GROUP", "GRP", "CLASS", "CL", "COM", "NEW", "DEL",
+          "DE", "MD", "MO", "NY", "NJ", "PA", "THE", "OF", "AND", "SA", "NV", "AG", "LP", "LLC",
+          "TRUST", "ADR", "ADS", "SPONSORED", "SPON", "ORD", "SHS", "N", "A", "B", "C"}
+# SEC 13F issuer names are heavily abbreviated; company_tickers.json titles mostly aren't.
+_ABBREV = {"AMER": "AMERICA", "AMERN": "AMERICAN", "FINL": "FINANCIAL", "PETE": "PETROLEUM",
+           "INTL": "INTERNATIONAL", "NATL": "NATIONAL", "MGMT": "MANAGEMENT", "SVCS": "SERVICES",
+           "SVC": "SERVICE", "SYS": "SYSTEMS", "TECHNOLOGIES": "TECHNOLOGY", "TECH": "TECHNOLOGY",
+           "COMMUNICATION": "COMMUNICATIONS", "COMM": "COMMUNICATIONS", "PPTYS": "PROPERTIES",
+           "RES": "RESOURCES", "ENTMT": "ENTERTAINMENT", "LABS": "LABORATORIES", "MFG": "MANUFACTURING",
+           "INDS": "INDUSTRIES", "GEN": "GENERAL", "ELEC": "ELECTRIC", "PHARMACEUTICALS": "PHARMACEUTICAL",
+           "BANCORPORATION": "BANCORP", "HEALTHCARE": "HEALTH CARE", "INVT": "INVESTMENT",
+           "INVTS": "INVESTMENTS", "DEV": "DEVELOPMENT", "MTRS": "MOTORS",
+           "PAC": "PACIFIC", "SOLUTIONS": "SOLUTION", "UTD": "UNITED"}
+
+
+def company_tokens(name: str) -> tuple[str, ...]:
+    name = re.sub(r"['’]", "", name.upper())  # DOMINO'S -> DOMINOS
+    words = re.sub(r"[^A-Z0-9 ]", " ", name.replace("&", " AND ")).split()
+    # Re-join spelled-out initials ("P L C" -> "PLC"); "&" was turned into AND above, so
+    # "S&P" stays two letters on both sides and still matches.
+    merged: list[str] = []
+    run = ""
+    for w in words:
+        if len(w) == 1 and w.isalpha():
+            run += w
+            continue
+        if run:
+            merged.append(run)
+            run = ""
+        merged.append(w)
+    if run:
+        merged.append(run)
+    out: list[str] = []
+    for w in merged:
+        w = _ABBREV.get(w, w)
+        out.extend(x for x in w.split() if x not in _NOISE)
+    return tuple(out)
 
 
 def normalize_company(name: str) -> str:
-    name = re.sub(r"[^A-Z0-9 ]", " ", name.upper())
-    return " ".join(_NAME_NOISE.sub(" ", name).split())
+    return " ".join(company_tokens(name))
 
 
 @dataclass
 class TickerMap:
     by_ticker: dict[str, dict]
     by_name: dict[str, str]
+    # (first two tokens) -> [(tokens, ticker)] in company_tickers order (largest first)
+    by_prefix: dict[tuple[str, ...], list[tuple[tuple[str, ...], str]]] = field(default_factory=dict)
 
     def cik_for(self, ticker: str) -> str | None:
         row = self.by_ticker.get(ticker.upper())
         return str(row["cik_str"]).zfill(10) if row else None
 
     def ticker_for_issuer(self, issuer: str) -> str | None:
-        return self.by_name.get(normalize_company(issuer))
+        tokens = company_tokens(issuer)
+        exact = self.by_name.get(" ".join(tokens))
+        if exact or len(tokens) < 2:
+            # Single-word names only match exactly: "APPLE" must not become "APPLE HOSPITALITY".
+            return exact
+        # 13F names are truncated at a column limit, and titles carry extra suffixes, so fall
+        # back to a prefix match in either direction, requiring two identifying words.
+        for cand_tokens, ticker in self.by_prefix.get(tokens[:2], []):
+            n = min(len(tokens), len(cand_tokens))
+            if cand_tokens[:n] == tokens[:n]:
+                return ticker
+        return None
 
 
 def build_ticker_map(raw: dict) -> TickerMap:
     by_ticker: dict[str, dict] = {}
     by_name: dict[str, str] = {}
+    by_prefix: dict[tuple[str, ...], list[tuple[tuple[str, ...], str]]] = {}
     for row in raw.values():
         ticker = row["ticker"].upper()
         by_ticker[ticker] = row
+        tokens = company_tokens(row["title"])
         # First (lowest index = largest company) ticker wins for a name, which prefers
         # the primary share class.
-        by_name.setdefault(normalize_company(row["title"]), ticker)
-    return TickerMap(by_ticker, by_name)
+        by_name.setdefault(" ".join(tokens), ticker)
+        if len(tokens) >= 2:
+            by_prefix.setdefault(tokens[:2], []).append((tokens, ticker))
+    return TickerMap(by_ticker, by_name, by_prefix)
 
 
 _ticker_map: TickerMap | None = None

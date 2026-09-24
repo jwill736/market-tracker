@@ -84,9 +84,12 @@ def _():
     top = rep["top_holdings"][:5]
     assert rep["positions"] > 10 and rep["total_value_usd"] > 1e10, rep["positions"]
     mapped = sum(1 for p in rep["holdings"] if p["ticker"])
-    assert mapped / rep["positions"] > 0.7, f"only {mapped}/{rep['positions']} issuers mapped to tickers"
+    unmapped = [p["issuer"] for p in rep["holdings"] if not p["ticker"]]
+    assert mapped / rep["positions"] > 0.85, (
+        f"only {mapped}/{rep['positions']} issuers mapped to tickers; unmapped: {', '.join(unmapped)}")
     return (f"period {rep['period']}, {rep['positions']} positions, {mapped} mapped, top: "
-            + ", ".join(p["ticker"] or p["issuer"] for p in top))
+            + ", ".join(p["ticker"] or p["issuer"] for p in top)
+            + (f"; unmapped: {', '.join(unmapped)}" if unmapped else ""))
 
 
 @check("SEC Form 4 parse: AAPL insiders (180d)")
