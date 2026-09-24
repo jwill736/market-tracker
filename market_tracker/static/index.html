@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Market Tracker</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Market Tracker</h1>
+  <nav id="tabs" role="tablist">
+    <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
+    <button role="tab" data-tab="analyze">Analyze</button>
+    <button role="tab" data-tab="smart">Smart money</button>
+    <button role="tab" data-tab="portfolio">Portfolio</button>
+    <button role="tab" data-tab="research">Deep dive</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Dashboard -->
+  <section id="tab-dashboard" class="tab">
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head">
+          <h2>Watchlist <span class="live" id="live-dot" title="Live stream status">●</span></h2>
+          <form id="watch-form" class="inline">
+            <input id="watch-input" placeholder="AAPL, BTC, ETH-USD…" aria-label="Add symbol">
+            <button>Add</button>
+          </form>
+        </div>
+        <table class="data" id="watch-table">
+          <thead><tr><th>Symbol</th><th class="num">Price</th><th class="num">Change</th><th>Source</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="muted small">Crypto: Coinbase real-time spot. Stocks: Yahoo (or Finnhub if configured). Streams every 5s.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Market news</h2><span id="mkt-sentiment" class="pill"></span></div>
+        <div id="mkt-terms" class="terms"></div>
+        <ul id="mkt-news" class="news"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Analyze -->
+  <section id="tab-analyze" class="tab" hidden>
+    <form id="analyze-form" class="inline card">
+      <input id="analyze-input" placeholder="Symbol (NVDA, BTC…)" aria-label="Symbol" required>
+      <label class="check"><input type="checkbox" id="analyze-sm" checked> 13F + insiders</label>
+      <button>Analyze</button>
+      <span id="analyze-status" class="muted"></span>
+    </form>
+    <div id="analyze-out" hidden>
+      <div class="grid three" id="analyze-tiles"></div>
+      <div class="card">
+        <div class="card-head"><h2>Price, trend and forecast range</h2><div class="legend" id="price-legend"></div></div>
+        <div id="price-chart" class="chart"></div>
+        <p class="muted small" id="forecast-note"></p>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><h2>Signal breakdown</h2><span id="signal-pill" class="pill"></span></div>
+          <div id="signal-chart"></div>
+          <ul id="risk-flags" class="flags"></ul>
+          <p class="muted small" id="signal-disclaimer"></p>
+        </div>
+        <div class="card">
+          <h2>Forecast ranges</h2>
+          <table class="data" id="forecast-table"></table>
+          <h2 class="mt">Backtest (in-sample)</h2>
+          <table class="data" id="backtest-table"></table>
+          <p class="muted small" id="backtest-note"></p>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h2>Smart money (13F)</h2>
+          <div id="sm-out"></div>
+          <h2 class="mt">Insider trades (Form 4)</h2>
+          <div id="ins-out"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>News</h2><span id="news-pill" class="pill"></span></div>
+          <div id="news-terms" class="terms"></div>
+          <ul id="news-list" class="news"></ul>
+        </div>
+      </div>
+      <p class="errors" id="analyze-errors"></p>
+    </div>
+  </section>
+
+  <!-- Smart money -->
+  <section id="tab-smart" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Consensus: what tracked billionaires bought and sold</h2>
+        <button id="consensus-load">Load (≈1 min first time)</button></div>
+      <p class="muted small">From the latest 13F-HR filings — due 45 days after quarter end, long positions only. Concentrated
+        value investors weigh 1.0; quant and multi-strategy books weigh 0.35 because their 13Fs are mostly noise.</p>
+      <div class="grid two" id="consensus-out"></div>
+    </div>
+    <div class="card">
+      <h2>Investors</h2>
+      <div id="investor-list" class="investor-list"></div>
+      <div id="investor-out"></div>
+    </div>
+  </section>
+
+  <!-- Portfolio -->
+  <section id="tab-portfolio" class="tab" hidden>
+    <div class="grid three" id="pf-tiles"></div>
+    <div class="grid two">
+      <div class="card">
+        <h2>Positions</h2>
+        <table class="data" id="pf-table"></table>
+        <h2 class="mt">Allocation vs risk-balanced</h2>
+        <div id="pf-alloc"></div>
+      </div>
+      <div class="card">
+        <h2>Risk</h2>
+        <div id="pf-risk"></div>
+        <ul id="pf-warnings" class="flags"></ul>
+        <h2 class="mt">Record a trade</h2>
+        <form id="tx-form" class="stack">
+          <div class="row">
+            <input name="symbol" placeholder="Symbol" required>
+            <select name="side"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+          </div>
+          <div class="row">
+            <input name="quantity" type="number" step="any" min="0" placeholder="Quantity" required>
+            <input name="price" type="number" step="any" min="0" placeholder="Price" required>
+          </div>
+          <div class="row">
+            <input name="fees" type="number" step="any" min="0" placeholder="Fees" value="0">
+            <input name="date" type="date" required>
+          </div>
+          <button>Save</button>
+          <span id="tx-status" class="muted"></span>
+        </form>
+        <h2 class="mt">Ledger</h2>
+        <table class="data" id="tx-table"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Research -->
+  <section id="tab-research" class="tab" hidden>
+    <form id="research-form" class="card stack">
+      <div class="row">
+        <input id="research-symbol" placeholder="Symbol" required aria-label="Symbol">
+        <button>Run deep dive</button>
+      </div>
+      <input id="research-question" placeholder="Optional: a specific question (e.g. 'Is the AI capex cycle priced in?')" aria-label="Question">
+      <p class="muted small">Claude reads our quantitative snapshot, then searches and reads current primary sources. Takes 1–4 minutes and uses your Anthropic API credits.</p>
+    </form>
+    <div class="grid two">
+      <div class="card"><h2>Memo</h2><div id="research-status" class="muted"></div><article id="research-memo" class="memo"></article></div>
+      <div class="card"><h2>Verdict</h2><div id="research-verdict" class="muted">Run a deep dive to see a structured verdict.</div></div>
+    </div>
+  </section>
+</main>
+
+<div id="tooltip" class="tooltip" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

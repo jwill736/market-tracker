@@ -1,0 +1,221 @@
+"""Command-line interface: `mt <command>`."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import date
+
+from . import db, http, research, service
+from .investors import INVESTORS, by_key
+from .providers import market, news, sec
+
+
+def _pct(x: float | None, digits: int = 1) -> str:
+    return "—" if x is None else f"{x:+.{digits}f}%"
+
+
+def _money(x: float | None) -> str:
+    return "—" if x is None else f"${x:,.2f}"
+
+
+def cmd_quote(args) -> int:
+    for sym in args.symbols:
+        try:
+            q = market.get_quote(sym)
+            print(f"{q.symbol:<10} {_money(q.price):>14} {_pct(q.change_pct):>9}  ({q.source}, {q.as_of})")
+        except http.DataUnavailable as exc:
+            print(f"{sym:<10} unavailable: {exc}", file=sys.stderr)
+    return 0
+
+
+def cmd_analyze(args) -> int:
+    a = service.analyze(args.symbol, with_smart_money=not args.fast, with_insiders=not args.fast)
+    q, ind, sig = a["quote"], a["indicators"], a["signal"]
+    print(f"\n{a['symbol']} ({a['asset_class']})  {_money(q and q['price'])}  {_pct(q and q['change_pct'])}")
+    if ind:
+        def f(key: str, scale: float = 1.0, suffix: str = "") -> str:
+            return "—" if ind.get(key) is None else f"{ind[key] * scale:.0f}{suffix}"
+        print(f"  RSI {f('rsi14')}   vol {f('vol_annual', 100, '%')}   1y max DD {f('max_drawdown_1y', 100, '%')}"
+              f"   12-1 mom {_pct(ind['momentum_12_1'] * 100 if ind.get('momentum_12_1') is not None else None)}")
+    if sig:
+        print(f"\n  Signal: {sig['label']} ({sig['score']:+.0f}/100, coverage {sig['coverage'] * 100:.0f}%)")
+        for name, comp in sig["components"].items():
+            if comp:
+                print(f"    {name:<12} {comp['score']:+6.0f}  {comp['why']}")
+        if sig["suggested_max_weight"]:
+            print(f"  Suggested max position: {sig['suggested_max_weight'] * 100:.1f}% of portfolio")
+        for flag in sig["risk_flags"]:
+            print(f"  ! {flag}")
+    if a["forecast"]:
+        print("\n  Range (lognormal, 90% band):")
+        for row in a["forecast"]["lognormal"]:
+            print(f"    {row['horizon_days']:>3}d  {_money(row['p5'])} – {_money(row['p95'])}"
+                  f"   median {_money(row['p50'])}   P(up) {row['prob_up'] * 100:.0f}%")
+    if a["backtest"]:
+        print("\n  Backtest (in-sample, 10bps costs):")
+        for name, r in a["backtest"]["results"].items():
+            if r:
+                print(f"    {name:<14} CAGR {_pct(r['cagr'] and r['cagr'] * 100)}  Sharpe {r['sharpe'] or 0:.2f}"
+                      f"  maxDD {r['max_drawdown'] * 100:.0f}%")
+    for e in a["errors"]:
+        print(f"  (warning) {e}", file=sys.stderr)
+    return 0
+
+
+def cmd_investors(args) -> int:
+    if not args.key:
+        for i in INVESTORS:
+            print(f"{i.key:<14} {i.person:<24} {i.fund:<34} {i.style}")
+        return 0
+    inv = by_key(args.key)
+    if not inv:
+        print(f"Unknown investor {args.key}", file=sys.stderr)
+        return 1
+    rep = sec.investor_report(inv)
+    print(f"{inv.person} — {rep['filer_name']}  13F period {rep['period']} (filed {rep['filed']}, "
+          f"{rep['staleness_days']} days old)")
+    if not rep["cik_verified"]:
+        print(f"  ! Filer name doesn't match expected '{inv.expected_name}' — check the CIK")
+    print(f"  Reported value {_money(rep['total_value_usd'])} across {rep['positions']} positions\n")
+    for p in rep["top_holdings"][:15]:
+        print(f"  {p['ticker'] or '?':<7} {p['issuer'][:32]:<32} {p['weight_now']:5.1f}%  {p['action']}")
+    for action in ("new", "added", "reduced", "exited"):
+        moves = rep["moves"][action][:10]
+        if moves:
+            print(f"\n  {action.upper()}: " + ", ".join(m["ticker"] or m["issuer"][:20] for m in moves))
+    return 0
+
+
+def cmd_consensus(args) -> int:
+    reports, errors = service.smart_money_reports()
+    c = sec.consensus(reports, limit=args.limit)
+    print("Most bought by tracked investors:")
+    for r in c["most_bought"]:
+        print(f"  {r['ticker'] or r['issuer'][:20]:<22} score {r['score']:+.2f}  "
+              + ", ".join(f"{b['investor']} ({b['action']})" for b in r["buyers"]))
+    print("\nMost sold:")
+    for r in c["most_sold"]:
+        print(f"  {r['ticker'] or r['issuer'][:20]:<22} score {r['score']:+.2f}  "
+              + ", ".join(f"{s['investor']} ({s['action']})" for s in r["sellers"]))
+    for e in errors:
+        print(f"  (warning) {e}", file=sys.stderr)
+    return 0
+
+
+def cmd_news(args) -> int:
+    data = news.get_news(args.symbol) if args.symbol else news.market_news()
+    print(f"{data['count']} headlines, avg sentiment {data['avg_sentiment']:+.2f}  "
+          f"({data['positive']} positive / {data['negative']} negative)")
+    print("Trending terms: " + ", ".join(f"{t}({n})" for t, n in data["top_terms"]))
+    for a in data["articles"][: args.limit]:
+        print(f"  {a['sentiment']:+.2f}  {a['published'][:10]}  {a['title']}  — {a['source']}")
+    return 0
+
+
+def cmd_portfolio(args) -> int:
+    with db.connect() as conn:
+        if args.action == "add":
+            sym = market.normalize_symbol(args.symbol)
+            db.add_transaction(conn, sym, args.side, args.quantity, args.price,
+                               args.date or date.today().isoformat(), args.fees)
+            print(f"Recorded {args.side} {args.quantity} {sym} @ {args.price}")
+            return 0
+        txs = db.list_transactions(conn)
+    s = service.portfolio_summary(txs)
+    print(f"Value {_money(s['total_value'])}   cost {_money(s['total_cost'])}   "
+          f"unrealized {_money(s['unrealized_pnl'])} ({_pct(s['unrealized_pct'])})   "
+          f"realized {_money(s['realized_pnl'])}")
+    for p in s["positions"]:
+        print(f"  {p['symbol']:<10} {p['quantity']:>12,.4f} @ {_money(p['avg_cost']):>12}  now {_money(p['price']):>12}"
+              f"  {_pct(p['unrealized_pct']):>9}  weight {p['weight'] or 0:5.1f}%")
+    risk = s.get("risk") or {}
+    if risk.get("annual_vol") is not None:
+        print(f"\n  Portfolio vol {risk['annual_vol'] * 100:.0f}%  Sharpe {risk['sharpe'] or 0:.2f}  "
+              f"max DD {risk['max_drawdown'] * 100:.0f}%  1-day 95% VaR {risk['var_95_1d'] * 100:.1f}%")
+    for w in risk.get("warnings", []):
+        print(f"  ! {w}")
+    return 0
+
+
+def cmd_research(args) -> int:
+    print(f"Collecting data for {args.symbol}…", file=sys.stderr)
+    analysis = service.analyze(args.symbol)
+    memo = ""
+    for event in research.stream_memo(analysis, args.question):
+        if event["type"] == "text":
+            print(event["text"], end="", flush=True)
+        elif event["type"] == "status":
+            print(f"\n[{event['text']}]", file=sys.stderr)
+        elif event["type"] == "error":
+            print(f"\n{event['text']}", file=sys.stderr)
+            return 1
+        elif event["type"] == "done":
+            memo = event["memo"]
+    verdict = research.extract_verdict(analysis["symbol"], memo) if memo else None
+    if verdict:
+        print(f"\n\n=== Verdict: {verdict.rating} ({verdict.conviction} conviction, {verdict.horizon}) ===")
+        print(f"Max position: {verdict.max_position_pct:.1f}%\nInvalidation: {verdict.invalidation}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    import uvicorn
+    uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="mt", description="Market tracker")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("quote", help="Live quotes")
+    s.add_argument("symbols", nargs="+")
+    s.set_defaults(func=cmd_quote)
+
+    s = sub.add_parser("analyze", help="Indicators, forecast range, signal, backtest")
+    s.add_argument("symbol")
+    s.add_argument("--fast", action="store_true", help="Skip SEC 13F and insider lookups")
+    s.set_defaults(func=cmd_analyze)
+
+    s = sub.add_parser("investors", help="List tracked investors or show one's latest 13F")
+    s.add_argument("key", nargs="?")
+    s.set_defaults(func=cmd_investors)
+
+    s = sub.add_parser("consensus", help="What tracked investors bought/sold last quarter")
+    s.add_argument("--limit", type=int, default=15)
+    s.set_defaults(func=cmd_consensus)
+
+    s = sub.add_parser("news", help="Headlines + sentiment (market-wide if no symbol)")
+    s.add_argument("symbol", nargs="?")
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_news)
+
+    s = sub.add_parser("portfolio", help="Show portfolio or record a transaction")
+    s.add_argument("action", nargs="?", choices=["show", "add"], default="show")
+    s.add_argument("--symbol")
+    s.add_argument("--side", choices=["buy", "sell"], default="buy")
+    s.add_argument("--quantity", type=float)
+    s.add_argument("--price", type=float)
+    s.add_argument("--fees", type=float, default=0.0)
+    s.add_argument("--date")
+    s.set_defaults(func=cmd_portfolio)
+
+    s = sub.add_parser("research", help="Claude deep-dive research memo")
+    s.add_argument("symbol")
+    s.add_argument("--question", "-q")
+    s.set_defaults(func=cmd_research)
+
+    s = sub.add_parser("serve", help="Run the web dashboard")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8000)
+    s.set_defaults(func=cmd_serve)
+
+    args = p.parse_args(argv)
+    if args.command == "portfolio" and args.action == "add" and not (args.symbol and args.quantity and args.price is not None):
+        p.error("portfolio add requires --symbol, --quantity and --price")
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
