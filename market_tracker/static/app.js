@@ -377,7 +377,8 @@ function renderAlloc(rows) {
   if (!rows.length) { el.innerHTML = ""; return; }
   const W = Math.max(320, el.clientWidth || 500), rowH = 30, labelW = 80, H = rows.length * rowH + 20;
   const max = Math.max(...rows.flatMap((r) => [r.current_pct, r.risk_balanced_pct]));
-  const X = (v) => labelW + v / max * (W - labelW - 50);
+  // Reserve room right of the longest bar for its "34% → 28%" label (~80px at 12px).
+  const X = (v) => labelW + v / max * (W - labelW - 100);
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Current weight versus risk-balanced weight">`;
   rows.forEach((r, i) => {
     const y = i * rowH;
