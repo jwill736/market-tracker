@@ -15,6 +15,7 @@
     <button role="tab" data-tab="smart">Smart money</button>
     <button role="tab" data-tab="portfolio">Portfolio</button>
     <button role="tab" data-tab="research">Deep dive</button>
+    <button role="tab" data-tab="journal">Track record</button>
   </nav>
 </header>
 
@@ -157,6 +158,19 @@
     <div class="grid two">
       <div class="card"><h2>Memo</h2><div id="research-status" class="muted"></div><article id="research-memo" class="memo"></article></div>
       <div class="card"><h2>Verdict</h2><div id="research-verdict" class="muted">Run a deep dive to see a structured verdict.</div></div>
+    </div>
+  </section>
+  <!-- Track record -->
+  <section id="tab-journal" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Does the score actually work?</h2>
+        <button id="journal-record">Record today's scores</button></div>
+      <p class="muted small">Each day's scores are logged, then compared with what prices did 1, 3 and 6 months later.
+        IC is the rank correlation between score and later return: 0 means no edge, +0.05 is a small real edge, +0.10 is strong.
+        A scheduled GitHub Actions job records the built-in universe every weekday; <code>mt journal sync</code> pulls it here.</p>
+      <p id="journal-status" class="muted"></p>
+      <p id="journal-verdict" class="verdict-line"></p>
+      <div id="journal-out" class="grid three"></div>
     </div>
   </section>
 </main>

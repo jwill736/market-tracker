@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, http, research, service
+from . import db, http, journal, research, service
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -183,6 +183,30 @@ def remove_watch(symbol: str):
     with db.connect() as conn:
         db.remove_watch(conn, market.normalize_symbol(symbol))
         return db.watchlist(conn)
+
+
+# ------------------------------------------------------------------ journal
+
+@app.post("/api/journal/record")
+def journal_record(symbols: list[str] | None = None):
+    if not symbols:
+        with db.connect() as conn:
+            symbols = db.watchlist(conn) or journal.DEFAULT_UNIVERSE
+    entries, skipped = [], []
+    for sym in symbols[:40]:
+        entry = journal.entry_from_analysis(service.analyze(sym, with_smart_money=False, with_insiders=False))
+        (entries.append(entry) if entry else skipped.append(sym))
+    journal.record(entries)
+    return {"recorded": len(entries), "skipped": skipped, "path": journal.journal_path()}
+
+
+@app.get("/api/journal/report")
+def journal_report():
+    rows = journal.load()
+    if not rows:
+        return {"entries": 0, "horizons": [], "errors": [], "verdict":
+                "No journal entries yet. Record today's scores, then keep recording daily."}
+    return journal.evaluate(rows, journal.history_closes)
 
 
 # ------------------------------------------------------------------ research

@@ -1,0 +1,31 @@
+name: Live data smoke test
+
+# Hits real external APIs (SEC, Yahoo, Coinbase, Google News). Deliberately NOT a required
+# check: an upstream outage shouldn't block merges, but a red run here means a data source
+# or parser needs attention.
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # A secret, not a variable: it contains a contact email and this repo's logs are public.
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Run live checks
+        run: python scripts/live_smoke.py

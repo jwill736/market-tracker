@@ -115,3 +115,5 @@ table.data tr.clickable:hover td { background: var(--mid); }
   table.data { font-size: 12px; }
   .hide-sm { display: none; }
 }
+.verdict-line { font-size: 15px; font-weight: 600; margin: 4px 0 12px; }
+code { font-size: 12px; background: var(--mid); padding: 1px 5px; border-radius: 4px; }

@@ -42,6 +42,7 @@ function selectTab(name) {
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   if (name === "portfolio") loadPortfolio();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
+  if (name === "journal") loadJournal();
 }
 
 // ---------------------------------------------------------------- dashboard
@@ -431,6 +432,34 @@ function renderVerdict(v) {
     <h2 class="mt">Risks</h2><ul>${v.risks.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
     <h2 class="mt">Thesis is wrong if…</h2><p>${esc(v.invalidation)}</p>`;
 }
+
+// ---------------------------------------------------------------- track record
+async function loadJournal() {
+  $("#journal-status").textContent = "Scoring past entries against actual returns…";
+  try {
+    const r = await api("/api/journal/report");
+    $("#journal-status").textContent = r.entries
+      ? `${r.entries} entries · ${r.symbols} symbols · ${r.first_date} → ${r.last_date}` : "";
+    $("#journal-verdict").textContent = r.verdict;
+    $("#journal-out").innerHTML = r.horizons.map((h) => `<div class="card">
+      <h2>${h.horizon_days}-day outcomes</h2>
+      <p class="small">${h.n} observations (~${h.effective_n} independent) · IC <b>${h.ic == null ? "—" : (h.ic > 0 ? "+" : "") + h.ic.toFixed(3)}</b>${h.ic_se ? " ± " + h.ic_se.toFixed(3) : ""}</p>
+      ${h.buckets.length ? `<table class="data"><thead><tr><th>Label</th><th class="num">n</th><th class="num">Avg return</th><th class="num">Hit rate</th></tr></thead><tbody>` +
+        h.buckets.map((b) => `<tr><td>${esc(b.label)}</td><td class="num">${b.n}</td><td class="num ${cls(b.avg_return)}">${fmtPct(b.avg_return * 100, 2)}</td><td class="num">${(b.hit_rate * 100).toFixed(0)}%</td></tr>`).join("") + "</tbody></table>"
+        : `<p class="muted small">No outcomes yet — entries need ${h.horizon_days} trading days to mature.</p>`}
+      <p class="small muted">Component IC: ${Object.entries(h.component_ic).map(([k, v]) => `${esc(k)} ${v == null ? "—" : v.toFixed(2)}`).join(" · ")}</p>
+    </div>`).join("");
+    if (r.errors?.length) $("#journal-status").textContent += " · " + r.errors.join("; ");
+  } catch (err) { $("#journal-status").textContent = err.message; }
+}
+$("#journal-record").addEventListener("click", async () => {
+  $("#journal-status").textContent = "Recording today's scores for your watchlist…";
+  try {
+    const r = await api("/api/journal/record", { method: "POST" });
+    $("#journal-status").textContent = `Recorded ${r.recorded} entries` + (r.skipped.length ? ` (skipped ${r.skipped.join(", ")})` : "");
+    loadJournal();
+  } catch (err) { $("#journal-status").textContent = err.message; }
+});
 
 // ---------------------------------------------------------------- boot
 loadWatchlist().catch((err) => { $("#watch-table tbody").innerHTML = `<tr><td class="muted">${esc(err.message)}</td></tr>`; });

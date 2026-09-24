@@ -6,7 +6,7 @@ import argparse
 import sys
 from datetime import date
 
-from . import db, http, research, service
+from . import db, http, journal, research, service
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -64,6 +64,16 @@ def cmd_analyze(args) -> int:
 
 
 def cmd_investors(args) -> int:
+    if args.verify:
+        bad = 0
+        for inv in INVESTORS:
+            try:
+                filer, ok = sec.verify_investor(inv)
+            except http.DataUnavailable as exc:
+                filer, ok = f"unreachable: {exc}", False
+            bad += not ok
+            print(f"  {'OK  ' if ok else 'FAIL'} {inv.key:<14} {inv.cik}  expected '{inv.expected_name}'  got '{filer}'")
+        return 1 if bad else 0
     if not args.key:
         for i in INVESTORS:
             print(f"{i.key:<14} {i.person:<24} {i.fund:<34} {i.style}")
@@ -159,6 +169,45 @@ def cmd_research(args) -> int:
     return 0
 
 
+def cmd_journal(args) -> int:
+    if args.action == "sync":
+        n = journal.sync_from_remote()
+        print(f"Merged {n} entries from {journal.REMOTE_URL} into {journal.journal_path()}")
+        return 0
+    if args.action == "record":
+        symbols = args.symbols
+        if not symbols and not args.default_universe:
+            with db.connect() as conn:
+                symbols = db.watchlist(conn)
+        symbols = symbols or journal.DEFAULT_UNIVERSE
+        entries, failed = [], []
+        for sym in symbols:
+            a = service.analyze(sym, with_smart_money=args.sec, with_insiders=args.sec)
+            entry = journal.entry_from_analysis(a)
+            if entry:
+                entries.append(entry)
+                print(f"  {entry['symbol']:<10} {entry['score']:+6.1f}  {entry['label']}")
+            else:
+                failed.append(sym)
+                print(f"  {sym:<10} skipped: {'; '.join(a['errors']) or 'no signal'}", file=sys.stderr)
+        journal.record(entries)
+        print(f"Recorded {len(entries)} entries to {journal.journal_path()}")
+        return 1 if failed and not entries else 0
+    rows = journal.load()
+    if not rows:
+        print(f"No journal entries in {journal.journal_path()}. Run `mt journal record` daily "
+              "(or `mt journal sync` to pull the GitHub Actions journal).")
+        return 0
+    report = journal.evaluate(rows, journal.history_closes)
+    print(journal.report_markdown(report))
+    if args.summary_file:
+        with open(args.summary_file, "a", encoding="utf-8") as fh:
+            fh.write(journal.report_markdown(report) + "\n")
+    for e in report["errors"]:
+        print(f"  (warning) {e}", file=sys.stderr)
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
@@ -180,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("investors", help="List tracked investors or show one's latest 13F")
     s.add_argument("key", nargs="?")
+    s.add_argument("--verify", action="store_true", help="Check every CIK against EDGAR's filer name")
     s.set_defaults(func=cmd_investors)
 
     s = sub.add_parser("consensus", help="What tracked investors bought/sold last quarter")
@@ -205,6 +255,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("symbol")
     s.add_argument("--question", "-q")
     s.set_defaults(func=cmd_research)
+
+    s = sub.add_parser("journal", help="Log daily scores and measure them against real outcomes")
+    s.add_argument("action", choices=["record", "report", "sync"])
+    s.add_argument("symbols", nargs="*")
+    s.add_argument("--default-universe", action="store_true", help="Record the built-in 15-symbol universe")
+    s.add_argument("--sec", action="store_true", help="Include 13F/insider components (slow)")
+    s.add_argument("--summary-file", help="Also append the Markdown report to this file")
+    s.set_defaults(func=cmd_journal)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")
