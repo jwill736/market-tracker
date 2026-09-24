@@ -20,9 +20,14 @@ from . import http
 from .providers import market
 
 FIELDS = ["date", "symbol", "asset_class", "price", "score", "label", "coverage",
-          "trend", "momentum", "smart_money", "insider", "news"]
+          "trend", "momentum", "smart_money", "insider", "news", "version"]
 COMPONENTS = ["trend", "momentum", "smart_money", "insider", "news"]
 HORIZONS = (21, 63, 126)  # trading days; crypto is scaled to calendar days
+# Bump whenever the composite score's definition changes, so the track record never mixes
+# formulas. Rows written before versioning existed have no version and count as "1".
+#   1: news mood averaged only headlines with sentiment words; journal ran without SEC data
+#   2: news mood averages all headlines; journal records 13F and insider components
+SCORE_VERSION = "2"
 
 DEFAULT_UNIVERSE = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM",
                     "XOM", "BRK-B", "BTC-USD", "ETH-USD", "SOL-USD"]
@@ -48,7 +53,8 @@ def load(path: str | None = None) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as fh:
         rows = []
         for r in csv.DictReader(fh):
-            row = {k: r.get(k, "") for k in FIELDS}
+            row = {k: r.get(k, "") or "" for k in FIELDS}
+            row["version"] = row["version"] or "1"
             for k in ("price", "score", "coverage", *COMPONENTS):
                 row[k] = _num(row[k])
             rows.append(row)
@@ -79,6 +85,7 @@ def entry_from_analysis(analysis: dict, on: date | None = None) -> dict | None:
         "label": sig["label"],
         "coverage": sig["coverage"],
         **{c: (comps[c]["score"] if comps.get(c) else None) for c in COMPONENTS},
+        "version": SCORE_VERSION,
     }
 
 
@@ -150,7 +157,11 @@ def forward_return(history: list[tuple[str, float]], start: str, bars: int) -> f
 
 
 def evaluate(rows: list[dict], history_fn: Callable[[str], list[tuple[str, float]]],
-             horizons: tuple[int, ...] = HORIZONS) -> dict:
+             horizons: tuple[int, ...] = HORIZONS, version: str | None = SCORE_VERSION) -> dict:
+    """Score the journal. Only rows from `version` count (None = all), so a formula change
+    never blends two different scores into one track record."""
+    all_rows = rows
+    rows = [r for r in rows if version is None or r.get("version", "1") == version]
     histories: dict[str, list[tuple[str, float]]] = {}
     errors: list[str] = []
     for sym in sorted({r["symbol"] for r in rows}):
@@ -167,6 +178,8 @@ def evaluate(rows: list[dict], history_fn: Callable[[str], list[tuple[str, float
         "last_date": dates[-1] if dates else None,
         "horizons": [],
         "errors": errors,
+        "score_version": version,
+        "excluded_other_versions": len(all_rows) - len(rows),
     }
     for h in horizons:
         obs = []
@@ -238,9 +251,11 @@ def verdict(report: dict) -> str:
 
 
 def report_markdown(report: dict) -> str:
+    excluded = report.get("excluded_other_versions")
     lines = ["## Signal track record", "",
              f"{report['entries']} journal entries across {report['symbols']} symbols "
-             f"({report['first_date']} → {report['last_date']}).", "",
+             f"({report['first_date']} → {report['last_date']}), score version {report.get('score_version')}."
+             + (f" {excluded} entries from older score versions excluded." if excluded else ""), "",
              f"**Verdict:** {report['verdict']}", ""]
     for h in report["horizons"]:
         ic = "—" if h["ic"] is None else f"{h['ic']:+.3f}" + (f" ± {h['ic_se']:.3f}" if h["ic_se"] else "")

@@ -16,7 +16,8 @@ def jpath(tmp_path, monkeypatch):
 def _entry(d, sym, score, price=100.0, cls="stock", **comps):
     return {"date": d, "symbol": sym, "asset_class": cls, "price": price, "score": score,
             "label": "Bullish" if score >= 15 else "Bearish" if score <= -15 else "Neutral",
-            "coverage": 0.5, **{c: comps.get(c) for c in journal.COMPONENTS}}
+            "coverage": 0.5, **{c: comps.get(c) for c in journal.COMPONENTS},
+            "version": journal.SCORE_VERSION}
 
 
 def test_record_upserts_and_roundtrips(jpath):
@@ -136,3 +137,33 @@ def test_empty_sec_user_agent_falls_back_to_default(monkeypatch):
     assert Settings().sec_user_agent == "market-tracker contact@example.com"
     monkeypatch.setenv("SEC_USER_AGENT", "app me@x.com")
     assert Settings().sec_user_agent == "app me@x.com"
+
+
+def test_version_filtering(jpath):
+    old = dict(_entry("2026-09-24", "AAPL", 80), version="1")
+    new = dict(_entry("2026-09-25", "AAPL", 20), version=journal.SCORE_VERSION)
+    journal.record([old, new])
+    rows = journal.load()
+    assert [r["version"] for r in rows] == ["1", journal.SCORE_VERSION]
+    hist = [("2026-09-20", 100.0)] + [(f"2026-10-{d:02d}", 100.0 + d) for d in range(1, 31)]
+    rep = journal.evaluate(rows, lambda s: hist, horizons=(5,))
+    assert rep["entries"] == 1 and rep["excluded_other_versions"] == 1
+    assert journal.evaluate(rows, lambda s: hist, horizons=(5,), version=None)["entries"] == 2
+    assert "1 entries from older score versions excluded" in journal.report_markdown(rep)
+
+
+def test_unversioned_rows_load_as_version_1(jpath):
+    header = "date,symbol,asset_class,price,score,label,coverage,trend,momentum,smart_money,insider,news\n"
+    with open(jpath, "w") as fh:
+        fh.write(header + "2026-09-24,AAPL,stock,335.92,78.0,Strong bullish,0.65,100.0,72.0,,,51.4\n")
+    assert journal.load()[0]["version"] == "1"
+    journal.record([dict(_entry("2026-09-25", "MSFT", 5), version=journal.SCORE_VERSION)])
+    with open(jpath) as fh:
+        assert fh.readline().strip().endswith(",version")  # header upgraded on rewrite
+
+
+def test_entry_from_analysis_stamps_current_version():
+    a = {"symbol": "AAPL", "asset_class": "stock", "quote": {"price": 1.0},
+         "signal": {"score": 1, "label": "Neutral", "coverage": 1,
+                    "components": {c: None for c in journal.COMPONENTS}}}
+    assert journal.entry_from_analysis(a)["version"] == journal.SCORE_VERSION

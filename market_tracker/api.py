@@ -194,7 +194,8 @@ def journal_record(symbols: list[str] | None = None):
             symbols = db.watchlist(conn) or journal.DEFAULT_UNIVERSE
     entries, skipped = [], []
     for sym in symbols[:40]:
-        entry = journal.entry_from_analysis(service.analyze(sym, with_smart_money=False, with_insiders=False))
+        # Same components as the daily GitHub Actions job, so rows are comparable.
+        entry = journal.entry_from_analysis(service.analyze(sym))
         (entries.append(entry) if entry else skipped.append(sym))
     journal.record(entries)
     return {"recorded": len(entries), "skipped": skipped, "path": journal.journal_path()}

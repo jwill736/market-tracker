@@ -188,3 +188,15 @@ def test_ticker_map_avoids_false_matches():
     tmap = sec.build_ticker_map(raw)
     assert tmap.ticker_for_issuer("APPLE INC") is None  # one word never prefix-matches
     assert tmap.ticker_for_issuer("BANK AMER CORP") is None
+
+
+def test_news_mood_is_diluted_by_neutral_headlines():
+    def art(sent):
+        return news.Article("t", "s", "u", "2026-09-24", sent, "google")
+    few_positive = [art(0.5)] * 3 + [art(0.0)] * 37
+    assert news.summarize(few_positive)["avg_sentiment"] == pytest.approx(1.5 / 40)
+    from market_tracker.analytics import signals
+    # 3 upbeat headlines out of 40 is mild, not maximal, optimism.
+    score, _ = signals.news_component(news.summarize(few_positive))
+    assert 0 < score < 0.1
+    assert news.summarize([])["avg_sentiment"] == 0.0

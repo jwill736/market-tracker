@@ -81,6 +81,9 @@ works. Two traps it guards against:
   returns. Compare labels against each other, or use the IC; never judge a label by its own average.
 - **Daily entries overlap.** 700 rows of 21-day outcomes can be only ~40 independent observations. The verdict only claims
   an edge when the IC is at least twice its error band, and says "too early" below ~50 independent observations.
+- **Formula changes would blend two different scores.** Every row carries the score version it was computed with
+  (`SCORE_VERSION` in `journal.py`), and the report counts only the current version. Bump it whenever the score's
+  definition changes.
 
 **Position sizing matters more than picking.** `suggested_max_weight` caps a position so that a typical (1-sigma) monthly
 move costs no more than 2% of the portfolio. A 25%-volatility stock can be 20% of the portfolio. A 100%-volatility token

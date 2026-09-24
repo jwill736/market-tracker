@@ -158,6 +158,9 @@ def test_research_endpoint_streams_sse(client, fake_market, monkeypatch):
 
 def test_journal_endpoints(client, fake_market, tmp_path, monkeypatch):
     monkeypatch.setenv("MT_JOURNAL_PATH", str(tmp_path / "j.csv"))
+    # Recording now includes SEC components; keep the unit test off the network.
+    monkeypatch.setattr(service, "smart_money_reports", lambda refresh=False: ([], []))
+    monkeypatch.setattr(service.sec, "get_insider_trades", lambda sym, days=180: [])
     assert client.get("/api/journal/report").json()["entries"] == 0
     client.post("/api/watchlist/AAPL")
     r = client.post("/api/journal/record").json()
