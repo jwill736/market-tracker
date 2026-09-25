@@ -35,7 +35,7 @@ def client():
 
 def test_index_served(client):
     r = client.get("/")
-    assert r.status_code == 200 and "Market Tracker" in r.text
+    assert r.status_code == 200 and "Plumbline" in r.text
     assert client.get("/static/app.js").status_code == 200
 
 

@@ -247,12 +247,14 @@ function renderAnalysis(a) {
   const q = a.quote || {}, ind = a.indicators || {}, sig = a.signal;
   $("#analyze-tiles").innerHTML = [
     tile(a.symbol, fmtMoney(q.price), `<span class="${cls(q.change_pct)}">${arrow(q.change_pct)}${fmtPct(q.change_pct, 2)}</span> · ${esc(q.source || "")}`),
-    tile("Signal", sig ? `${sig.score > 0 ? "+" : ""}${sig.score}` : "—", sig ? `${esc(sig.label)} · coverage ${(sig.coverage * 100).toFixed(0)}%` : ""),
+    tile("Signal", sig ? `${sig.score > 0 ? "+" : ""}${sig.score}` : "—", sig ? `${esc(sig.label)} · coverage ${(sig.coverage * 100).toFixed(0)}%<br>` +
+      `<button type="button" class="chip-warn" data-goto="journal" title="The score has not yet been shown to predict returns">Unproven · see track record</button>` : ""),
     tile("Volatility (1y)", ind.vol_annual != null ? (ind.vol_annual * 100).toFixed(0) + "%" : "—", `RSI ${ind.rsi14 != null ? ind.rsi14.toFixed(0) : "—"}`),
     tile("12-1 momentum", fmtPct(ind.momentum_12_1 != null ? ind.momentum_12_1 * 100 : null), `1y max drawdown ${ind.max_drawdown_1y != null ? (ind.max_drawdown_1y * 100).toFixed(0) + "%" : "—"}`),
     tile("Max position", sig?.suggested_max_weight ? (sig.suggested_max_weight * 100).toFixed(1) + "%" : "—", "1σ monthly move ≈ 2% of portfolio"),
   ].join("");
 
+  $("#analyze-tiles").querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.goto)));
   if (a.history?.length > 2) priceChart($("#price-chart"), a.history, ind, a.forecast);
   $("#forecast-note").textContent = a.forecast?.note || "";
 

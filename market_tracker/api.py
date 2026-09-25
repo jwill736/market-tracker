@@ -18,7 +18,7 @@ from . import db, http, journal, research, service
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
-app = FastAPI(title="Market Tracker", version="0.1.0")
+app = FastAPI(title="Plumbline", version="0.1.0")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
