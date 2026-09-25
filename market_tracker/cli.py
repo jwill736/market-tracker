@@ -489,6 +489,16 @@ def cmd_site(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    from . import firstrun
+    if args.if_needed and not firstrun.needed():
+        return 0
+    firstrun.run(interactive=sys.stdin.isatty())
+    from . import config
+    config._load_dotenv()          # pick up the new values in this process too
+    return 0
+
+
 def cmd_serve(args) -> int:
     import threading
     import uvicorn
@@ -664,6 +674,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--journal", help="signal_journal.csv to publish scores and the track record from")
     s.add_argument("--alerts-dir", help="Folder holding insider_buys.csv and alerted.csv")
     s.set_defaults(func=cmd_site)
+
+    s = sub.add_parser("setup", help="First-run setup: your SEC contact email and phone alerts")
+    s.add_argument("--if-needed", action="store_true", help="Only when .env is missing or has no email yet")
+    s.set_defaults(func=cmd_setup)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")

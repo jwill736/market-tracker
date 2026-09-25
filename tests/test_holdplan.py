@@ -57,7 +57,7 @@ def test_wait_for_long_term_and_reinvest_queue():
 def test_endpoints(monkeypatch):
     monkeypatch.delenv("APP_PASSWORD", raising=False)
     monkeypatch.delenv("REQUIRE_LOGIN", raising=False)
-    api.holdplan_cache.store.clear()
+    holdplan.clear_cache()
     api.events_cache.store.clear()
     monkeypatch.setattr(service, "portfolio_summary", lambda txs, risk=True: {"positions": [pos("NKE", 20, 60)], "total_value": 1200})
     monkeypatch.setattr(sentinel.sentinel, "mine", lambda syms: ([], []))

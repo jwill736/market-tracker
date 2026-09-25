@@ -254,6 +254,12 @@ class Cache:
     def clear(self):
         self._c.store.clear()
 
+    def peek(self, key, max_age: float):
+        """The stored value if it's younger than max_age seconds, without computing anything."""
+        import time
+        hit = self._c.store.get(key)
+        return hit[1] if hit and time.monotonic() - hit[0] < max_age else None
+
 
 early_cache = Cache(120)
 

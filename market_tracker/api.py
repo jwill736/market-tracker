@@ -391,7 +391,6 @@ def _plan_candidates(watch: list[str], held: set[str], limit: int = 10) -> list[
     return keep[:limit]
 
 
-holdplan_cache = pulse.Cache(300)
 events_cache = pulse.Cache(3600)
 
 
@@ -400,14 +399,8 @@ def _hold_settings(conn) -> dict:
 
 
 async def _holdplan_data(refresh: bool = False) -> dict:
-    with db.connect() as conn:
-        txs = db.list_transactions(conn)
-        key = (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
-               db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(holdplan.settings(conn).items()))
-    if refresh:
-        holdplan_cache.store.clear()
     try:
-        return await asyncio.to_thread(holdplan_cache.get, key, holdplan.gather)
+        return await asyncio.to_thread(holdplan.cached, refresh)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -565,7 +558,7 @@ async def save_thesis(symbol: str, body: ThesisIn):
     with db.connect() as conn:
         db.save_thesis(conn, sym, body.model_dump())
         out = db.theses(conn)[sym]
-    holdplan_cache.store.clear()
+    holdplan.clear_cache()
     return out
 
 
@@ -573,7 +566,7 @@ async def save_thesis(symbol: str, body: ThesisIn):
 async def delete_thesis(symbol: str):
     with db.connect() as conn:
         db.delete_thesis(conn, market.normalize_symbol(symbol))
-    holdplan_cache.store.clear()
+    holdplan.clear_cache()
     return {}
 
 
@@ -591,7 +584,7 @@ async def hold_settings(body: HoldSettings):
             if v is not None:
                 db.set_meta(conn, meta, str(v))
         out = _hold_settings(conn)
-    holdplan_cache.store.clear()
+    holdplan.clear_cache()
     return out
 
 
@@ -880,7 +873,7 @@ def restore(body: RestoreIn):
         for sym, t in (d.get("theses") or {}).items():
             if sym not in have:
                 db.save_thesis(conn, sym, {k: v for k, v in t.items() if k not in ("symbol", "updated")})
-    holdplan_cache.store.clear()
+    holdplan.clear_cache()
     return {"transactions_added": added}
 
 
