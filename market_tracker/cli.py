@@ -350,7 +350,7 @@ def cmd_watch(args) -> int:
         since = (today - timedelta(days=90)).isoformat()
         watch_ciks = {r.issuer_cik for r in log if r.alerted >= since}
         res = realtime.poll(state, buys, alerted, now=datetime.now(timezone.utc), watch_ciks=watch_ciks,
-                            log=lambda m: print(m, file=sys.stderr, flush=True))
+                            close_fn=realtime.market_close, log=lambda m: print(m, file=sys.stderr, flush=True))
         print("\n".join(realtime.summary_lines(res)), flush=True)
         checks = {c.issuer_cik: dilution.check(c.issuer_cik, today) for c in res.clusters}
         if args.issues_dir:

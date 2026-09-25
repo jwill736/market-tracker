@@ -215,6 +215,31 @@ def _trade_key(b: Buy) -> tuple:
     return (b.issuer_cik, b.insider, b.trade_date, b.shares, b.price)
 
 
+PRICE_OUTLIER = 5.0      # a price this many times above or below the company's other buys is a typo
+
+
+def implausible_prices(buys: list[Buy], factor: float = PRICE_OUTLIER) -> set[tuple]:
+    """Trade keys of purchases whose price is out of line with the same company's other
+    insider purchases. Filers mistype prices: one Hyperscale Data Form 4 reported $18.00 for a
+    stock trading at $0.18, which turned a $180 purchase into $18,000 and into the alert. A
+    purchase needs at least two others from the same company to be judged."""
+    by_issuer: dict[str, list[Buy]] = {}
+    for b in buys:
+        by_issuer.setdefault(b.issuer_cik, []).append(b)
+    out = set()
+    for group in by_issuer.values():
+        if len(group) < 3:
+            continue
+        for b in group:
+            others = sorted(x.price for x in group if x is not b and x.price > 0)
+            if len(others) < 2 or b.price <= 0:
+                continue
+            med = others[len(others) // 2] if len(others) % 2 else (others[len(others) // 2 - 1] + others[len(others) // 2]) / 2
+            if b.price > med * factor or b.price < med / factor:
+                out.add(_trade_key(b))
+    return out
+
+
 def save_buys(buys: list[Buy], path: str, today: date) -> None:
     cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
     unique = {_trade_key(b): b for b in buys if b.filed >= cutoff}
@@ -268,7 +293,10 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
     end = as_of.isoformat()
     by_issuer: dict[str, list[Buy]] = {}
     seen: set[tuple] = set()
+    bad = implausible_prices(buys)
     for b in sorted(buys, key=lambda b: b.filed):
+        if _trade_key(b) in bad:
+            continue
         if start <= b.trade_date <= end and b.filed <= end and _same_trade(b) not in seen:
             seen.add(_same_trade(b))
             by_issuer.setdefault(b.issuer_cik, []).append(b)

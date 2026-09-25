@@ -154,3 +154,21 @@ def test_a_window_longer_than_the_feed_is_reported_as_a_gap():
     assert gaps == []                                               # the cursor was reached
     res = realtime.PollResult(gaps=["4: read 500 entries back to x, not back to y"])
     assert any(line.startswith("  GAP") for line in realtime.summary_lines(res))
+
+
+def _buy(insider, price, shares, day="2026-09-16", acc="a", cik="0000896493", sym="GPUS"):
+    return alerts.Buy("2026-09-18", acc, cik, "Hyperscale Data, Inc.", sym, insider, "Director", day, shares, price, shares * price)
+
+
+def test_mistyped_prices_do_not_count():
+    buys = [_buy("Ault", 0.1832, 125_000, acc="1"), _buy("Nisser", 0.1871, 250_000, acc="2"),
+            _buy("Cragun", 0.1865, 100_000, acc="3"), _buy("Horne", 18.0, 1_000, acc="4")]   # really $0.18
+    assert alerts.implausible_prices(buys) == {alerts._trade_key(buys[3])}
+    c = alerts.find_clusters(buys, NOW.date(), min_insiders=3, min_total=1)
+    assert len(c) == 1 and "Horne" not in c[0].insiders
+    # a $1M "buy" at 100x the day's close is dropped; a real one isn't
+    fake = _buy("Typo", 25.0, 50_000, acc="9", cik="1", sym="XYZ")
+    real = _buy("Real", 0.26, 5_000_000, acc="8", cik="2", sym="ABC")
+    closes = {"XYZ": 0.25, "ABC": 0.25}
+    got = realtime.big_buys([fake, real], close_fn=lambda s, d: closes[s])
+    assert [b.insider for b in got] == ["Real"]

@@ -95,7 +95,7 @@ def big_buy_rows(buys: list[alerts.Buy], today: date, is_fund: Callable[[str], b
     """Single insiders buying $1M+ in one filing over the last `days`, largest first."""
     since = (today - timedelta(days=days)).isoformat()
     out = []
-    for b in realtime.big_buys([b for b in buys if b.filed >= since]):
+    for b in realtime.big_buys([b for b in buys if b.filed >= since], peers=buys):
         if b.symbol.strip().upper() in alerts.NO_TICKER or is_fund(b.issuer_cik):
             continue
         out.append({"symbol": b.symbol, "company": b.issuer_name, "issuer_cik": b.issuer_cik,
