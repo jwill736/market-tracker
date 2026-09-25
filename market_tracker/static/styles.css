@@ -175,3 +175,39 @@ button.secondary { background: transparent; color: var(--accent); border: 1px so
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--mid); }
 @media (max-width: 720px) { .quick { order: 3; width: 100%; } .quick input { width: 100%; } }
+
+/* ---------------------------------------------------------------- pulse */
+.seg { display: flex; gap: 2px; background: var(--mid); padding: 3px; border-radius: 8px; flex-wrap: wrap; }
+.seg button { background: transparent; color: var(--ink-2); border: 0; padding: 5px 10px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; margin: 0 4px 2px 0; background: var(--mid); color: var(--ink-2); }
+.tag-in-the-news { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.tag-deep-coverage { background: color-mix(in srgb, var(--s3) 16%, transparent); color: var(--s3); }
+.tag-unusual-volume { background: color-mix(in srgb, var(--s2) 16%, transparent); color: var(--s2); }
+.tag-moving-without-news { background: var(--warn-bg); color: var(--warn-ink); }
+.clip { max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pulse-list { list-style: none; padding: 0; margin: 0; display: grid; }
+.pulse-list li { padding: 10px 0; border-top: 1px solid var(--grid); display: grid; gap: 3px; min-width: 0; }
+.pulse-list li:first-child { border-top: 0; }
+.pulse-list a { overflow-wrap: anywhere; }
+.sleepers { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 10px; }
+.sleeper { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.sleeper:hover, .sw-row:hover { border-color: var(--accent); }
+.sl-head { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.sl-head .clip { flex: 1; min-width: 0; }
+.sl-head .chip, .sw-head .chip { white-space: nowrap; flex-shrink: 0; }
+.sl-sym { font: 400 24px/1 "Instrument Serif", Georgia, serif; }
+.sleeper ul, .sw-row ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.sw-list { display: grid; gap: 8px; }
+.sw-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.sw-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.chip-review { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.sw-row li.sev2 { color: var(--ink); font-weight: 500; }
+.chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--mid); color: var(--ink-2); }
+.chip.dil { background: var(--warn-bg); color: var(--warn-ink); }
+.chip-ok { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good); }
+.chip-muted { background: var(--mid); color: var(--muted); }
+@media (max-width: 720px) {
+  .clip { max-width: 28ch; }
+  #movers-table th:nth-child(4), #movers-table td:nth-child(4), #movers-table th:nth-child(5), #movers-table td:nth-child(5) { display: none; }
+}

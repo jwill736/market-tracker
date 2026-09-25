@@ -22,7 +22,8 @@
     <span class="brand-tag">Measure it true before you trust it</span>
   </a>
   <nav id="tabs" role="tablist">
-    <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
+    <button role="tab" data-tab="pulse" aria-selected="true">Pulse</button>
+    <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
     <button role="tab" data-tab="analyze">Analyze</button>
     <button role="tab" data-tab="smart">Smart money</button>
     <button role="tab" data-tab="portfolio">Portfolio</button>
@@ -37,8 +38,35 @@
 <div class="tape" id="tape" aria-label="Live prices: your holdings and watchlist"></div>
 
 <main>
+  <!-- Pulse -->
+  <section id="tab-pulse" class="tab">
+    <div class="card" id="sw-card" hidden>
+      <div class="card-head"><h2>Sell watch: your holdings</h2><span class="chip-warn">Rules, not advice</span></div>
+      <p class="muted small">Each flag is a rule with its reason: a broken trend, negative momentum, insider selling, a stretched run-up, a position too big for its volatility, or share sales. "Review" means two or more serious flags. You decide.</p>
+      <div id="sw-list" class="sw-list"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Movers <span class="live" id="pulse-dot" title="Live prices">●</span></h2>
+        <div class="seg" role="tablist" aria-label="Mover list" id="mover-seg">
+          <button data-list="gainers" aria-pressed="true">Gainers</button><button data-list="losers">Losers</button>
+          <button data-list="active">Most active</button><button data-list="crypto">Crypto</button>
+        </div></div>
+      <div class="scroll"><table class="data" id="movers-table"></table></div>
+      <p class="muted small" id="pulse-meta"></p>
+    </div>
+    <div class="grid two">
+      <div class="card"><h2>In the news</h2><p class="muted small">Movers with the most headlines in the last 48 hours.</p><ul class="pulse-list" id="hot-list"></ul></div>
+      <div class="card"><h2>In-depth coverage</h2><p class="muted small">Movers covered by outlets that report rather than repost (Reuters, Bloomberg, WSJ, FT, Barron's and others).</p><ul class="pulse-list" id="deep-list"></ul></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Sleepers</h2><span class="chip-warn">Unproven</span></div>
+      <p class="muted small" id="sleeper-rule"></p>
+      <div id="sleeper-list" class="sleepers"></div>
+    </div>
+  </section>
+
   <!-- Dashboard -->
-  <section id="tab-dashboard" class="tab">
+  <section id="tab-dashboard" class="tab" hidden>
     <div class="grid two">
       <div class="card">
         <div class="card-head">
