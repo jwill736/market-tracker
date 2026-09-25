@@ -38,6 +38,10 @@ KEEP_DAYS = 120               # rolling window of buys kept in the CSV
 # SEC industry codes for investment funds: officers buying shares of a closed-end fund or BDC
 # says nothing about an operating business (the first backfill alerted on one).
 FUND_SIC = {"6722", "6726"}
+# Forms only investment companies file: shareholder reports, census and portfolio filings for
+# registered funds, and the registration and election forms of BDCs. Checked alongside the
+# industry code, because some funds (General American Investors, for one) carry another code.
+FUND_FORMS = {"N-CSR", "N-CSRS", "N-CEN", "NPORT-P", "N-PX", "N-2", "N-2/A", "N-54A", "N-54C", "N-23C-2"}
 NO_TICKER = {"", "NONE", "N/A", "NA"}
 
 
@@ -255,15 +259,17 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
 
 
 def issuer_is_fund(cik: str) -> bool:
-    """True for closed-end funds and BDCs, judged by the issuer's SEC industry code. Issuers
-    with no industry code at all are almost always funds or private vehicles. A lookup failure
+    """True for closed-end funds and BDCs: an investment-company industry code, no industry code
+    at all (almost always a fund or private vehicle), or any fund-only form among the issuer's
+    recent filings. A lookup failure
     counts as 'not a fund': a stray fund alert costs less than a missed company."""
     try:
         data = sec._sec_get(sec.SUBMISSIONS.format(cik=cik.zfill(10)), ttl=86400)
     except http.DataUnavailable:
         return False
     sic = str(data.get("sic") or "").strip()
-    return sic in FUND_SIC or not sic
+    forms = set(data.get("filings", {}).get("recent", {}).get("form", []))
+    return sic in FUND_SIC or not sic or bool(forms & FUND_FORMS)
 
 
 def skip_reason(c: Cluster, alerted: dict[str, str], as_of: date,

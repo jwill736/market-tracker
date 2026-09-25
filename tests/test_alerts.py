@@ -150,9 +150,16 @@ def test_funds_and_untradable_issuers_are_skipped():
 
 
 def test_fund_lookup_uses_sec_industry_code(monkeypatch):
-    codes = {"0000040417": {"sic": "6726"}, "0000777777": {"sic": "3990"}, "0000999999": {"sic": ""}}
+    def filings(*forms):
+        return {"recent": {"form": list(forms)}}
+    codes = {"0000040417": {"sic": "6726", "filings": filings("N-CSR")},
+             "0000777777": {"sic": "3990", "filings": filings("10-K", "4", "8-K")},
+             "0000999999": {"sic": ""},
+             # A closed-end fund filed under an operating-company industry code.
+             "0000040418": {"sic": "6211", "filings": filings("N-CEN", "NPORT-P", "4")}}
     monkeypatch.setattr(alerts.sec, "_sec_get", lambda url, ttl: codes[url.split("CIK")[1][:10]])
     assert alerts.issuer_is_fund("40417") and alerts.issuer_is_fund("0000999999")
+    assert alerts.issuer_is_fund("40418")
     assert not alerts.issuer_is_fund("0000777777")
 
     def down(url, ttl):

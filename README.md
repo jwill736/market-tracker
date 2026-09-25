@@ -145,7 +145,7 @@ market_tracker/
 on the open market, at least $10k each and $100k in total, within 30 days, and all of the following hold:
 - the buys span at least 2 trading days, because same-day batches are usually compensation programs;
 - the newest filing is at most 7 days old, so a backfill or a late run doesn't raise old news;
-- the issuer has a ticker and isn't a closed-end fund or BDC (SEC industry code 6722/6726, or none);
+- the issuer has a ticker and isn't a closed-end fund or BDC (an investment-company industry code, none at all, or fund-only filings such as N-CSR or N-2);
 - the company wasn't alerted in the last 30 days.
 
 A trade filed twice counts once. The job summary lists every active cluster with the reason it did or didn't alert
