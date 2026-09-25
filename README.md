@@ -91,6 +91,19 @@ works. Two traps it guards against:
 move costs no more than 2% of the portfolio. A 25%-volatility stock can be 20% of the portfolio. A 100%-volatility token
 should be about 7%.
 
+## Public site
+
+`https://jwill736.github.io/market-tracker/` is a read-only Plumbline page that anyone can open. It shows:
+- crypto prices streaming live from Coinbase in your browser;
+- stock quotes as of the latest snapshot;
+- today's scores and what drives them;
+- recent insider cluster buys;
+- the live track record and the backtest.
+
+It never publishes your portfolio, deep dives or keys; those stay in the local app (`mt serve`). One-time setup:
+**Settings → Pages → Build and deployment → Source: GitHub Actions**. Build it locally with
+`mt site --journal signal_journal.csv --alerts-dir alerts_data` and open `_site/index.html` through any static server.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -126,6 +139,7 @@ market_tracker/
 | `journal.yml` | weekdays after the US close, on demand | records the 15-symbol universe and commits `signal_journal.csv` to the `journal-data` branch; the job summary shows the track record |
 | `score-backtest.yml` | on demand | rebuilds the score month by month from 2016 using only data public at each date, and reports how well each component ranked later returns |
 | `insider-alerts.yml` | daily at 10:30 UTC, on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
+| `site.yml` | every 30 min in US market hours, every 6 h otherwise, after journal and alert runs | builds the public site (`mt site`) and deploys it to GitHub Pages |
 
 **When an insider cluster opens an issue.** At least 3 officers or directors (10% holders alone don't count) buy
 on the open market, at least $10k each and $100k in total, within 30 days, and all of the following hold:
