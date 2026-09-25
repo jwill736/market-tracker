@@ -216,11 +216,43 @@ class BigBuy:
     accession: str
 
 
-def big_buys(new: list[alerts.Buy], threshold: float = BIG_BUY_VALUE) -> list[BigBuy]:
-    """One insider's open-market purchases in one filing, summed, when they reach threshold."""
+MARKET_PRICE_OUTLIER = 3.0   # reported price vs the day's close
+
+
+def market_close(symbol: str, day: str) -> float | None:
+    """The stock's close on `day`, or the last one before it."""
+    from .providers import market
+    close = None
+    for bar in market.get_history(symbol, 20):
+        if bar.date > day:
+            break
+        close = bar.close
+    return close
+
+
+def big_buys(new: list[alerts.Buy], threshold: float = BIG_BUY_VALUE, *, peers: list[alerts.Buy] | None = None,
+             close_fn: Callable[[str, str], float | None] | None = None) -> list[BigBuy]:
+    """One insider's open-market purchases in one filing, summed, when they reach threshold.
+    Purchases with an implausible price are left out: out of line with the company's other
+    insider buys (`peers`), or more than 3x away from the stock's close that day (`close_fn`,
+    symbol and date -> close), since a mistyped price is the easiest way to fake a $1M buy."""
+    bad = alerts.implausible_prices(list(peers or []) + [b for b in new if b not in (peers or [])])
     groups: dict[tuple, list[alerts.Buy]] = {}
     seen: set[tuple] = set()
+    closes: dict[tuple, float | None] = {}
     for b in new:
+        if alerts._trade_key(b) in bad:
+            continue
+        if close_fn and b.symbol and b.price > 0:
+            k = (b.symbol, b.trade_date)
+            if k not in closes:
+                try:
+                    closes[k] = close_fn(b.symbol, b.trade_date)
+                except (http.DataUnavailable, KeyError, ValueError):
+                    closes[k] = None
+            c = closes[k]
+            if c and (b.price > c * MARKET_PRICE_OUTLIER or b.price < c / MARKET_PRICE_OUTLIER):
+                continue
         if alerts._same_trade(b) in seen:   # the same purchase reported by a related filer
             continue
         seen.add(alerts._same_trade(b))
@@ -280,6 +312,7 @@ def poll(state: WatchState, buys: list[alerts.Buy], alerted: dict[str, str], *, 
          submission_fn: Callable[[FeedEntry], str] = submission_text,
          is_fund: Callable[[str], bool] = alerts.issuer_is_fund,
          watch_ciks: set[str] | frozenset[str] = frozenset(),
+         close_fn: Callable[[str, str], float | None] | None = None,
          log: Callable[[str], None] = lambda m: None) -> PollResult:
     """Read the feeds once and work out what's new. Mutates `buys`, `alerted` and `state`
     (the caller saves them) and returns what should be announced."""
@@ -331,7 +364,7 @@ def poll(state: WatchState, buys: list[alerts.Buy], alerted: dict[str, str], *, 
         for c in res.clusters:
             alerted[c.issuer_cik] = today.isoformat()
         cutoff = (today - timedelta(days=alerts.REALERT_AFTER_DAYS)).isoformat()
-        for big in big_buys(res.new_buys):
+        for big in big_buys(res.new_buys, peers=buys, close_fn=close_fn):
             key = "big:" + big.issuer_cik
             if (big.symbol.strip().upper() in alerts.NO_TICKER or alerted.get(key, "") >= cutoff
                     or is_fund(big.issuer_cik)):

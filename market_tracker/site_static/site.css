@@ -142,3 +142,8 @@ footer { max-width: 1160px; margin: 0 auto; padding: 24px 16px 48px; color: var(
 .chip.dil { background: var(--warn-bg); color: var(--warn-ink); }
 .status-open { color: var(--muted); }
 @media (max-width: 640px) { .co-col { display: none; } }
+
+.rc-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rc-chain summary { cursor: pointer; font-weight: 600; }
+code.hash { font-size: 11px; overflow-wrap: anywhere; }
+#rc-table code { font-size: 12px; }

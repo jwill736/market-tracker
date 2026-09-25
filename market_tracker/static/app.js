@@ -48,15 +48,17 @@ function selectTab(name) {
   if (name === "plan") loadPlan();
   if (name === "home") loadHome();
   if (name === "early") loadEarly();
-  if (name === "people") loadPeople();
+  if (name === "people") { loadPeople(); loadPickers(); }
+  if (name === "hold") loadHold();
   if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
-  if (name === "radar") loadRadar();
+  if (name === "radar") { loadRadar(); loadCryptoRadar(); }
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
   if (name !== "early" && typeof Live !== "undefined") Live.drop("early");
   if (name !== "people" && typeof Live !== "undefined") Live.drop("people");
   if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
   if (name !== "plan" && typeof Live !== "undefined") Live.drop("plan");
+  if (name !== "hold" && typeof Live !== "undefined") Live.drop("hold");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
 }
 
@@ -1078,7 +1080,8 @@ setInterval(() => {
   if (tab === "radar" && now - rrState.loadedAt > 120000) loadRadar();
   if (tab === "home" && now - homeState.loadedAt > (homeState.range === "1d" ? 60000 : 600000)) loadHome(true);
   if (tab === "early" && typeof earlyState !== "undefined" && now - earlyState.loadedAt > 120000) loadEarly();
-  if (tab === "people" && typeof peopleState !== "undefined" && now - peopleState.loadedAt > 1800000) loadPeople();
+  if (tab === "people" && typeof peopleState !== "undefined" && now - peopleState.loadedAt > 1800000) { loadPeople(); loadPickers(); }
+  if (tab === "hold" && typeof holdState !== "undefined" && holdState.data && now - holdState.loadedAt > 300000) loadHold();
 }, 15000);
 
 // ---------------------------------------------------------------- strategy plan
@@ -1379,6 +1382,7 @@ async function loadHome(quiet = false) {
   loadCash();
   renderHomeLists();
   loadHomeFeeds();
+  if (!quiet || Date.now() - briefState.loadedAt > 600000) loadBrief();
   if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
   try {
     const d = await api("/api/portfolio/history?range=" + homeState.range);
@@ -1759,6 +1763,186 @@ async function loadCopy(who) {
     peopleState.copies[who] = html;
     out().forEach((el) => { el.innerHTML = html; });
   } catch (err) { out().forEach((el) => { el.textContent = err.message; }); }
+}
+
+
+// ---------------------------------------------------------------- hold plan
+const holdState = { data: null, loadedAt: 0 };
+const VERDICT_CLASS = { "Sell?": "v-sell", Trim: "v-trim", Review: "v-review", Hold: "v-hold" };
+async function loadHold(force = false) {
+  if (!holdState.data) $("#hp-meta").textContent = "Checking your holdings, their filings and your tax lots…";
+  try {
+    holdState.data = await api("/api/holdplan" + (force ? "?refresh=true" : ""));
+    holdState.loadedAt = Date.now();
+    renderHold();
+  } catch (err) { $("#hp-meta").textContent = err.message; }
+}
+function holdRow(h) {
+  const s = esc(h.symbol), t = h.thesis;
+  const trig = h.triggers.filter((x) => !(x.kind === "thesis" && x.level === "info"));
+  const e = h.earnings;
+  return `<div class="card hp-row ${VERDICT_CLASS[h.verdict]}">
+    <div class="pc-head"><span class="act">${esc(h.verdict)}</span>
+      <button type="button" class="linkish pc-sym" data-open="${s}">${esc(h.symbol.replace(/-USD$/, ""))}</button>
+      <span class="pc-price" data-live="${s}" data-lf="price">${fmtMoney(h.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
+      <span class="muted small pc-w"><b data-live="${s}" data-lf="value" data-qty="${h.quantity}">${fmtMoney(h.value, 0)}</b> · ${(h.weight * 100).toFixed(1)}% of portfolio${h.cost_pct != null ? ` · <span class="${cls(h.cost_pct)}">${fmtPct(h.cost_pct, 0)}</span> from cost` : ""}</span></div>
+    ${trig.length ? `<ul class="pc-why">${trig.map((x) => `<li class="t-${esc(x.level)}">${esc(x.text)}</li>`).join("")}</ul>` : `<p class="muted small">Nothing says otherwise: holding is the plan.</p>`}
+    ${e ? `<p class="small">Reports ${esc(e.date)}${e.estimated ? " (estimated)" : ""}${e.move_pct != null ? `: options price about ±${e.move_pct.toFixed(1)}%, <b>±${fmtMoney(e.move_dollars, 0)}</b> on yours` : ""}</p>` : ""}
+    <div class="hp-thesis small">${t && (t.thesis || t.wrong_if) ? `<b>Why you own it:</b> ${esc(t.thesis || "—")}${t.wrong_if ? ` · <b>Wrong if:</b> ${esc(t.wrong_if)}` : ""}` : `<span class="muted">No reason written down yet.</span>`}
+      <button type="button" class="linkish" data-thesis="${s}">${t ? "Edit" : "Write it down"}</button></div>
+  </div>`;
+}
+function renderHold() {
+  const d = holdState.data;
+  $("#hp-meta").innerHTML = `Updated ${esc(d.as_of)} · cap ${(d.cap * 100).toFixed(0)}%${d.errors && d.errors.length ? ` · ${d.errors.length} source note${d.errors.length > 1 ? "s" : ""}` : ""}`;
+  $("#hp-counts").innerHTML = Object.entries(d.counts).filter(([, n]) => n).map(([v, n]) => `<span class="chip ${VERDICT_CLASS[v]}">${n} ${esc(v)}</span>`).join("")
+    || `<span class="muted small">No holdings yet: import your accounts on the Portfolio tab.</span>`;
+  $("#hp-cap").value = Math.round(d.rules.cap * 100); $("#hp-st").value = Math.round(d.rules.short_term_rate * 100); $("#hp-lt").value = Math.round(d.rules.long_term_rate * 100);
+  $("#hp-list").innerHTML = d.holdings.map(holdRow).join("");
+  $("#hp-freed").textContent = d.freed ? `${fmtMoney(d.freed, 0)} to place (trims + buying power)` : "";
+  $("#hp-reinvest").innerHTML = d.reinvest.map((q) => `<li><button type="button" class="linkish" data-open="${esc(q.symbol)}"><b>${esc(q.symbol)}</b></button>
+      ${q.amount ? `<b>${fmtMoney(q.amount, 0)}</b> ` : ""}<span class="muted small">${esc(q.why)}</span></li>`).join("");
+  const ev = d.events || { earnings: [], macro: [] };
+  $("#hp-events").innerHTML = [...ev.earnings.map((e) => `<li><b>${esc(e.date)}</b> <button type="button" class="linkish" data-open="${esc(e.symbol)}">${esc(e.symbol)}</button> earnings${e.estimated ? " (estimated)" : ""}
+      ${e.move_pct != null ? `· options ±${e.move_pct.toFixed(1)}% ≈ <b>±${fmtMoney(e.move_dollars, 0)}</b> on yours <span class="muted small">(to ${esc(e.expiry)})</span>` : ""}</li>`),
+    ...ev.macro.slice(0, 12).map((m) => `<li><b>${esc(m.date)}</b> ${esc(m.kind)} <span class="muted small">${esc(m.name)}${m.consensus ? ` · forecast ${esc(m.consensus)}` : ""}</span></li>`)].join("")
+    || `<li class="muted">No earnings for your stocks in the next 100 days, and no big releases in two weeks.</li>`;
+  renderTax(d.tax);
+  document.querySelectorAll("#tab-hold [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  document.querySelectorAll("#tab-hold [data-thesis]").forEach((el) => el.addEventListener("click", () => openThesis(el.dataset.thesis)));
+  bindLive("hold", $("#tab-hold"));
+}
+function renderTax(t) {
+  const r = t.realized;
+  $("#hp-tax-meta").textContent = `Rates used: ${(t.rates.short_term * 100).toFixed(0)}% short-term, ${(t.rates.long_term * 100).toFixed(0)}% long-term`;
+  $("#hp-realized").innerHTML = `<div><span class="muted small">Short-term gains this year</span><b class="${cls(r.short_term)}">${fmtMoney(r.short_term, 0)}</b></div>
+    <div><span class="muted small">Long-term gains this year</span><b class="${cls(r.long_term)}">${fmtMoney(r.long_term, 0)}</b></div>
+    <div><span class="muted small">Losses disallowed by wash sales</span><b>${fmtMoney(r.wash_disallowed, 0)}</b></div>`;
+  const parts = [];
+  if (t.blackout.length) parts.push(`<h3>Don't buy yet</h3><ul class="hp-lines">${t.blackout.map((b) => `<li><b>${b.avoid.map(esc).join(" / ")}</b> until <b>${esc(b.until)}</b>
+    <span class="muted small">sold at a ${fmtMoney(b.loss, 0)} loss on ${esc(b.sold)}; buying back sooner, in any account, cancels the deduction</span></li>`).join("")}</ul>`);
+  if (t.wash_sales.length) parts.push(`<h3>Wash sales found</h3><ul class="hp-lines">${t.wash_sales.map((w) => `<li><b>${esc(w.symbol)}</b> sold ${esc(w.sold)} at a ${fmtMoney(w.loss, 0)} loss
+    <span class="muted small">${esc(w.note)} (about ${fmtMoney(w.disallowed, 0)} disallowed)</span></li>`).join("")}</ul>`);
+  if (t.clock.length) parts.push(`<h3>Worth waiting for long-term</h3><ul class="hp-lines">${t.clock.map((c) => `<li><b>${esc(c.symbol)}</b> ${fmtShares(c.quantity)} bought ${esc(c.bought)}${c.account ? ` in ${esc(c.account)}` : ""}
+    turn long-term <b>${esc(c.long_term_on)}</b> (${c.days} days) <span class="muted small">selling after that saves about ${fmtMoney(c.saving, 0)} on a ${fmtMoney(c.gain, 0)} gain</span></li>`).join("")}</ul>`);
+  if (t.harvest.length) parts.push(`<h3>Losses worth harvesting</h3><ul class="hp-lines">${t.harvest.map((h) => `<li><b>${esc(h.symbol)}</b>${h.account ? ` <span class="muted small">${esc(h.account)}</span>` : ""}
+    down ${fmtMoney(h.loss, 0)} (${h.loss_pct.toFixed(0)}%): selling saves about <b>${fmtMoney(h.tax_saved, 0)}</b>; hold <b>${esc(h.replacement)}</b> instead <span class="muted small">(${esc(h.replacement_why)})</span>
+    ${h.blocked_by.length ? `<div class="down small">You bought ${h.blocked_by.map((b) => `${esc(b.symbol)} on ${esc(b.date)}${b.account ? " in " + esc(b.account) : ""}`).join(", ")}: selling now would wash part of this loss.</div>` : ""}
+    <div class="muted small">${esc(h.note)}</div></li>`).join("")}</ul>`);
+  $("#hp-tax").innerHTML = parts.join("") || `<p class="muted small">No wash sales, no don't-buy windows, nothing turning long-term within 90 days and no losses worth harvesting.</p>`;
+}
+$("#hp-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/holdplan/settings", { method: "POST", body: JSON.stringify({ cap: +$("#hp-cap").value / 100, st_rate: +$("#hp-st").value / 100, lt_rate: +$("#hp-lt").value / 100 }) });
+    $("#hp-settings-msg").textContent = "Saved"; loadHold(true);
+  } catch (err) { $("#hp-settings-msg").textContent = err.message; }
+});
+
+// the "why you own it" form
+let thesisSym = null;
+async function openThesis(sym) {
+  thesisSym = sym;
+  $("#th-title").textContent = `Why you own ${sym.replace(/-USD$/, "")}`;
+  $("#th-msg").textContent = "";
+  let t = {};
+  try { t = (await api("/api/thesis"))[sym] || {}; } catch { /* new */ }
+  $("#th-thesis").value = t.thesis || ""; $("#th-wrong").value = t.wrong_if || "";
+  $("#th-below").value = t.price_below ?? ""; $("#th-above").value = t.price_above ?? ""; $("#th-loss").value = t.max_loss_pct ?? "";
+  $("#th-target").value = t.target_weight != null ? +(t.target_weight * 100).toFixed(2) : ""; $("#th-review").value = t.review_on || "";
+  $("#th-delete").hidden = !t.symbol;
+  $("#thesis-modal").hidden = false; $("#th-thesis").focus();
+}
+const closeThesis = () => { $("#thesis-modal").hidden = true; };
+$("#th-close").addEventListener("click", closeThesis);
+$("#thesis-modal").addEventListener("click", (e) => { if (e.target.id === "thesis-modal") closeThesis(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#thesis-modal").hidden) closeThesis(); });
+const numOrNull = (v) => v === "" ? null : +v;
+$("#th-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const target = numOrNull($("#th-target").value);
+  const body = { thesis: $("#th-thesis").value.trim(), wrong_if: $("#th-wrong").value.trim(), price_below: numOrNull($("#th-below").value),
+    price_above: numOrNull($("#th-above").value), max_loss_pct: numOrNull($("#th-loss").value), review_on: $("#th-review").value || null,
+    target_weight: target ? target / 100 : null };
+  try { await api("/api/thesis/" + encodeURIComponent(thesisSym), { method: "POST", body: JSON.stringify(body) }); closeThesis(); loadHold(true); }
+  catch (err) { $("#th-msg").textContent = err.message; }
+});
+$("#th-delete").addEventListener("click", async () => {
+  try { await api("/api/thesis/" + encodeURIComponent(thesisSym), { method: "DELETE" }); closeThesis(); loadHold(true); }
+  catch (err) { $("#th-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- morning brief (Home)
+const briefState = { data: null, loadedAt: 0, all: false };
+async function loadBrief() {
+  if (!holdingsList.length) { $("#home-brief").hidden = true; return; }
+  try { briefState.data = await api("/api/brief"); briefState.loadedAt = Date.now(); renderBrief(); } catch { /* offline: leave hidden */ }
+}
+function renderBrief() {
+  const b = briefState.data;
+  $("#home-brief").hidden = false;
+  $("#hb-title").textContent = b.title.replace(/^Morning brief: /, "Today: ").replace(/^./, (c) => c.toUpperCase());
+  $("#hb-when").innerHTML = `built <span data-ago="${esc(b.generated_at)}"></span>`;
+  const lines = briefState.all ? b.lines : b.lines.slice(0, 5);
+  $("#hb-list").innerHTML = lines.map((ln) => `<li class="lvl${ln.level}"><span class="hb-sec">${esc(ln.section)}</span>
+    ${ln.symbol && !ln.symbol.includes(",") ? `<button type="button" class="linkish" data-open="${esc(ln.symbol)}">${esc(ln.text)}</button>` : esc(ln.text)}</li>`).join("");
+  $("#hb-more").hidden = b.lines.length <= 5;
+  $("#hb-more").textContent = briefState.all ? "Show less" : `Show all ${b.lines.length}`;
+  document.querySelectorAll("#hb-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  paintAgo();
+}
+$("#hb-more").addEventListener("click", () => { briefState.all = !briefState.all; if (briefState.data) renderBrief(); });
+
+// ---------------------------------------------------------------- stock pickers (People)
+const pickState = { data: null, loadedAt: 0 };
+async function loadPickers(force = false) {
+  try { pickState.data = await api("/api/pickers" + (force ? "?refresh=true" : "")); pickState.loadedAt = Date.now(); renderPickers(); }
+  catch (err) { $("#pk-meta").textContent = err.message; }
+}
+function renderPickers() {
+  const d = pickState.data;
+  $("#pk-meta").textContent = d.following.length ? `${d.following.length} followed · graded ${d.horizon} trading days after each call` : "";
+  $("#pk-suggested").innerHTML = d.suggested.length ? `<span class="muted small">Suggested:</span> ` + d.suggested.slice(0, 12).map((u) =>
+    `<button type="button" class="chip" data-pick="${esc(u.username)}">${esc(u.username)} <span class="muted">${(u.followers / 1000).toFixed(0)}k</span></button>`).join("") : "";
+  $("#pk-list").innerHTML = d.following.map((g) => {
+    const calls = g.calls.slice(0, 8);
+    return `<div class="pk-card"><div class="pc-head"><b>${esc(g.username)}</b><span class="muted small">${g.profile && g.profile.followers ? (g.profile.followers).toLocaleString() + " followers · " : ""}${g.bullish} bullish · ${g.bearish} bearish calls</span>
+      <button type="button" class="ghost small" data-unpick="${esc(g.username)}">Unfollow</button></div>
+      <p>${g.scored ? `Beat SPY on <b>${Math.round(g.hit_rate * 100)}%</b> of ${g.scored} scored calls · median <b class="${cls(g.median_excess_pct)}">${fmtPct(g.median_excess_pct, 2)}</b> vs SPY`
+        : "No calls old enough to score yet"}${g.pending ? ` <span class="muted small">· ${g.pending} waiting</span>` : ""}${g.scored && g.scored < 30 ? ` <span class="muted small">· too few to judge</span>` : ""}</p>
+      ${calls.length ? `<div class="scroll"><table class="data"><thead><tr><th>Called</th><th>Ticker</th><th>Side</th><th class="num">Price then</th><th class="num">Since</th><th class="num">5-day vs SPY</th></tr></thead><tbody>
+      ${calls.map((c) => `<tr><td class="nowrap">${esc(c.day)}</td><td><button type="button" class="linkish" data-open="${esc(c.symbol)}">${esc(c.symbol)}</button></td>
+        <td class="${c.side === "bullish" ? "up" : "down"}">${esc(c.side)}</td><td class="num">${fmtMoney(c.price)}</td><td class="num ${cls(c.since_pct)}">${fmtPct(c.since_pct, 1)}</td>
+        <td class="num">${c.excess_pct == null ? `<span class="muted">waiting</span>` : `<span class="${c.right ? "up" : "down"}">${fmtPct(c.excess_pct, 1)} ${c.right ? "✓" : "✗"}</span>`}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${g.errors.length ? `<p class="muted small">${esc(g.errors[0])}</p>` : ""}</div>`;
+  }).join("") || `<p class="muted small">Follow someone to start grading their calls.</p>`;
+  document.querySelectorAll("#pk-suggested [data-pick]").forEach((b) => b.addEventListener("click", () => followPicker(b.dataset.pick)));
+  document.querySelectorAll("#pk-list [data-unpick]").forEach((b) => b.addEventListener("click", async () => {
+    await api("/api/pickers/follow?username=" + encodeURIComponent(b.dataset.unpick), { method: "DELETE" }); loadPickers(true);
+  }));
+  document.querySelectorAll("#pk-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+async function followPicker(user) {
+  $("#pk-msg").textContent = `Grading ${user}…`;
+  try { await api("/api/pickers/follow", { method: "POST", body: JSON.stringify({ username: user }) }); $("#pk-msg").textContent = ""; $("#pk-user").value = ""; loadPickers(true); }
+  catch (err) { $("#pk-msg").textContent = err.message; }
+}
+$("#pk-form").addEventListener("submit", (e) => { e.preventDefault(); const u = $("#pk-user").value.trim().replace(/^@/, ""); if (u) followPicker(u); });
+
+// ---------------------------------------------------------------- crypto radar (Radar)
+async function loadCryptoRadar() {
+  try {
+    const d = await api("/api/cryptoradar");
+    $("#cr-card").hidden = !d.coins.length;
+    if (!d.coins.length) return;
+    $("#cr-meta").innerHTML = `${d.coins.map(esc).join(", ")} · checked <span data-ago="${esc(d.generated_at)}"></span>${d.errors.length ? ` · ${d.errors.length} source errors` : ""}`;
+    const names = { 3: "Act today", 2: "Serious", 1: "Read it" };
+    $("#cr-list").innerHTML = d.alerts.map((a) => `<li class="rr lvl${a.level}"><span class="rr-level">${names[a.level]}</span>
+      <div><b>${esc(a.text)}</b><div class="small">${a.date ? esc(a.date) + " · " : ""}${esc(a.kind)}${a.coins && a.coins.length ? " · " + a.coins.map(esc).join(", ") : ""}
+      ${a.url ? ` · <a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">Source ↗</a>` : ""}</div></div></li>`).join("")
+      || `<li class="muted">Nothing on your coins: no hacks on their chains, no Coinbase incidents, no depegs.</li>`;
+    paintAgo();
+  } catch (err) { $("#cr-meta").textContent = err.message; }
 }
 
 // ---------------------------------------------------------------- start

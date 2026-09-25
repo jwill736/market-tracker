@@ -16,7 +16,7 @@ import shutil
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
-from . import alerts, dilution, http, journal, realtime, scorecard
+from . import alerts, dilution, http, journal, realtime, receipts, scorecard
 from .providers import market
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_static")
@@ -95,7 +95,7 @@ def big_buy_rows(buys: list[alerts.Buy], today: date, is_fund: Callable[[str], b
     """Single insiders buying $1M+ in one filing over the last `days`, largest first."""
     since = (today - timedelta(days=days)).isoformat()
     out = []
-    for b in realtime.big_buys([b for b in buys if b.filed >= since]):
+    for b in realtime.big_buys([b for b in buys if b.filed >= since], peers=buys):
         if b.symbol.strip().upper() in alerts.NO_TICKER or is_fund(b.issuer_cik):
             continue
         out.append({"symbol": b.symbol, "company": b.issuer_name, "issuer_cik": b.issuer_cik,
@@ -143,7 +143,7 @@ def build_data(journal_rows: list[dict], buys: list[alerts.Buy], alerted: dict[s
                is_fund=alerts.issuer_is_fund, backtest: dict | None = None,
                now: datetime | None = None, stakes: list[realtime.Stake] | None = None,
                log: list[scorecard.AlertRecord] | None = None, dilution_fn=None,
-               price_fn=scorecard.history_closes) -> dict:
+               price_fn=scorecard.history_closes, early_calls=None, chain=None, receipts_history_fn=None) -> dict:
     check = dilution_fn or (lambda cik: dilution.check(cik, today))
     clusters = cluster_rows(buys, alerted, today, is_fund)
     featured = [r for r in clusters if r["status"] in ("new", "alerted")]
@@ -164,6 +164,9 @@ def build_data(journal_rows: list[dict], buys: list[alerts.Buy], alerted: dict[s
             "max_age_days": alerts.ALERT_MAX_AGE_DAYS,
         },
         "backtest": backtest,
+        "receipts": (receipts.public_calls(early_calls or [], chain or [], now or datetime.now(timezone.utc),
+                                           history_fn=receipts_history_fn)
+                     if (early_calls or chain) else None),
     }
 
 
@@ -178,6 +181,8 @@ def build(out_dir: str, journal_file: str | None, alerts_dir: str | None, today:
         alerted = alerts.load_alerted(os.path.join(alerts_dir, "alerted.csv"))
         stakes = realtime.load_stakes(os.path.join(alerts_dir, "stakes.csv"))
         kw.setdefault("log", scorecard.load_log(os.path.join(alerts_dir, "alert_log.csv")))
+        kw.setdefault("early_calls", receipts.load_early(os.path.join(alerts_dir, receipts.EARLY_FILE)))
+        kw.setdefault("chain", receipts.load_chain(os.path.join(alerts_dir, receipts.CHAIN_FILE)))
     backtest_file = os.path.join(STATIC_DIR, "backtest.json")
     backtest = json.load(open(backtest_file, encoding="utf-8")) if os.path.exists(backtest_file) else None
     data = build_data(rows, buys, alerted, today=today, backtest=backtest, stakes=stakes, **kw)

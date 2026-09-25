@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS snapshots (
     data TEXT NOT NULL,
     PRIMARY KEY (source, day)
 );
+CREATE TABLE IF NOT EXISTS picker_calls (
+    id TEXT PRIMARY KEY,
+    user TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    created TEXT NOT NULL,
+    price REAL NOT NULL,
+    body TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS theses (
+    symbol TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated TEXT NOT NULL DEFAULT (date('now'))
+);
 CREATE TABLE IF NOT EXISTS follows (
     who TEXT PRIMARY KEY,
     grp TEXT NOT NULL,
@@ -186,6 +200,37 @@ def delete_topic(conn, name: str) -> None:
     conn.execute("DELETE FROM topics WHERE name = ?", (name,))
 
 
+def save_picker_calls(conn, calls: list[dict]) -> int:
+    n = 0
+    for c in calls:
+        cur = conn.execute("INSERT OR IGNORE INTO picker_calls (id, user, symbol, side, created, price, body) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)", (c["id"], c["user"], c["symbol"], c["side"], c["created"],
+                                                            c["price"], c.get("body", "")))
+        n += cur.rowcount
+    return n
+
+
+def picker_calls(conn, user: str) -> list[dict]:
+    return [dict(r, day=r["created"][:10]) for r in
+            conn.execute("SELECT * FROM picker_calls WHERE user = ? ORDER BY created DESC", (user.lower(),))]
+
+
+def theses(conn) -> dict[str, dict]:
+    import json
+    return {r["symbol"]: dict(json.loads(r["data"]), symbol=r["symbol"], updated=r["updated"])
+            for r in conn.execute("SELECT symbol, data, updated FROM theses")}
+
+
+def save_thesis(conn, symbol: str, data: dict) -> None:
+    import json
+    conn.execute("INSERT INTO theses (symbol, data, updated) VALUES (?, ?, date('now')) ON CONFLICT(symbol) DO UPDATE "
+                 "SET data = excluded.data, updated = excluded.updated", (symbol.upper(), json.dumps(data)))
+
+
+def delete_thesis(conn, symbol: str) -> None:
+    conn.execute("DELETE FROM theses WHERE symbol = ?", (symbol.upper(),))
+
+
 def get_meta(conn, key: str, default: str = "") -> str:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else default
@@ -223,8 +268,11 @@ def snapshots(conn, source: str, limit: int = 2) -> list[tuple[str, str]]:
             conn.execute("SELECT day, data FROM snapshots WHERE source = ? ORDER BY day DESC LIMIT ?", (source, limit))]
 
 
-def follows(conn) -> dict[str, str]:
-    return {r["who"]: r["grp"] for r in conn.execute("SELECT who, grp FROM follows ORDER BY who")}
+def follows(conn, include_pickers: bool = False) -> dict[str, str]:
+    """People followed on the People tab (Congress, ARK, insiders, activists); stock pickers
+    followed for scorecards are kept in the same table under the "picker" group."""
+    return {r["who"]: r["grp"] for r in conn.execute("SELECT who, grp FROM follows ORDER BY who")
+            if include_pickers or r["grp"] != "picker"}
 
 
 def follow(conn, who: str, grp: str) -> None:

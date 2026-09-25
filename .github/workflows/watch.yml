@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/watch"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
-            for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv; do
+            for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv early_calls.csv receipts.jsonl; do
               git show "origin/journal-data:$f" > "$RUNNER_TEMP/watch/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/watch/$f"
             done
           fi
@@ -58,6 +58,11 @@ jobs:
         run: |
           mt watch --data-dir "$RUNNER_TEMP/watch" --state "$RUNNER_TEMP/watch/watch_state.json" \
             --issues-dir "$RUNNER_TEMP/issues" --notify | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Record early-wire calls and seal finished days
+        # The public receipts: the strongest early-wire tickers, priced when first seen, and a
+        # SHA-256 chain over each finished day's calls (see market_tracker/receipts.py).
+        continue-on-error: true
+        run: mt receipts snapshot --data-dir "$RUNNER_TEMP/watch" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Open issues
         run: |
           shopt -s nullglob
@@ -79,10 +84,9 @@ jobs:
             git checkout --orphan journal-data
             git rm -rfq .
           fi
-          for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv; do
-            [ -f "$RUNNER_TEMP/watch/$f" ] && cp "$RUNNER_TEMP/watch/$f" .
+          for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv early_calls.csv receipts.jsonl; do
+            if [ -f "$RUNNER_TEMP/watch/$f" ]; then cp "$RUNNER_TEMP/watch/$f" . && git add "$f"; fi
           done
-          git add insider_buys.csv alerted.csv stakes.csv alert_log.csv
           if git diff --cached --quiet; then
             echo "No new data"
           else

@@ -141,6 +141,27 @@ function renderScorecard() {
         `<td class="num ${a.to_date > 0 ? "up" : a.to_date < 0 ? "down" : ""}">${pct(a.to_date)}</td><td class="num">${pct(a.to_date_excess)}</td><td class="num">${a.days_held}</td>`}</tr>`).join("") + `</tbody>`;
 }
 
+function renderReceipts() {
+  const r = data.receipts;
+  if (!r || !r.calls.length) {
+    $("#rc-summary").textContent = r && r.chain_length ? `${r.chain_length} day(s) sealed; the first calls publish 24 hours after they're made.` : "The first calls publish 24 hours after the early wire starts logging.";
+    $("#rc-kinds").innerHTML = ""; $("#rc-table").innerHTML = ""; $("#rc-chain").innerHTML = ""; return;
+  }
+  const sp = (x) => x == null ? "—" : `${x > 0 ? "+" : ""}${x.toFixed(2)}%`;
+  const a = r.summary.all || {}, e = r.summary.early || {};
+  const line = (s) => s && s.count ? `median ${sp(s.median_excess_pct)} vs SPY, beat SPY ${Math.round(s.hit_rate * 100)}% of the time (${s.count} scored)` : "none scored yet";
+  $("#rc-summary").textContent = `${r.horizon} trading days after first sighting: all calls ${line(a)}; marked early ${line(e)}.` +
+    (a.count && a.count < 150 ? ` ${a.count} of the 150 needed before this means anything.` : "") + (r.summary.pending ? ` ${r.summary.pending} waiting for their exit close.` : "");
+  $("#rc-kinds").innerHTML = Object.entries(r.summary.by_kind || {}).map(([k, s]) => `<span class="chip">${esc(k)}: ${sp(s.median_excess_pct)} (${s.count})</span>`).join(" ");
+  $("#rc-table").innerHTML = `<thead><tr><th>Seen</th><th>Ticker</th><th class="co-col">Why</th><th class="num">Price then</th><th class="num">${r.horizon}-day return</th><th class="num">vs SPY</th><th>Seal</th></tr></thead><tbody>` +
+    r.calls.map((c) => `<tr><td class="nowrap">${fmtDate(c.day)} ${esc(c.time)}</td><td>${esc(c.symbol)}${c.early ? ` <span class="chip">early</span>` : ""}</td>
+      <td class="co-col">${esc(c.headline)}<div class="muted small">${esc(c.kinds)}</div></td><td class="num">${c.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+      ${c.return_pct == null ? `<td class="num status-open" colspan="2">waiting</td>` : `<td class="num ${c.return_pct > 0 ? "up" : c.return_pct < 0 ? "down" : ""}">${sp(c.return_pct)}</td><td class="num">${sp(c.excess_pct)}</td>`}
+      <td><code>${c.seal ? esc(c.seal) : "unsealed"}</code></td></tr>`).join("") + `</tbody>`;
+  $("#rc-chain").innerHTML = `<thead><tr><th>Day</th><th class="num">Calls</th><th>Hash</th><th>Sealed</th></tr></thead><tbody>` +
+    r.chain.slice().reverse().map((s) => `<tr><td class="nowrap">${fmtDate(s.day)}</td><td class="num">${s.calls}</td><td><code class="hash">${esc(s.hash)}</code></td><td class="nowrap">${fmtTime(s.sealed_at)}</td></tr>`).join("") + `</tbody>`;
+}
+
 function renderMoves() {
   const big = data.big_buys || [], stakes = data.stakes || [];
   $("#big-buys").innerHTML = big.length ? `<ul class="move-list">${big.map((b) => `<li>
@@ -179,7 +200,7 @@ function renderBacktest() {
 function render() {
   $("#snapshot-note").textContent = `Snapshot built ${fmtTime(data.generated_at)}.`;
   $("#generated").textContent = `Data built ${fmtTime(data.generated_at)}`;
-  renderCards(); renderScores(); renderClusters(); renderMoves(); renderScorecard(); renderRecord(); renderBacktest();
+  renderCards(); renderScores(); renderClusters(); renderMoves(); renderScorecard(); renderReceipts(); renderRecord(); renderBacktest();
 }
 
 async function load() {

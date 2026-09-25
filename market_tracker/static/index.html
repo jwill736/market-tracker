@@ -23,6 +23,7 @@
   </a>
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="home" aria-selected="true">Home</button>
+    <button role="tab" data-tab="hold" aria-selected="false">Hold plan</button>
     <button role="tab" data-tab="early" aria-selected="false">Early</button>
     <button role="tab" data-tab="people" aria-selected="false">People</button>
     <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
@@ -54,6 +55,11 @@
 <main>
   <!-- Home: your money, Robinhood-style -->
   <section id="tab-home" class="tab">
+    <div class="card brief-card" id="home-brief" hidden>
+      <div class="card-head"><h2 id="hb-title">Morning brief</h2>
+        <span class="muted small"><span id="hb-when"></span> · <button type="button" class="linkish" id="hb-more">Show all</button></span></div>
+      <ul class="brief-list" id="hb-list"></ul>
+    </div>
     <div class="home-grid">
       <div class="home-main">
         <div class="rh-hero">
@@ -94,6 +100,43 @@
   </section>
 
   <!-- Early wire -->
+  <section id="tab-hold" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Hold plan</h2><span class="muted small" id="hp-meta"></span></div>
+      <p class="muted small">Everything is <b>Hold</b> unless something real says otherwise: a line you set when you wrote down why you own it,
+        a serious SEC filing, one position grown past your cap, or taxes. Price wiggles aren't on the list: for long-term investors,
+        selling on them mostly costs money. Money a trim frees up goes to the queue below.</p>
+      <div class="chips" id="hp-counts"></div>
+      <details class="hp-settings"><summary class="small">Settings: cap and tax rates</summary>
+        <form id="hp-settings" class="inline-form">
+          <label>Largest position <input type="number" id="hp-cap" min="1" max="100" step="1"> %</label>
+          <label>Short-term tax rate <input type="number" id="hp-st" min="0" max="60" step="1"> %</label>
+          <label>Long-term tax rate <input type="number" id="hp-lt" min="0" max="40" step="1"> %</label>
+          <button type="submit">Save</button><span class="muted small" id="hp-settings-msg"></span>
+        </form>
+        <p class="muted small">The cap loosens for small portfolios to 1.5x an equal share (three holdings can each be up to 50%).
+          Rates are your federal rates; the savings shown use them.</p>
+      </details>
+    </div>
+    <div id="hp-list" class="hp-list"></div>
+    <div class="grid two">
+      <div class="card"><div class="card-head"><h2>Where freed money goes</h2><span class="muted small" id="hp-freed"></span></div>
+        <p class="muted small">Your own plan's order, not a buy signal: holdings below the target you set, then watchlist names with no serious
+          filings, then a broad market fund.</p>
+        <ul class="hp-lines" id="hp-reinvest"></ul></div>
+      <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">Earnings in dollars · Fed · CPI · jobs</span></div>
+        <ul class="hp-lines" id="hp-events"></ul></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Taxes across your accounts</h2><span class="muted small" id="hp-tax-meta"></span></div>
+      <p class="muted small">Robinhood can't see your Stash buys and Stash can't see Coinbase, so no broker warns you about a wash sale across them:
+        selling at a loss and buying the same thing (or a fund tracking the same index) within 30 days either side cancels the deduction.
+        Not tax advice; an IRA or a spouse's account counts too and isn't visible here.</p>
+      <div class="tax-sums" id="hp-realized"></div>
+      <div id="hp-tax"></div>
+    </div>
+  </section>
+
   <section id="tab-early" class="tab" hidden>
     <div class="card">
       <div class="card-head"><h2>Early wire</h2><span class="muted small" id="ew-meta"></span></div>
@@ -141,6 +184,16 @@
     </div>
     <div class="card"><div class="card-head"><h2>Activist stakes (13D/13G)</h2></div>
       <div class="scroll"><table class="data" id="pp-activist"></table></div></div>
+    <div class="card">
+      <div class="card-head"><h2>Stock pickers, graded</h2><span class="muted small" id="pk-meta"></span></div>
+      <p class="muted small">Follow anyone on StockTwits. Every post they tag <b>Bullish</b> or <b>Bearish</b> is a call, with the price StockTwits
+        recorded when they posted it, scored 5 trading days later against SPY (a bearish call is right when the stock lagged).
+        Calls are saved here the first time they're seen, so deleting a bad one later doesn't clean up the record.</p>
+      <form id="pk-form" class="inline-form"><input id="pk-user" placeholder="StockTwits username" autocomplete="off" aria-label="StockTwits username">
+        <button type="submit">Follow and grade</button><span class="muted small" id="pk-msg"></span></form>
+      <div class="chips" id="pk-suggested"></div>
+      <div id="pk-list"></div>
+    </div>
   </section>
 
   <!-- Pulse -->
@@ -249,6 +302,12 @@
 
   <!-- Scary-filing radar -->
   <section id="tab-radar" class="tab" hidden>
+    <div class="card" id="cr-card" hidden>
+      <div class="card-head"><h2>Crypto radar: your coins</h2><span class="muted small" id="cr-meta"></span></div>
+      <p class="muted small">Exchange hacks of $10M+, hacks on your coins' chains, Coinbase incidents naming your coins, supply that isn't
+        circulating yet, and stablecoins off their $1 peg. Unlock dates and ETF flows need paid data, so they aren't guessed at.</p>
+      <ul class="rr-list" id="cr-list"></ul>
+    </div>
     <div class="card">
       <div class="card-head"><h2>Radar: your companies</h2><span class="muted small" id="rr-meta"></span></div>
       <p class="muted small">SEC filings that usually mean trouble: bankruptcy, a restatement, a delisting, a debt default (<b>act today</b>);
@@ -500,6 +559,26 @@
   <div class="modal-card">
     <div class="card-head"><h2 id="trade-title">Trade</h2><button type="button" class="ghost" id="trade-close" aria-label="Close">✕</button></div>
     <div id="trade-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="thesis-modal" hidden role="dialog" aria-modal="true" aria-labelledby="th-title">
+  <div class="modal-card">
+    <div class="card-head"><h2 id="th-title">Why you own it</h2><button type="button" class="ghost" id="th-close" aria-label="Close">✕</button></div>
+    <form id="th-form" class="th-form">
+      <label>Why I own it<textarea id="th-thesis" rows="3" maxlength="2000" placeholder="e.g. Services keep growing and the buyback shrinks the share count"></textarea></label>
+      <label>I'm wrong if…<textarea id="th-wrong" rows="2" maxlength="1000" placeholder="e.g. Services growth drops below 10% two quarters in a row"></textarea></label>
+      <p class="muted small">Lines the app can check for you (all optional):</p>
+      <div class="th-grid">
+        <label>Sell if it falls below $<input type="number" id="th-below" min="0" step="any"></label>
+        <label>Re-think if down from my cost by %<input type="number" id="th-loss" min="0" max="100" step="1"></label>
+        <label>Take some off at $<input type="number" id="th-above" min="0" step="any"></label>
+        <label>Target share of my portfolio %<input type="number" id="th-target" min="0" max="100" step="0.5"></label>
+        <label>Remind me to review on<input type="date" id="th-review"></label>
+      </div>
+      <div class="pc-buttons"><button type="submit">Save</button><button type="button" class="button-secondary" id="th-delete">Remove</button>
+        <span class="muted small" id="th-msg"></span></div>
+    </form>
   </div>
 </div>
 

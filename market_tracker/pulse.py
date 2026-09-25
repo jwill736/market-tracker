@@ -181,7 +181,7 @@ def insider_candidates(buys: list[alerts.Buy], today: date, days: int = 30) -> d
     since = (today - timedelta(days=days)).isoformat()
     from . import realtime
     per_insider: dict[tuple, dict] = {}
-    for b in realtime.big_buys([x for x in buys if x.filed >= since]):
+    for b in realtime.big_buys([x for x in buys if x.filed >= since], peers=buys):
         if b.symbol.strip().upper() in alerts.NO_TICKER:
             continue
         agg = per_insider.setdefault((b.symbol, b.insider), {"buy": b, "value": 0.0})

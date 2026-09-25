@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, coinbase_sync, db, dilution, early, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -391,6 +391,210 @@ def _plan_candidates(watch: list[str], held: set[str], limit: int = 10) -> list[
     return keep[:limit]
 
 
+holdplan_cache = pulse.Cache(300)
+events_cache = pulse.Cache(3600)
+
+
+def _hold_settings(conn) -> dict:
+    return holdplan.settings(conn)
+
+
+async def _holdplan_data(refresh: bool = False) -> dict:
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        key = (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
+               db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(holdplan.settings(conn).items()))
+    if refresh:
+        holdplan_cache.store.clear()
+    try:
+        return await asyncio.to_thread(holdplan_cache.get, key, holdplan.gather)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/events")
+async def events_view(refresh: bool = False):
+    """Earnings for your stocks with the options-implied move in dollars, Fed decisions and the
+    next two weeks of market-moving US releases."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    positions = []
+    if txs:
+        try:
+            positions = (await asyncio.to_thread(service.portfolio_summary, txs, False))["positions"]
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    held = tuple(p["symbol"] for p in positions if p.get("quantity"))
+    if refresh:
+        events_cache.store.clear()
+    return await asyncio.to_thread(events_cache.get, held, lambda: events.build(positions, date.today()))
+
+
+pickers_cache = pulse.Cache(1800)
+
+
+@app.get("/api/cryptoradar")
+async def crypto_radar(refresh: bool = False):
+    """Hacks, Coinbase incidents, supply overhang and depegs for the coins you hold or watch."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    syms = tuple(s for s in held + watched if market.asset_class(s) == "crypto")
+    if refresh:
+        sentinel.crypto_cache.clear()
+    return await asyncio.to_thread(sentinel.crypto_cache.get, syms, lambda: cryptoradar.build(list(syms)))
+
+
+brief_cache = pulse.Cache(600)
+
+
+@app.get("/api/brief")
+async def morning_brief(refresh: bool = False):
+    """Today's morning brief: what needs a decision, new filings, earnings and releases, moves,
+    early-wire hits, crypto items and tax dates. The 8:30 ET copy is also pushed to your phone."""
+    if refresh:
+        brief_cache.store.clear()
+    try:
+        return await asyncio.to_thread(brief_cache.get, "brief", brief.gather)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/brief/send")
+async def send_brief_now():
+    """Push the brief to your phone now (to try the notification)."""
+    b = await asyncio.to_thread(brief_cache.get, "brief", brief.gather)
+    sent = await asyncio.to_thread(notify.send, notify.Message(title=b["title"], body=brief.push_text(b), priority=3,
+                                                              tags=("sunrise",)))
+    return {"sent": bool(sent), "title": b["title"]}
+
+
+def _picker_names(conn) -> list[str]:
+    return sorted(w[3:] for w, g in db.follows(conn, include_pickers=True).items() if g == "picker" and w.startswith("st:"))
+
+
+def _picker_view(user: str) -> dict:
+    errors = []
+    profile = {}
+    try:
+        profile, calls = pickers.fetch_calls(user)
+        with db.connect() as conn:
+            db.save_picker_calls(conn, calls)
+    except (http.DataUnavailable, KeyError, TypeError) as exc:
+        errors.append(str(exc)[:120])
+    with db.connect() as conn:
+        stored = db.picker_calls(conn, user)
+    return {"username": user, "profile": {k: profile.get(k) for k in ("name", "followers", "official", "join_date", "ideas")},
+            **pickers.score(stored, quote_fn=market.get_quote), "errors": errors}
+
+
+@app.get("/api/pickers")
+async def pickers_view(refresh: bool = False):
+    """Stock pickers you follow, graded on their tagged calls against SPY, plus suggestions."""
+    with db.connect() as conn:
+        names = _picker_names(conn)
+    if refresh:
+        pickers_cache.store.clear()
+    graded = await asyncio.gather(*[asyncio.to_thread(pickers_cache.get, n, lambda n=n: _picker_view(n)) for n in names])
+    try:
+        sugg = await asyncio.to_thread(pickers_cache.get, "__suggested", pickers.suggested)
+    except (http.DataUnavailable, KeyError, TypeError):
+        sugg = []
+    return {"following": sorted(graded, key=lambda g: -(g["median_excess_pct"] if g["median_excess_pct"] is not None else -1e9)),
+            "suggested": [u for u in sugg if u["username"].lower() not in names], "horizon": pickers.HORIZON}
+
+
+class PickerIn(BaseModel):
+    username: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_]+$")
+
+
+@app.post("/api/pickers/follow")
+async def follow_picker(body: PickerIn):
+    user = body.username.lower()
+    try:
+        profile, _ = await asyncio.to_thread(pickers.fetch_calls, user, None, 1)
+    except http.DataUnavailable as exc:
+        raise HTTPException(404, f"Couldn't find {body.username} on StockTwits: {exc}")
+    if not profile:
+        raise HTTPException(404, f"Couldn't find {body.username} on StockTwits")
+    with db.connect() as conn:
+        db.follow(conn, "st:" + user, "picker")
+        names = _picker_names(conn)
+    pickers_cache.store.pop(user, None)
+    return {"following": names}
+
+
+@app.delete("/api/pickers/follow")
+async def unfollow_picker(username: str):
+    with db.connect() as conn:
+        db.unfollow(conn, "st:" + username.lower())
+        return {"following": _picker_names(conn)}
+
+
+@app.get("/api/holdplan")
+async def hold_plan(refresh: bool = False):
+    """Buy-and-hold plan: Hold by default; Sell?/Trim/Review only when your tripwire, a serious
+    filing, concentration or taxes say so. Plus the reinvest queue and the tax picture."""
+    return await _holdplan_data(refresh)
+
+
+@app.get("/api/taxes")
+async def tax_view():
+    """Realized gains this year, wash sales across accounts, the don't-buy list, the long-term
+    clock and harvest candidates."""
+    return (await _holdplan_data())["tax"]
+
+
+class ThesisIn(BaseModel):
+    thesis: str = Field("", max_length=2000)
+    wrong_if: str = Field("", max_length=1000)
+    price_below: float | None = Field(None, ge=0)
+    price_above: float | None = Field(None, ge=0)
+    max_loss_pct: float | None = Field(None, ge=0, le=100)
+    review_on: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    target_weight: float | None = Field(None, gt=0, le=1)
+
+
+@app.get("/api/thesis")
+async def theses_view():
+    with db.connect() as conn:
+        return db.theses(conn)
+
+
+@app.post("/api/thesis/{symbol}")
+async def save_thesis(symbol: str, body: ThesisIn):
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        db.save_thesis(conn, sym, body.model_dump())
+        out = db.theses(conn)[sym]
+    holdplan_cache.store.clear()
+    return out
+
+
+@app.delete("/api/thesis/{symbol}")
+async def delete_thesis(symbol: str):
+    with db.connect() as conn:
+        db.delete_thesis(conn, market.normalize_symbol(symbol))
+    holdplan_cache.store.clear()
+    return {}
+
+
+class HoldSettings(BaseModel):
+    cap: float | None = Field(None, gt=0, le=1)
+    st_rate: float | None = Field(None, ge=0, le=0.6)
+    lt_rate: float | None = Field(None, ge=0, le=0.4)
+
+
+@app.post("/api/holdplan/settings")
+async def hold_settings(body: HoldSettings):
+    with db.connect() as conn:
+        for k, meta in (("cap", "hold_cap"), ("st_rate", "tax_st_rate"), ("lt_rate", "tax_lt_rate")):
+            v = getattr(body, k)
+            if v is not None:
+                db.set_meta(conn, meta, str(v))
+        out = _hold_settings(conn)
+    holdplan_cache.store.clear()
+    return out
+
+
 @app.get("/api/plan")
 async def strategy_plan(cash: float = Query(0.0, ge=0, le=1e10)):
     """Sell / trim / hold / add for each holding, plus new buys, with shares, reasons and tax
@@ -632,7 +836,8 @@ def backup():
     with db.connect() as conn:
         return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
                 "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
-                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn)}
+                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn, include_pickers=True),
+                "theses": db.theses(conn)}
 
 
 class RestoreIn(BaseModel):
@@ -671,6 +876,11 @@ def restore(body: RestoreIn):
             db.set_topic(conn, name, terms)
         for who, grp in (d.get("follows") or {}).items():
             db.follow(conn, who, grp)
+        have = db.theses(conn)
+        for sym, t in (d.get("theses") or {}).items():
+            if sym not in have:
+                db.save_thesis(conn, sym, {k: v for k, v in t.items() if k not in ("symbol", "updated")})
+    holdplan_cache.store.clear()
     return {"transactions_added": added}
 
 
