@@ -80,7 +80,8 @@ def weekly(candles: list[Candle]) -> list[Candle]:
     return [out[k] for k in sorted(out)]
 
 
-def candles(symbol: str, range_: str = "1d", get=http.get) -> dict:
+def candles(symbol: str, range_: str = "1d", get=None) -> dict:
+    get = get or http.get
     sym = market.normalize_symbol(symbol)
     yr, yi, gran, span = CANDLE_RANGES[range_]
     if market.asset_class(sym) == "crypto":
@@ -161,8 +162,10 @@ def _net_flow(transactions: list[dict], after: str, until: str) -> float:
 
 
 def portfolio_history(transactions: list[dict], range_: str = "1d", *, today: date | None = None,
-                      history_fn: Callable = market.get_history, intraday_fn: Callable = livefeed.intraday) -> dict:
+                      history_fn: Callable | None = None, intraday_fn: Callable | None = None) -> dict:
     today = today or date.today()
+    history_fn = history_fn or market.get_history
+    intraday_fn = intraday_fn or livefeed.intraday
     timeline = _qty_timeline(transactions)
     symbols = [s for s, seq in timeline.items() if seq]
     if not symbols:
@@ -247,7 +250,8 @@ def portfolio_history(transactions: list[dict], range_: str = "1d", *, today: da
 
 # ------------------------------------------------------------------ sparklines
 
-def sparklines(symbols: list[str], intraday_fn: Callable = livefeed.intraday, n: int = 48) -> dict:
+def sparklines(symbols: list[str], intraday_fn: Callable | None = None, n: int = 48) -> dict:
+    intraday_fn = intraday_fn or livefeed.intraday
     def one(sym):
         try:
             d = intraday_fn(sym, "1d")

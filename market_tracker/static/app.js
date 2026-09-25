@@ -962,7 +962,7 @@ function paintBound(t, prev, root = document) {
     switch (el.dataset.lf) {
       case "price": el.textContent = fmtMoney(t.price); flash(el, t, prev); break;
       case "chg": el.textContent = fmtPct(t.change_pct, 2); setSign(el, t.change_pct); break;
-      case "pill": el.textContent = fmtMoney(t.price); el.classList.toggle("down", (t.change_pct ?? 0) < 0); el.classList.toggle("up", (t.change_pct ?? 0) >= 0); flash(el, t, prev); break;
+      case "pill": el.textContent = fmtMoney(t.price); el.classList.toggle("pill-down", (t.change_pct ?? 0) < 0); flash(el, t, prev); break;
       case "value": el.textContent = fmtMoney(qty * t.price, 2); flash(el, t, prev); break;
       case "pnl": { const v = qty * t.price - cost; el.textContent = (v >= 0 ? "+" : "") + fmtMoney(v, 2); setSign(el, v); break; }
       case "pnlpct": { const v = cost ? (qty * t.price / cost - 1) * 100 : null; el.textContent = fmtPct(v, 2); setSign(el, v); break; }
