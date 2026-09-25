@@ -24,6 +24,8 @@ ECON = {"data": {"rows": [
     {"gmt": "12:30", "country": "United States", "eventName": "CPI (YoY)", "consensus": "2.9%", "previous": "3.0%"},
     {"gmt": "12:30", "country": "United States", "eventName": "Nonfarm Payrolls", "consensus": "&nbsp;", "previous": "140K"},
     {"gmt": "11:30", "country": "United States", "eventName": "Atlanta Fed GDPNow"},
+    {"gmt": "14:00", "country": "United States", "eventName": "FOMC Member Waller Speaks"},
+    {"gmt": "18:00", "country": "United States", "eventName": "FOMC Meeting Minutes"},
     {"gmt": "01:00", "country": "India", "eventName": "CPI"}]}}
 
 
@@ -44,7 +46,7 @@ def test_earnings_date_and_implied_move():
 def test_fomc_and_econ_calendar():
     assert events.parse_fomc(FOMC_HTML) == ["2026-09-16", "2026-10-28", "2026-12-09", "2027-02-01"]
     rows = events.parse_econ(ECON, "2026-10-14")
-    assert [(r["kind"], r["consensus"]) for r in rows] == [("Inflation (CPI)", "2.9%"), ("Jobs report", None)]
+    assert [(r["kind"], r["consensus"]) for r in rows] == [("Inflation (CPI)", "2.9%"), ("Jobs report", None), ("Fed minutes", None)]
 
     def get(url, **kw):
         return FOMC_HTML if "federalreserve" in url else ECON

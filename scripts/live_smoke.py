@@ -286,11 +286,14 @@ def _():
 
 @check("Fed and economic calendar")
 def _():
+    fomc = events.parse_fomc(http.get(events.FOMC, headers={"User-Agent": events.BROWSER_UA}, ttl=0, as_json=False))
+    assert any(d.startswith(str(date.today().year)) for d in fomc), fomc
     rows, errors = events.macro(date.today(), days=14)
     fed = [r for r in rows if r["kind"] == "Fed decision"]
-    assert not any(e.startswith("Fed calendar") for e in errors), errors
-    return f"{len(rows)} events in 2 weeks (+ Fed in 60 days); next Fed decision {fed[0]['date'] if fed else 'not within 60 days'}; " + \
-        ", ".join(f"{r['date']} {r['kind']}" for r in rows[:4])
+    assert len(fed) <= 3, f"too many Fed decisions: {[r['date'] for r in fed]}"
+    upcoming = [d for d in fomc if d >= date.today().isoformat()]
+    return (f"Fed page: {len(fomc)} decision days, next {upcoming[0] if upcoming else 'none listed'}; "
+            f"{len(rows)} events: " + ", ".join(f"{r['date']} {r['kind']}" for r in rows[:6]))
 
 
 @check("Crypto radar: hacks, Coinbase status, supply")
@@ -305,9 +308,13 @@ def _():
 def _():
     profile, calls = pickers.fetch_calls("alphatrends", pages=2)
     assert profile.get("username"), profile
+    # Many pros never tag posts, so check the parser on a busy ticker stream, where people do.
+    tagged = pickers.calls_from_stream(http.get("https://api.stocktwits.com/api/2/streams/symbol/TSLA.json",
+                                                headers=pickers.HEADERS, ttl=0))
+    assert tagged, "no Bullish/Bearish-tagged posts parsed from the TSLA stream"
     sugg = pickers.suggested()
-    return f"{profile['username']}: {len(calls)} tagged calls in 2 pages" + (f", e.g. {calls[0]['side']} {calls[0]['symbol']} at {calls[0]['price']}" if calls else "") + \
-        f"; {len(sugg)} suggested accounts"
+    return (f"{profile['username']}: {len(calls)} tagged calls in 2 pages; TSLA stream: {len(tagged)} tagged calls, e.g. "
+            f"{tagged[0]['user']} {tagged[0]['side']} at {tagged[0]['price']}; {len(sugg)} suggested accounts")
 
 
 @check("Full analysis MSFT (with SEC)")

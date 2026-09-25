@@ -33,7 +33,8 @@ KEY_RELEASES = [
     (re.compile(r"\bPCE\b|personal consumption", re.I), "Inflation (PCE)"),
     (re.compile(r"\bGDP\b(?!now)", re.I), "GDP"),
     (re.compile(r"retail sales", re.I), "Retail sales"),
-    (re.compile(r"fed interest rate decision|fomc", re.I), "Fed decision"),
+    (re.compile(r"fed interest rate decision", re.I), "Fed decision"),     # not "FOMC Member X Speaks"
+    (re.compile(r"fomc (meeting )?minutes", re.I), "Fed minutes"),
     (re.compile(r"\bPPI\b|producer price", re.I), "Producer prices (PPI)"),
 ]
 _MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
