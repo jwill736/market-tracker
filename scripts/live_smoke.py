@@ -114,6 +114,13 @@ def _():
     return f"{n['count']} headlines"
 
 
+@check("Yahoo market-news fallback feeds")
+def _():
+    counts = {sym: len(news._yahoo(sym)) for sym in news.MARKET_FALLBACK_SYMBOLS}
+    assert all(counts.values()), counts
+    return ", ".join(f"{k}: {v} headlines" for k, v in counts.items())
+
+
 @check("Full analysis MSFT (with SEC)")
 def _():
     a = service.analyze("MSFT")

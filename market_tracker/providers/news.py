@@ -175,6 +175,10 @@ def get_news(symbol: str, company: str | None = None, days: int = 14, limit: int
     return dict(summarize(articles), symbol=sym, errors=errors)
 
 
+MARKET_MIN_HEADLINES = 10
+MARKET_FALLBACK_SYMBOLS = ("^GSPC", "BTC-USD")
+
+
 def market_news(limit: int = 40) -> dict:
     articles: list[Article] = []
     errors: list[str] = []
@@ -184,5 +188,13 @@ def market_news(limit: int = 40) -> dict:
             articles += _google(q)
         except (http.DataUnavailable, ET.ParseError) as exc:
             errors.append(str(exc))
+    if len(_dedupe(articles)) < MARKET_MIN_HEADLINES:
+        # Google News is the only broad source, and it rate-limits cloud IPs with 503s
+        # (seen on a GitHub runner). Yahoo's index and bitcoin feeds keep the card populated.
+        for sym in MARKET_FALLBACK_SYMBOLS:
+            try:
+                articles += _yahoo(sym)
+            except (http.DataUnavailable, ET.ParseError) as exc:
+                errors.append(str(exc))
     articles = _dedupe(articles)[:limit]
     return dict(summarize(articles), errors=errors)
