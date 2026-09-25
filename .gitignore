@@ -8,3 +8,5 @@ __pycache__/
 build/
 dist/
 signal_journal.csv
+plumbline.log
+plumbline.pid

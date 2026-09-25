@@ -34,10 +34,29 @@ The app watches filings, the early wire, news and the people you follow only whi
 | Where | Always on? | Cost | How |
 |---|---|---|---|
 | A small server | Yes, around the clock | about $4-5 a month on Fly.io | `./deploy_fly.sh` (one command: installs Fly's tool, asks for a password, your email and your ntfy topic, creates the app and a 1 GB disk, deploys) |
-| Your computer, in the background | Whenever you're logged in and it's awake | free | `mt service install` (macOS launch agent, Linux systemd user service, or a Windows logon task); `mt service uninstall` removes it |
+| Your computer, in the background | Whenever you're logged in and it's awake | free | `mt service install` (see below) |
 | A GitHub Codespace | While the tab is open (stops after 30 idle minutes) | GitHub's free allowance | the button below |
 
 Move your data between them with Portfolio → Backup → Download backup, then Restore a backup on the other one.
+
+**In the background on your computer.** After the first `start.sh` / `start.bat`, from the app's folder:
+
+- Mac: `.venv/bin/mt service install`
+- Windows: `.venv\Scripts\mt service install`
+
+It starts at every login with no window to keep open (macOS: a LaunchAgent that also restarts it if it stops; Windows: a
+script in your Startup folder, no administrator rights needed; Linux: a systemd user service). The app writes
+`plumbline.log` in its folder. Then:
+
+| Command | What it does |
+|---|---|
+| `mt service status` | Whether it starts at login and whether it's running |
+| `mt service update` | Pull the latest version, reinstall, restart |
+| `mt service restart` | Restart it (after editing `.env`, for example) |
+| `mt service uninstall` | Stop starting it at login (your data stays) |
+
+While it runs, `start.sh` / `start.bat` just open the browser. It only watches while the computer is awake: a laptop
+that sleeps misses the 8:30 brief (keep it plugged in with sleep off, or use the server row above).
 
 ## Run it in your browser (no install)
 
