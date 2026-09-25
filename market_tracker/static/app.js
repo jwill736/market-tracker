@@ -1868,6 +1868,21 @@ async function loadIncome(force = false) {
   document.querySelectorAll("#tab-income [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
 }
 
+$("#nm-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = $("#nm-out");
+  out.innerHTML = `<li class="muted">Working it out…</li>`;
+  try {
+    const d = await api("/api/holdplan/newmoney?amount=" + encodeURIComponent(+$("#nm-amount").value));
+    out.innerHTML = d.buys.map((b) => `<li><b>${fmtMoney(b.amount, 2)}</b> → <button type="button" class="linkish" data-open="${esc(b.symbol)}"><b>${esc(b.symbol)}</b></button>
+        ${b.shares != null ? `<span class="muted small">≈ ${fmtShares(b.shares)} sh</span>` : ""}
+        <span class="muted small">${esc(b.why)}${b.weight_now != null ? ` · ${(b.weight_now * 100).toFixed(1)}% → ${(b.weight_after * 100).toFixed(1)}%` : ""}</span></li>`).join("")
+      + d.skipped.map((x) => `<li class="muted small">Not ${esc(x.symbol)}: ${esc(x.why)}</li>`).join("")
+      + `<li class="muted small">${esc(d.note)}${d.has_targets ? "" : " No targets set yet, so this keeps your current mix: set one in any holding's \"why you own it\"."}</li>`;
+    out.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  } catch (err) { out.innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
+});
+
 // the "why you own it" form
 let thesisSym = null;
 async function openThesis(sym) {

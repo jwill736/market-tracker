@@ -615,6 +615,12 @@ async def delete_thesis(symbol: str):
     return {}
 
 
+@app.get("/api/holdplan/newmoney")
+async def hold_new_money(amount: float = Query(..., gt=0, le=10_000_000)):
+    """Where the next deposit goes toward your targets, without selling."""
+    return holdplan.new_money(await _holdplan_data(), amount)
+
+
 class HoldSettings(BaseModel):
     cap: float | None = Field(None, gt=0, le=1)
     st_rate: float | None = Field(None, ge=0, le=0.6)

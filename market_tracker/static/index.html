@@ -124,7 +124,13 @@
       <div class="card"><div class="card-head"><h2>Where freed money goes</h2><span class="muted small" id="hp-freed"></span></div>
         <p class="muted small">Your own plan's order, not a buy signal: holdings below the target you set, then watchlist names with no serious
           filings, then a broad market fund.</p>
-        <ul class="hp-lines" id="hp-reinvest"></ul></div>
+        <ul class="hp-lines" id="hp-reinvest"></ul>
+        <h3 class="small">Putting new money in?</h3>
+        <form id="nm-form" class="inline-form"><label>Amount $<input type="number" id="nm-amount" min="1" step="any" value="500"></label>
+          <button type="submit">Where it goes</button></form>
+        <p class="muted small">Toward the targets you set, biggest shortfall first, without selling anything. Holdings you haven't given a
+          target keep their share of the rest; flagged holdings and ones in a wash-sale window are left out.</p>
+        <ul class="hp-lines" id="nm-out"></ul></div>
       <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">Earnings in dollars · Fed · CPI · jobs</span></div>
         <ul class="hp-lines" id="hp-events"></ul></div>
     </div>

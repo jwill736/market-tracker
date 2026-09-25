@@ -319,3 +319,75 @@ def gather(today: date | None = None) -> dict:
     plan["radar"] = {s: v for s, v in radar_by.items()}
     plan["errors"] = radar_errors + cal.get("errors", []) + fund_errors
     return plan
+
+
+# ------------------------------------------------------------------ new money
+
+MIN_ORDER = 5.0
+
+
+def new_money(plan: dict, amount: float, min_order: float = MIN_ORDER) -> dict:
+    """Where the next `amount` dollars go, toward your targets, without selling anything.
+
+    Targets are the ones you set in each holding's thesis. Holdings without one keep their
+    current share of what's left, so with no targets at all the money is split in proportion to
+    what you already hold. Holdings flagged Sell?/Trim/Review, ones inside a wash-sale window
+    (buying would cancel a loss you took) and ones at the cap get nothing. The money goes to the
+    biggest shortfalls first, in proportion to how far each is below its target after the
+    deposit; anything left once every target is met goes to the broad market fund."""
+    rows = plan.get("holdings", [])
+    base = plan.get("base") or 0.0
+    cap = plan.get("cap") or CAP
+    total = base + amount
+    blocked_syms = {s: b for b in (plan.get("tax") or {}).get("blackout", []) for s in b["avoid"]}
+    skipped, eligible = [], []
+    for r in rows:
+        if r["verdict"] != "Hold":
+            skipped.append({"symbol": r["symbol"], "why": f"Marked {r['verdict']} in your hold plan"})
+        elif r["symbol"] in blocked_syms:
+            skipped.append({"symbol": r["symbol"], "why": f"Wash-sale window until {blocked_syms[r['symbol']]['until']}: "
+                                                         "buying now would cancel the loss you took"})
+        else:
+            eligible.append(r)
+    set_targets = {r["symbol"]: min(r["thesis"]["target_weight"], cap) for r in eligible
+                   if r.get("thesis") and r["thesis"].get("target_weight")}
+    left = max(0.0, 1.0 - sum(set_targets.values()))
+    free = [r for r in eligible if r["symbol"] not in set_targets]
+    free_w = sum(r["weight"] for r in free)
+    targets = dict(set_targets)
+    for r in free:
+        targets[r["symbol"]] = min(cap, left * (r["weight"] / free_w if free_w else 1 / len(free)))
+    gaps = {r["symbol"]: max(0.0, targets[r["symbol"]] * total - r["value"]) for r in eligible}
+    by_sym = {r["symbol"]: r for r in eligible}
+
+    alloc: dict[str, float] = {}
+    live = {s for s, g in gaps.items() if g > 0}
+    while live:
+        need = sum(gaps[s] for s in live)
+        pool = amount if need > amount else need
+        trial = {s: pool * gaps[s] / need for s in live}
+        tiny = {s for s, v in trial.items() if v < min_order}
+        if tiny and len(tiny) < len(live):
+            live -= tiny
+            continue
+        if tiny:            # a small amount: all of it to the biggest shortfall
+            top = max(live, key=lambda s: gaps[s])
+            trial = {top: min(amount, gaps[top])}
+        alloc = {s: v for s, v in trial.items() if v >= min_order}
+        break
+    spent = sum(alloc.values())
+    buys = []
+    for s, v in sorted(alloc.items(), key=lambda kv: -kv[1]):
+        r = by_sym[s]
+        why = (f"Below the {targets[s]:.0%} you set" if s in set_targets
+               else f"Keeps your mix ({r['weight']:.1%} now)" if not set_targets else f"Its share of what your targets leave ({targets[s]:.1%})")
+        buys.append({"symbol": s, "amount": round(v, 2), "shares": round(v / r["price"], 6) if r.get("price") else None,
+                     "weight_now": round(r["value"] / total, 4) if total else 0.0, "weight_after": round((r["value"] + v) / total, 4) if total else 0.0,
+                     "target": round(targets[s], 4), "why": why})
+    rest = round(amount - spent, 2)
+    if rest >= min_order:
+        fund = FALLBACK_FUND[0]
+        buys.append({"symbol": fund, "amount": rest, "shares": None, "weight_now": None, "weight_after": None, "target": None,
+                     "why": "Every target is met: " + FALLBACK_FUND[1] if eligible else FALLBACK_FUND[1]})
+    return {"amount": round(amount, 2), "buys": buys, "skipped": skipped, "has_targets": bool(set_targets),
+            "note": "Buying in any of your accounts counts the same. Nothing is sold."}
