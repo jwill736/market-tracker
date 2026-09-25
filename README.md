@@ -130,6 +130,32 @@ program) or an S-1 in the last year. The result goes into the alert issue and th
 the site. The watcher also sends a notification when a company that alerted in the last 90 days files one of these.
 `mt dilution TICKER` checks any company. A shelf is only a possibility: plenty of companies keep one and never use it.
 
+## Market pulse (the app's first screen)
+
+What is moving, what the press is covering, what insiders are buying quietly, and which of your
+holdings deserve a second look. Every row says why it is there; click any ticker for its live chart.
+
+- **Movers**: Yahoo's day gainers, losers and most-active screens (the whole US market), plus the
+  ten largest coins. Prices tick live. Tags: *In the news* (5+ headlines in 48 h), *Deep coverage*
+  (Reuters, Bloomberg, WSJ, FT, Barron's and similar), *Unusual volume* (2x the 3-month average),
+  *Moving without news* (5%+ move, no headlines). If the screens fail, a fixed list of large caps
+  is ranked instead and the page says so.
+- **In the news / In-depth coverage**: the movers with the most headlines, and the ones covered
+  by outlets that do their own reporting, with links.
+- **Sleepers**: an insider cluster or a $1M+ officer/director purchase in the last 30 days (from
+  the filing watcher's data), yet 3 or fewer headlines this week and less than 15% up over the
+  month. Funds and tickers with no US quote are dropped; companies selling stock sort last.
+  Unproven: the alert scorecard decides whether these beat SPY.
+- **Sell watch** (only when you have holdings): each position checked against rules: below its
+  200-day average, negative 12-month momentum, composite signal ≤ -15, $1M+ discretionary insider
+  selling with no buying, up 40%+ in 3 months with RSI > 75, a position larger than its volatility
+  supports (or over 25%), an active share offering, and a possible tax-loss sale. "Review" means
+  the flags add up to 3+; a holding whose data couldn't be fetched says "Couldn't check", never
+  "No red flags". These are rules to start a decision, not the decision.
+
+`GET /api/pulse` (cached 3 minutes, `?refresh=true` rescans) and `GET /api/sellwatch` (cached 10
+minutes per portfolio) return the same data as JSON.
+
 ## Private app (your dashboard, online, behind a password)
 
 The full dashboard (`mt serve`) can run on a small always-on server so you can use it from your phone:

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, db, http, importers, journal, livefeed, research, service
+from . import auth, db, dilution, http, importers, journal, livefeed, pulse, research, service
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -276,6 +276,37 @@ def delete_transaction(tx_id: int):
         if not db.delete_transaction(conn, tx_id):
             raise HTTPException(404, "Not found")
     return {"deleted": tx_id}
+
+
+@app.get("/api/pulse")
+async def market_pulse(refresh: bool = False):
+    """Movers, news attention, in-depth coverage and sleepers (cached for 3 minutes)."""
+    if refresh:
+        pulse.pulse_cache.store.clear()
+    return await asyncio.to_thread(pulse.pulse_cache.get, "pulse", pulse.build)
+
+
+@app.get("/api/sellwatch")
+async def sell_watch():
+    """Rule-based flags on each holding, with the reason for each."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    if not txs:
+        return {"holdings": []}
+    try:
+        summary = await asyncio.to_thread(service.portfolio_summary, txs, False)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    positions = [{"symbol": p["symbol"], "weight": p.get("weight"), "unrealized_pct": p.get("unrealized_pct")}
+                 for p in summary["positions"]]
+    key = tuple(sorted((p["symbol"], round(p["weight"] or 0)) for p in positions))
+    today = date.today()
+
+    def compute():
+        return pulse.sell_watch(
+            positions, analyze_fn=lambda s: service.analyze(s, with_smart_money=False),
+            cik_fn=pulse.cik_for_symbol, dilution_fn=lambda cik: dilution.check(cik, today))
+    return {"holdings": await asyncio.to_thread(pulse.sellwatch_cache.get, key, compute)}
 
 
 class ImportIn(BaseModel):

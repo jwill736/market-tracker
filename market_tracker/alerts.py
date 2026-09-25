@@ -13,6 +13,7 @@ mid-sized companies, which is why this scans every filer rather than a watchlist
 from __future__ import annotations
 
 import csv
+import io
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -183,12 +184,17 @@ def load_buys(path: str) -> list[Buy]:
     if not os.path.exists(path):
         return []
     with open(path, newline="", encoding="utf-8") as fh:
-        out = []
-        for r in csv.DictReader(fh):
-            for k in ("shares", "price", "value"):
-                r[k] = float(r[k] or 0)
-            out.append(Buy(**{k: r[k] for k in BUY_FIELDS}))
-        return out
+        return parse_buys(fh.read())
+
+
+def parse_buys(text: str) -> list[Buy]:
+    """Buys from the CSV that save_buys writes (a file, or the journal-data branch over HTTP)."""
+    out = []
+    for r in csv.DictReader(io.StringIO(text)):
+        for k in ("shares", "price", "value"):
+            r[k] = float(r[k] or 0)
+        out.append(Buy(**{k: r[k] for k in BUY_FIELDS}))
+    return out
 
 
 def _same_trade(b: Buy) -> tuple:

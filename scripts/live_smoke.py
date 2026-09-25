@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-from market_tracker import http, service
+from market_tracker import http, pulse, service
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -156,6 +156,22 @@ def _():
     counts = {sym: len(news._yahoo(sym)) for sym in news.MARKET_FALLBACK_SYMBOLS}
     assert all(counts.values()), counts
     return ", ".join(f"{k}: {v} headlines" for k, v in counts.items())
+
+
+@check("Yahoo movers screens (market pulse)")
+def _():
+    got = {name: pulse.fetch_screen(name) for name in pulse.SCREENS}
+    assert all(got.values()), {k: len(v) for k, v in got.items()}
+    top = got["gainers"][0]
+    assert top.price and top.change_pct is not None, top
+    return ", ".join(f"{k}: {len(v)}" for k, v in got.items()) + f"; top gainer {top.symbol} {top.change_pct:+.1f}%"
+
+
+@check("Watcher purchases for sleepers (journal-data branch)")
+def _():
+    buys = pulse.load_watcher_buys()
+    assert buys, "no rows"
+    return f"{len(buys)} purchases, latest filed {max(b.filed for b in buys)}"
 
 
 @check("Full analysis MSFT (with SEC)")

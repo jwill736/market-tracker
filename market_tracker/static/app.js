@@ -44,6 +44,8 @@ function selectTab(name) {
   if (name === "portfolio") loadPortfolio();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
+  if (name === "pulse") loadPulse();
+  if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
 }
 
@@ -716,7 +718,89 @@ async function runImport(commit) {
   } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 }
 
+// ---------------------------------------------------------------- pulse
+const pulseState = { data: null, list: "gainers", loadedAt: 0 };
+async function loadPulse(force = false) {
+  loadSellWatch();
+  if (!force && pulseState.data && Date.now() - pulseState.loadedAt < 170000) return renderMovers();
+  $("#pulse-meta").textContent = "Scanning movers and their news… (about 10–20 seconds the first time)";
+  try {
+    pulseState.data = await api("/api/pulse" + (force ? "?refresh=true" : ""));
+    pulseState.loadedAt = Date.now();
+    renderPulse();
+  } catch (err) { $("#pulse-meta").textContent = err.message; }
+}
+function moverTags(m) {
+  return (m.tags || []).map((t) => `<span class="tag tag-${t.toLowerCase().replace(/[^a-z]+/g, "-")}">${esc(t)}</span>`).join("");
+}
+function renderMovers() {
+  const d = pulseState.data;
+  if (!d) return;
+  const rows = d.movers[pulseState.list] || [];
+  Live.want("pulse", rows.map((m) => m.symbol));
+  $("#movers-table").innerHTML = rows.length ? `<thead><tr><th>Symbol</th><th class="num">Price</th><th class="num">Today</th><th class="num">Volume vs avg</th><th class="num">News 48h</th><th>Why it's here</th></tr></thead><tbody>` +
+    rows.map((m) => `<tr class="clickable" data-open="${esc(m.symbol)}"><td><b>${esc(m.symbol.replace(/-USD$/, ""))}</b><div class="muted small">${esc(m.name)}</div></td>
+      <td class="num" data-live-price="${esc(m.symbol)}">${fmtMoney(m.price)}</td>
+      <td class="num ${cls(m.change_pct)}" data-live-chg="${esc(m.symbol)}">${fmtPct(m.change_pct, 2)}</td>
+      <td class="num">${m.rel_volume ? m.rel_volume.toFixed(1) + "×" : "—"}</td>
+      <td class="num">${m.attention ? m.attention.count_48h : "—"}</td>
+      <td>${moverTags(m) || '<span class="muted small">—</span>'}${m.attention?.headline ? `<div class="small muted clip">${esc(m.attention.headline.title)}</div>` : ""}</td></tr>`).join("") + "</tbody>"
+    : `<tr><td class="muted">Nothing in this list right now.</td></tr>`;
+  $("#movers-table").querySelectorAll("[data-open]").forEach((tr) => tr.addEventListener("click", () => openSymbol(tr.dataset.open)));
+}
+function renderPulse() {
+  const d = pulseState.data;
+  renderMovers();
+  const when = new Date(d.generated_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  $("#pulse-meta").innerHTML = `Scanned ${esc(when)}. Prices update live. ${d.errors.length ? `<span class="muted">(${d.errors.map(esc).join("; ")})</span>` : ""} <button class="ghost" id="pulse-refresh">Rescan</button>`;
+  $("#pulse-refresh").addEventListener("click", () => loadPulse(true));
+  const item = (m, extra) => `<li class="clickable" data-open="${esc(m.symbol)}"><div><b>${esc(m.symbol.replace(/-USD$/, ""))}</b> <span class="${cls(m.change_pct)}">${fmtPct(m.change_pct, 1)}</span> <span class="muted small">${esc(m.name)}</span></div>${extra}</li>`;
+  const link = (a) => `<a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a> <span class="muted small">${esc(a.source)}</span>`;
+  $("#hot-list").innerHTML = d.in_the_news.filter((m) => m.attention.count_48h).map((m) => item(m,
+    `<div class="small">${m.attention.count_48h} headlines · mood <span class="${cls(m.attention.sentiment)}">${m.attention.sentiment >= 0 ? "+" : ""}${m.attention.sentiment.toFixed(2)}</span></div>${m.attention.headline ? `<div class="small">${link(m.attention.headline)}</div>` : ""}`)).join("")
+    || `<li class="muted">No mover has much news right now.</li>`;
+  $("#deep-list").innerHTML = d.deep_coverage.map((m) => item(m, m.attention.deep.map((a) => `<div class="small">${link(a)}</div>`).join(""))).join("")
+    || `<li class="muted">No in-depth coverage of today's movers yet.</li>`;
+  const r = d.rules;
+  $("#sleeper-rule").textContent = `Officers and directors bought in the last 30 days (a cluster, or $1M+ by one of them), yet the stock had ${r.sleeper_max_news_7d} or fewer headlines this week and is up less than ${Math.round(r.sleeper_max_run_1m * 100)}% over the month. Research finds insider buying pays off over months, mostly in smaller, more volatile companies; the scorecard hasn't confirmed it for these alerts yet.`;
+  $("#sleeper-list").innerHTML = d.sleepers.map((s) => `<div class="sleeper clickable" data-open="${esc(s.symbol)}">
+      <div class="sl-head"><b class="sl-sym">${esc(s.symbol)}</b><span class="muted small clip">${esc(s.company)}</span>${s.dilution ? `<span class="chip dil">${esc(s.dilution)}</span>` : ""}</div>
+      <div class="sl-price">${fmtMoney(s.price)} <span class="${cls(s.change_pct)}">${fmtPct(s.change_pct, 1)}</span></div>
+      <ul>${s.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")
+    || `<p class="muted">No sleepers right now: recent insider buying is either already in the news or already priced up.</p>`;
+  document.querySelectorAll("#tab-pulse [data-open]").forEach((el) => el.addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    openSymbol(el.dataset.open);
+  }));
+}
+document.querySelectorAll("#mover-seg button").forEach((b) => b.addEventListener("click", () => {
+  pulseState.list = b.dataset.list;
+  document.querySelectorAll("#mover-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderMovers();
+}));
+Live.onTick((t, prev) => {
+  const p = document.querySelector(`[data-live-price="${CSS.escape(t.symbol)}"]`);
+  if (!p) return;
+  p.textContent = fmtMoney(t.price); flash(p, t, prev);
+  const c = document.querySelector(`[data-live-chg="${CSS.escape(t.symbol)}"]`);
+  if (c) { c.textContent = fmtPct(t.change_pct, 2); c.className = "num " + cls(t.change_pct); }
+});
+
+async function loadSellWatch() {
+  if (!holdingsList.length) { $("#sw-card").hidden = true; return; }
+  $("#sw-card").hidden = false;
+  $("#sw-list").innerHTML = `<p class="muted">Checking ${holdingsList.length} holding${holdingsList.length === 1 ? "" : "s"}…</p>`;
+  try {
+    const { holdings } = await api("/api/sellwatch");
+    $("#sw-list").innerHTML = holdings.map((h) => `<div class="sw-row clickable" data-open="${esc(h.symbol)}">
+        <div class="sw-head"><b>${esc(h.symbol)}</b><span class="chip ${h.verdict === "Review" ? "chip-review" : h.verdict === "Watch" ? "dil" : h.verdict === "Couldn't check" ? "chip-muted" : "chip-ok"}">${esc(h.verdict)}</span>
+          <span class="muted small">${h.weight != null ? h.weight.toFixed(1) + "% of portfolio" : ""}${h.unrealized_pct != null ? ` · <span class="${cls(h.unrealized_pct)}">${fmtPct(h.unrealized_pct)} vs cost</span>` : ""}${h.score != null ? ` · signal ${h.score > 0 ? "+" : ""}${h.score}` : ""}</span></div>
+        ${h.flags.length ? `<ul>${h.flags.map((f) => `<li class="${f.severity > 1 ? "sev2" : ""}">${esc(f.text)}</li>`).join("")}</ul>` : `<p class="muted small">No rule fired.${h.error ? " (" + esc(h.error) + ")" : ""}</p>`}</div>`).join("");
+    $("#sw-list").querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  } catch (err) { $("#sw-list").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
-loadHoldings();
+loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadPulse(); });
 if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
