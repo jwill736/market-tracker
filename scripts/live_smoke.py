@@ -114,6 +114,14 @@ def _():
     return f"{n['count']} headlines"
 
 
+@check("SEC fund filter (insider alerts)")
+def _():
+    from market_tracker import alerts
+    assert alerts.issuer_is_fund("40417"), "General American Investors should read as a fund"
+    assert not alerts.issuer_is_fund("320193"), "Apple should not read as a fund"
+    return "General American Investors = fund, Apple = operating company"
+
+
 @check("Yahoo market-news fallback feeds")
 def _():
     counts = {sym: len(news._yahoo(sym)) for sym in news.MARKET_FALLBACK_SYMBOLS}
