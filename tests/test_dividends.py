@@ -90,3 +90,14 @@ def test_declared_date_replaces_projection():
     u = d["upcoming"][0]
     assert u == {"symbol": "KO", "ex_date": "2026-11-27", "pay_date": "2026-12-15", "per_share": 0.55, "estimated": False, "amount": 5.5}
     assert sum(1 for m in d["months"] if m["amount"]) == 4
+
+
+def test_nasdaq_history_is_the_fallback_when_yahoo_fails():
+    from market_tracker import http
+
+    def get(url, params=None, headers=None, ttl=None):
+        if "yahoo" in url:
+            raise http.DataUnavailable("429")
+        return {"data": {"dividends": {"rows": [{"exOrEffDate": "08/10/2026", "type": "Cash", "amount": "$0.27"},
+                                                {"exOrEffDate": "05/11/2026", "type": "Cash", "amount": "$0.26"}]}}}
+    assert dv.history_any("AAPL", get) == [("2026-05-11", 0.26), ("2026-08-10", 0.27)]

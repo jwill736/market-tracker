@@ -81,17 +81,46 @@ def parse_nasdaq(data: dict) -> dict | None:
     return None
 
 
-def declared(sym: str, get=None) -> dict | None:
-    """Nasdaq's latest declared dividend (Nasdaq-listed stocks and funds only)."""
+def parse_nasdaq_history(data: dict) -> list[tuple[str, float]]:
+    rows = (((data or {}).get("data") or {}).get("dividends") or {}).get("rows") or []
+    out = []
+    for r in rows:
+        ex = _us_date(r.get("exOrEffDate"))
+        try:
+            amount = float(str(r.get("amount") or "").replace("$", "").replace(",", ""))
+        except ValueError:
+            continue
+        if ex and (r.get("type") or "Cash") == "Cash":
+            out.append((ex, amount))
+    return sorted(set(out))
+
+
+def _nasdaq(sym: str, get=None) -> dict | None:
     get = get or http.get
     for cls in ("stocks", "etf"):
         try:
-            got = parse_nasdaq(get(NASDAQ_DIVIDENDS.format(sym=sym, cls=cls), headers=NASDAQ_HEADERS, ttl=12 * 3600))
+            data = get(NASDAQ_DIVIDENDS.format(sym=sym, cls=cls), headers=NASDAQ_HEADERS, ttl=12 * 3600)
         except (http.DataUnavailable, KeyError, TypeError):
-            got = None
+            continue
+        if parse_nasdaq(data):
+            return data
+    return None
+
+
+def declared(sym: str, get=None) -> dict | None:
+    """Nasdaq's latest declared dividend (Nasdaq-listed stocks and funds only)."""
+    return parse_nasdaq(_nasdaq(sym, get))
+
+
+def history_any(sym: str, get=None) -> list[tuple[str, float]]:
+    """Yahoo's dividend history, or Nasdaq's when Yahoo is unavailable (Nasdaq-listed only)."""
+    try:
+        return history(sym, get)
+    except http.DataUnavailable:
+        got = parse_nasdaq_history(_nasdaq(sym, get))
         if got:
             return got
-    return None
+        raise
 
 
 # ------------------------------------------------------------------ the maths
@@ -152,7 +181,7 @@ def build(positions: list[dict], transactions: list[dict], income_rows: list[dic
 
     def one(sym):
         try:
-            return sym, history(sym, get), declared(sym, get)
+            return sym, history_any(sym, get), declared(sym, get)
         except (http.DataUnavailable, KeyError, TypeError, ValueError) as exc:
             errors.append(f"{sym}: {str(exc)[:80]}")
             return sym, [], None

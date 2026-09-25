@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, cryptoradar, early, events, http, people, pickers, pulse, radar, reading, service
+from market_tracker import charts, cryptoradar, dividends, early, events, fundamentals, http, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -324,6 +324,44 @@ def _():
     assert sig and a["forecast"] and a["backtest"], a["errors"]
     covered = [k for k, v in sig["components"].items() if v]
     return f"score {sig['score']:+.1f} {sig['label']}, components: {', '.join(covered)}; errors: {len(a['errors'])}"
+
+
+@check("SEC company financials: AAPL quarters, growth, free cash flow")
+def _():
+    fundamentals.clear_cache()
+    qs = fundamentals.for_symbol("AAPL")
+    assert len(qs) >= 5, f"only {len(qs)} quarters"
+    q = qs[0]
+    assert q.revenue and q.revenue > 5e10, q
+    assert q.revenue_yoy is not None and -50 < q.revenue_yoy < 100, q.revenue_yoy
+    assert q.operating_margin and 10 < q.operating_margin < 60, q.operating_margin
+    assert q.fcf_ttm and q.fcf_ttm > 0, q.fcf_ttm
+    assert q.shares_yoy is not None and abs(q.shares_yoy) < 20, q.shares_yoy
+    # Quarters must be ~3 months apart: derived Q4s and cash-flow quarters line up.
+    gaps = [(date.fromisoformat(a.end) - date.fromisoformat(b.end)).days for a, b in zip(qs, qs[1:])]
+    assert all(80 <= g <= 100 for g in gaps), gaps
+    return fundamentals.summary_line(qs) + f"; checks: {fundamentals.check(qs) or 'none'}"
+
+
+@check("Dividends: KO history (Yahoo), AAPL declared (Nasdaq)")
+def _():
+    ko = dividends.history("KO")
+    c = dividends.cadence(ko, date.today())
+    assert c and c["per_year"] == 4 and 0.2 < c["amount"] < 2, c
+    aapl = dividends.declared("AAPL")
+    assert aapl and aapl["ex_date"] and aapl["amount"], aapl
+    return (f"KO {len(ko)} payments, {c['per_year']}/yr at ${c['amount']}, last ex {c['last_ex']}; "
+            f"AAPL declared ${aapl['amount']} ex {aapl['ex_date']} paid {aapl['pay_date']}")
+
+
+@check("SnapTrade API reachable (rejects unsigned requests)")
+def _():
+    import httpx
+    up = httpx.get(snaptrade.HOST + "/", timeout=20)
+    assert up.status_code == 200 and up.json().get("online"), up.text[:200]
+    denied = httpx.get(snaptrade.HOST + "/accounts", timeout=20)
+    assert denied.status_code in (401, 403), denied.status_code
+    return f"online (API version {up.json().get('version')}); /accounts without a key: {denied.status_code}"
 
 
 def main() -> int:

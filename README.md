@@ -24,7 +24,8 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Composite signal** | A score from -100 to +100 built from trend, momentum, smart money, insiders, and news, with a per-component explanation and a volatility-based maximum position size | computed locally |
 | **Portfolio** | Trade ledger, average-cost P&L (realized and unrealized), allocation, volatility, Sharpe, max drawdown, VaR, concentration and correlation warnings, risk-balanced target weights | SQLite |
 | **Track record** | Logs each day's scores to a CSV, then measures them against what prices did 1, 3 and 6 months later. Reports the IC (rank correlation) with its error band, average return by label, and a per-component IC. A scheduled GitHub Actions job records 15 symbols every weekday | computed locally + GitHub Actions |
-| **Hold plan** | Hold by default; sell/trim/review only on your own tripwires, serious filings, concentration or taxes. Reinvest queue, earnings in dollars, cross-account wash-sale guard and loss harvesting, and an 8:30 ET morning brief | computed locally + SEC, Nasdaq, Fed |
+| **Hold plan** | Hold by default; sell/trim/review only on your own tripwires, the company's own quarterly numbers, serious filings, concentration or taxes. Where new money goes, earnings in dollars, cross-account wash-sale guard, a year-end tax planner, and an 8:30 ET morning brief | computed locally + SEC, Nasdaq, Fed |
+| **Income** | Dividends received, forward income, yield on cost, upcoming ex/pay dates and the next 12 months | Robinhood CSV / SnapTrade, Yahoo, Nasdaq |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
 ## Always on (alerts while your laptop sleeps)
@@ -117,6 +118,21 @@ mt journal sync             # pull the journal that GitHub Actions records daily
 mt journal report           # has the score predicted anything yet?
 mt investors --verify       # check every investor CIK against EDGAR
 ```
+
+## Phone app
+
+Plumbline installs on a phone like an app (an icon on the home screen that opens full-screen), but phones only install
+from a secure `https://` address. Three ways, safest first:
+
+| Way | Where it works | Installable | Setup |
+|---|---|---|---|
+| **Tailscale** (recommended) | Anywhere, only on your own devices | Yes | Install Tailscale (free) on the computer and the phone, sign in to both with the same account. On the computer: `tailscale serve --bg 8000`. It prints an address like `https://your-mac.tail1234.ts.net`: open it on the phone, then Share → **Add to Home Screen** (iPhone) or ⋮ → **Install app** (Android). Nothing is exposed to the internet |
+| **Hosted** (Fly, Render) | Anywhere | Yes | See "Private app" below; it's https already and needs `APP_PASSWORD` |
+| **Same Wi-Fi** | At home only | Home-screen shortcut, not a full app | Add `APP_PASSWORD="a long passphrase"` to `.env`, run `mt serve --lan` (or `mt service install --lan`) and open the address it prints on your phone. Plain http: anyone on that Wi-Fi could see the traffic, so it refuses to start without a password |
+
+The app on the phone keeps only its own files (page, script, styles, icons). Your portfolio data is never stored on the
+phone: it always comes live from your Plumbline, so if the computer is asleep the app says it can't reach it rather than
+showing old numbers. Alerts still come through ntfy.
 
 ## How to read the signals (and their limits)
 
@@ -231,7 +247,25 @@ minutes per portfolio) return the same data as JSON.
   Copy order, Open in Robinhood/Coinbase, and "It filled: record it". Orders are placed in your broker: neither Robinhood
   nor Stash has a trading API for individuals.
 - **Accounts**: Robinhood (CSV), Coinbase (CSV or **read-only API sync**: a View-only key in `.env` imports your fills
-  with cost basis and reports balances the ledger can't explain), Stash and anything else (type holdings once).
+  with cost basis and reports balances the ledger can't explain), Stash and anything else (type holdings once), or
+  **Automatic** sync through SnapTrade (below).
+
+### Automatic account sync (SnapTrade)
+
+SnapTrade connects to brokers for you, so trades, reinvested dividends, dividends and interest arrive without CSVs.
+It's a paid service; a **personal API key** covers your own accounts.
+
+1. Create a personal key at snaptrade.com and add it to `.env` in the app folder:
+   `SNAPTRADE_CLIENT_ID="..."` and `SNAPTRADE_CONSUMER_KEY="..."`. Restart the app.
+2. Portfolio → Import your accounts → **Automatic** → **Connect a broker**. SnapTrade's page opens; sign in to Robinhood,
+   Coinbase and the rest. The connection is **read-only**: it can't place orders or move money.
+3. **Sync now.** Trades you already imported from a CSV aren't added twice (same account, symbol, side, quantity and day).
+   Positions the ledger can't explain (shares transferred in, splits, trades older than the broker's history) are listed
+   for you to add with Stash / other.
+
+Check SnapTrade's current broker list for Stash before relying on it; if it isn't there, keep typing Stash holdings once.
+The sync's request signing is tested against SnapTrade's own SDK, but it hasn't run against a real account yet: the
+first sync with your key is the real test, and any error it shows is SnapTrade's own message.
 
 ## Early wire (before the mainstream)
 
@@ -289,22 +323,51 @@ costs money. A holding is raised for a decision only by:
 1. **Your own tripwire.** Write down why you own it and what would prove you wrong, and set the lines the app can check:
    sell below a price, re-think after a loss from your cost, take some off at a price, a target share of the portfolio,
    a review date. Crossing a line puts it on the list with your own words.
-2. **A serious SEC filing** in the last 90 days: delisting or bankruptcy (Sell?), going-concern doubt, restatement,
+2. **The business itself**, from the company's quarterly filings with the SEC: revenue, growth on a year earlier, gross
+   and operating margin, EPS, free cash flow and share count. Automatically, a stock goes to Review when revenue is below
+   a year earlier two quarters running, the share count grows more than 10% in a year, or free cash flow over the last
+   four quarters turns negative. Your own rules replace those: "revenue growth under 10% for 2 quarters", "operating
+   margin under 20%", "dilution over 3%", "free cash flow must stay positive". Funds and crypto have no such filings.
+3. **A serious SEC filing** in the last 90 days: delisting or bankruptcy (Sell?), going-concern doubt, restatement,
    auditor change or late report (Review).
-3. **Concentration.** One position past your cap (20%, settable; loosened to 1.5x an equal share so a 3-stock
+4. **Concentration.** One position past your cap (20%, settable; loosened to 1.5x an equal share so a 3-stock
    portfolio can hold 50% each) or past the target you set. Trimming back is the sale buy-and-hold research supports.
-4. **Taxes.** Sales that would turn long-term within 90 days say when, and what waiting saves; losses worth harvesting
+5. **Taxes.** Sales that would turn long-term within 90 days say when, and what waiting saves; losses worth harvesting
    come with a replacement to hold for 31 days so you stay invested.
 
 Money a trim frees up (plus buying power) goes to a **reinvest queue**: holdings below the target you set, watchlist
 names with no serious filings, then a broad market fund (VTI). **Coming up** lists your earnings with the options-implied
 move in dollars ("NVDA reports Nov 18: options price ±11%, ±$1,016 on yours"), Fed decisions, CPI and jobs reports.
 
+**Putting new money in?** Enter an amount and the plan splits it toward the targets you set, biggest shortfall first,
+without selling anything. Holdings without a target keep their share of the rest (so with no targets it keeps your
+current mix). Holdings flagged Sell?/Trim/Review and anything in a wash-sale window are left out; once every target is
+met the rest goes to a broad market fund.
+
 **Taxes across your accounts**: realized gains this year, and wash sales that no single broker can see: selling at a loss
 in Robinhood and buying the same stock, or a fund on the same index, in Stash within 30 days either side. A don't-buy-until
 list after loss sales, the short- to long-term clock per lot, and harvest candidates with the recent buys that would wash
 them. Rates are settable (24% short-term and 15% long-term by default). Not tax advice: IRA and spouse accounts count too
 and aren't visible here; crypto has not been under the wash-sale rule, which the app notes rather than assumes.
+
+**Before December 31**: tax on this year's realized gains now, which losses to take by the last trading day to offset
+them (each one only while it still lowers this year's tax: gains first, then up to $3,000 of other income, the rest
+carried forward), what that saves, and losses a recent buy would wash. It warns when dividend reinvesting or a
+recurring buy would wash a harvested loss. Enter your filing status and taxable income (before investment gains) and it
+sizes long-term gains you could take at a **0% federal rate**: sell and buy straight back to raise your cost basis
+(the wash-sale rule covers losses only). The 0% limits default to the 2026 IRS figures (single $49,450, married
+jointly $98,900, head of household $66,200); they change yearly, so the field is editable. Your state may still tax
+the gain.
+
+## Income (dividends)
+
+The **Income** tab: dividends received in the last 12 months and this year, what your holdings pay a year at today's
+rate and per month, yield on what you paid and on today's value, the next ex-dividend dates (own the shares at the close
+the day before) and a month-by-month view of the next 12 months. Robinhood's CSV dividend, tax-withheld and interest rows
+are imported; for an account with no dividend rows (Stash) payments are estimated from each ex-date and the shares that
+account held, and marked so. Dates come from Nasdaq where the company has declared them (Nasdaq-listed names);
+otherwise they're projected from the usual spacing and marked estimated. A one-off special dividend isn't treated as if
+it would repeat.
 
 ## Morning brief (8:30 ET)
 
@@ -417,6 +480,8 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 | `APP_PASSWORD` | Password for the private app. When set, every page and API call needs a login |
 | `APP_SECRET` | Optional: signs login sessions (defaults to one derived from the password) |
 | `REQUIRE_LOGIN` | Set to `1` on a server so the app refuses to serve until `APP_PASSWORD` is set |
+| `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` | Optional: automatic, read-only account sync through SnapTrade (personal key) |
+| `SNAPTRADE_USER_ID`, `SNAPTRADE_USER_SECRET` | Only with a commercial SnapTrade key: the user it registered |
 
 ## Architecture
 
