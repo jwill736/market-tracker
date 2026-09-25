@@ -22,7 +22,7 @@
       <span class="brand-name">Plumbline</span>
     </a>
     <nav aria-label="Sections">
-      <a href="#live">Live</a><a href="#scores">Scores</a><a href="#insiders">Insiders</a><a href="#moves">Big moves</a><a href="#scorecard">Scorecard</a><a href="#record">Track record</a>
+      <a href="#live">Live</a><a href="#scores">Scores</a><a href="#insiders">Insiders</a><a href="#moves">Big moves</a><a href="#scorecard">Scorecard</a><a href="#receipts">Receipts</a><a href="#record">Track record</a>
     </nav>
     <div class="status" id="status" aria-live="polite">
       <span class="dot" id="live-dot"></span><span id="live-text">Connecting…</span>
@@ -84,6 +84,16 @@
     </div>
     <div class="sc-kinds" id="sc-kinds"></div>
     <div class="panel scroll"><table class="plain" id="sc-table"></table></div>
+  </section>
+
+  <section id="receipts" aria-labelledby="rc-h">
+    <div class="section-head">
+      <h2 id="rc-h">Receipts</h2>
+      <p class="muted">Every early-wire call, with the price when it was first seen, published 24 hours later and scored 5 trading days on against SPY. Misses stay in. Each finished day is sealed with a SHA-256 hash chained to the day before, stored in this repository's <code>journal-data</code> branch, so no call can be changed or dropped afterwards without breaking every later seal. Check it yourself with <code>mt receipts verify</code>.</p>
+    </div>
+    <div class="panel pad"><p class="verdict" id="rc-summary"></p><div class="rc-kinds" id="rc-kinds"></div></div>
+    <div class="panel scroll"><table class="plain" id="rc-table"></table></div>
+    <details class="panel pad rc-chain"><summary>The seal chain</summary><div class="scroll"><table class="plain" id="rc-chain"></table></div></details>
   </section>
 
   <section id="record" aria-labelledby="rec-h">

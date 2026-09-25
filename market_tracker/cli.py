@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 
 from . import db, http, journal, research, service
 from .investors import INVESTORS, by_key
@@ -324,6 +324,34 @@ def _write_issue(issues_dir: str, n: int, label: str, title: str, body: str) -> 
         fh.write(body)
 
 
+def cmd_receipts(args) -> int:
+    from . import early, receipts, scorecard
+    os.makedirs(args.data_dir, exist_ok=True)
+    early_path = os.path.join(args.data_dir, receipts.EARLY_FILE)
+    chain_path = os.path.join(args.data_dir, receipts.CHAIN_FILE)
+    calls = receipts.load_early(early_path)
+    log = scorecard.load_log(os.path.join(args.data_dir, "alert_log.csv"))
+    chain = receipts.load_chain(chain_path)
+    now = datetime.now(timezone.utc)
+    if args.action == "snapshot":
+        data = early.build(set(), now=now)
+        new = receipts.record_sightings(calls, data["signals"], now)
+        receipts.save_early(calls, early_path)
+        print(f"{len(new)} new early-wire calls recorded ({len(data['signals'])} signals; sources down: {len(data['errors'])})")
+        for c in new:
+            print(f"  {c.symbol:<10} {c.kinds:<16} {'EARLY ' if c.early else '      '}{c.price:>12,.4f}  {c.headline[:70]}")
+    if args.action in ("snapshot", "seal"):
+        new = receipts.seal(chain, calls, log, now.date(), now)
+        receipts.save_chain(chain, chain_path)
+        print(f"{len(new)} day(s) sealed; chain length {len(chain)}")
+        for s in new:
+            print(f"  {s['day']}  {s['calls']:>3} calls  {s['hash'][:16]}")
+    problems = receipts.verify(chain, calls, log)
+    if args.action == "verify" or problems:
+        print("Chain intact." if not problems else "Problems:\n  " + "\n  ".join(problems))
+    return 1 if problems else 0
+
+
 def cmd_watch(args) -> int:
     import os
     import time
@@ -624,6 +652,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="Keep polling every SECONDS (e.g. 60) instead of running once")
     s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser("receipts", help="Public, hash-sealed record of every call: snapshot, seal, verify")
+    s.add_argument("action", choices=["snapshot", "seal", "verify"],
+                   help="snapshot: record today's strongest early-wire calls; seal: seal finished days; verify: recheck the chain")
+    s.add_argument("--data-dir", default="alerts_data", help="Folder holding alert_log.csv, early_calls.csv, receipts.jsonl")
+    s.set_defaults(func=cmd_receipts)
 
     s = sub.add_parser("site", help="Build the static public site (GitHub Pages) into a folder")
     s.add_argument("--out", default="_site")
