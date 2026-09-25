@@ -98,6 +98,7 @@ function renderClusters() {
   const card = (c) => `<article class="cluster">
       <header><span class="tick">${esc(c.symbol || "—")}</span><span class="co" title="${esc(c.company)}">${esc(c.company)}</span>
         <span class="chip ${c.status === "new" ? "new" : ""}" title="${esc(tips[c.status] || "")}">${labels[c.status]}</span></header>
+      ${dilChip(c.dilution)}
       <div class="facts"><b>${c.insiders} insiders</b> · ${money(c.total_value)} · ${fmtDate(c.first_trade)} → ${fmtDate(c.last_trade)} · ${c.trade_days} trading day${c.trade_days === 1 ? "" : "s"}</div>
       <details><summary>Purchases and filings</summary>
         <div class="scroll"><table><thead><tr><th>Date</th><th>Insider</th><th>Role</th><th class="num">Value</th><th></th></tr></thead><tbody>
@@ -110,9 +111,34 @@ function renderClusters() {
   const rest = data.clusters.filter((c) => !main.includes(c));
   $("#clusters").innerHTML = main.map(card).join("") || `<p class="empty">No clusters have alerted in the last 30 days.</p>`;
   $("#clusters-rest").innerHTML = rest.length ? `<details><summary>${rest.length} more active clusters that didn't alert</summary>
-      <div class="panel scroll"><table class="plain"><thead><tr><th>Ticker</th><th>Company</th><th>Why not</th><th class="num">Insiders</th><th class="num">Total</th><th>Buys</th></tr></thead><tbody>
+      <div class="panel scroll"><table class="plain"><thead><tr><th>Ticker</th><th class="co-col">Company</th><th>Why not</th><th class="num">Insiders</th><th class="num">Total</th><th>Buys</th></tr></thead><tbody>
       ${rest.map((c) => `<tr><td>${esc(c.symbol)}</td><td>${esc(c.company)}</td><td>${labels[c.status]}</td><td class="num">${c.insiders}</td><td class="num">${money(c.total_value)}</td><td>${fmtDate(c.first_trade)} → ${fmtDate(c.last_trade)}</td></tr>`).join("")}
       </tbody></table></div></details>` : "";
+}
+
+function dilChip(d) {
+  if (!d || !d.label) return "";
+  return `<span class="chip dil" title="${esc(d.notes.join(" · "))}">${esc(d.label)}</span>`;
+}
+
+const pct = (x) => x == null ? "—" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+
+function renderScorecard() {
+  const sc = data.scorecard;
+  if (!sc) { $("#sc-kinds").innerHTML = `<p class="empty">No alerts logged yet.</p>`; $("#sc-table").innerHTML = ""; return; }
+  if (sc.error) { $("#sc-kinds").innerHTML = `<p class="empty">Scorecard unavailable: ${esc(sc.error)}</p>`; return; }
+  $("#sc-kinds").innerHTML = Object.values(sc.by_kind).map((k) => `<div class="panel pad">
+      <h3>${esc(k.label)} <span class="muted small">${k.alerts} alert${k.alerts === 1 ? "" : "s"}</span></h3>
+      <p class="verdict-sm">${esc(k.verdict)}</p>
+      <div class="scroll"><table><thead><tr><th>Held</th><th class="num">Alerts</th><th class="num">Avg vs SPY</th><th class="num">Beat SPY</th></tr></thead><tbody>
+      ${k.horizons.map((h) => `<tr><td>${h.horizon_days} trading days</td><td class="num">${h.n}</td><td class="num">${h.n ? pct(h.mean_excess) : "—"}</td><td class="num">${h.n ? Math.round(h.hit_rate * 100) + "%" : "—"}</td></tr>`).join("")}
+      </tbody></table></div></div>`).join("");
+  const kinds = { cluster: "Cluster", big: "Large buy", "13d": "13D/13G" };
+  $("#sc-table").innerHTML = `<thead><tr><th>Alerted</th><th>Type</th><th>Ticker</th><th class="co-col">Company</th><th class="num">Since entry</th><th class="num">vs SPY</th><th class="num">Days held</th></tr></thead><tbody>` +
+    sc.alerts.map((a) => `<tr><td class="nowrap">${fmtDate(a.alerted)}</td><td class="nowrap">${kinds[a.kind] || esc(a.kind)}</td><td>${esc(a.symbol)}</td>
+      <td class="co-col">${esc(a.company)}${a.detail ? `<div class="muted small">${esc(a.detail)}</div>` : ""}</td>
+      ${a.to_date == null ? `<td class="num status-open" colspan="3">${a.status === "pending" ? "enters at the next close" : esc(a.status)}</td>` :
+        `<td class="num ${a.to_date > 0 ? "up" : a.to_date < 0 ? "down" : ""}">${pct(a.to_date)}</td><td class="num">${pct(a.to_date_excess)}</td><td class="num">${a.days_held}</td>`}</tr>`).join("") + `</tbody>`;
 }
 
 function renderMoves() {
@@ -120,7 +146,7 @@ function renderMoves() {
   $("#big-buys").innerHTML = big.length ? `<ul class="move-list">${big.map((b) => `<li>
       <span class="what">${esc(b.symbol)} <span class="muted">${esc(b.company)}</span></span>
       <span class="amt">${money(b.value)}</span>
-      <span class="sub">${esc(b.insider)}, ${esc(b.role)} · ${b.trade_dates.map(fmtDate).join(", ")} · <a href="${esc(b.url)}" rel="noopener">filing</a></span>
+      <span class="sub">${esc(b.insider)}, ${esc(b.role)} · ${b.trade_dates.map(fmtDate).join(", ")} · <a href="${esc(b.url)}" rel="noopener">filing</a> ${dilChip(b.dilution)}</span>
     </li>`).join("")}</ul>` : `<p class="empty">None in the last 14 days.</p>`;
   $("#stakes").innerHTML = stakes.length ? `<ul class="move-list">${stakes.map((st) => `<li>
       <span class="what">${esc(st.company)}</span>
@@ -153,7 +179,7 @@ function renderBacktest() {
 function render() {
   $("#snapshot-note").textContent = `Snapshot built ${fmtTime(data.generated_at)}.`;
   $("#generated").textContent = `Data built ${fmtTime(data.generated_at)}`;
-  renderCards(); renderScores(); renderClusters(); renderMoves(); renderRecord(); renderBacktest();
+  renderCards(); renderScores(); renderClusters(); renderMoves(); renderScorecard(); renderRecord(); renderBacktest();
 }
 
 async function load() {

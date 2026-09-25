@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, timedelta, timezone
 
-from . import alerts, http
+from . import alerts, dilution, http
 from .investors import INVESTORS
 
 FEED = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}&company=&dateb="
@@ -37,7 +37,9 @@ FEED = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}&
 INSIDER_FORMS = {"4"}
 STAKE_FORMS = {"SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A",
                "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}  # SC ... = pre-2025 form names
-FEED_QUERIES = ["4", "SCHEDULE 13D", "SCHEDULE 13G", "SC 13D", "SC 13G"]
+# Offering-related forms, watched only for companies that alerted recently ("424B" also
+# matches 424B2 structured notes, which the exact-form check drops).
+FEED_QUERIES = ["4", "SCHEDULE 13D", "SCHEDULE 13G", "SC 13D", "SC 13G", "S-3", "424B", "S-1", "F-3", "F-1"]
 
 BIG_BUY_VALUE = 1_000_000
 FIRST_RUN_LOOKBACK = timedelta(minutes=30)
@@ -253,6 +255,7 @@ class PollResult:
     big: list[BigBuy] = field(default_factory=list)
     stakes: list[Stake] = field(default_factory=list)          # every new 13D/13G seen
     tracked_stakes: list[Stake] = field(default_factory=list)  # the ones that alert
+    dilution: list[FeedEntry] = field(default_factory=list)     # offering filings by recently alerted companies
     failures: int = 0
 
 
@@ -265,6 +268,7 @@ def poll(state: WatchState, buys: list[alerts.Buy], alerted: dict[str, str], *, 
          feed_fn: Callable[[str, int], str] = fetch_feed,
          submission_fn: Callable[[FeedEntry], str] = submission_text,
          is_fund: Callable[[str], bool] = alerts.issuer_is_fund,
+         watch_ciks: set[str] | frozenset[str] = frozenset(),
          log: Callable[[str], None] = lambda m: None) -> PollResult:
     """Read the feeds once and work out what's new. Mutates `buys`, `alerted` and `state`
     (the caller saves them) and returns what should be announced."""
@@ -298,6 +302,11 @@ def poll(state: WatchState, buys: list[alerts.Buy], alerted: dict[str, str], *, 
             if stake.tracked and key not in alerted:
                 alerted[key] = today.isoformat()
                 res.tracked_stakes.append(stake)
+        elif form in dilution.WATCH_FORMS:
+            hit = next((e for e in group if e.cik in watch_ciks), None)
+            if hit is None:
+                continue   # offering filings matter only for companies that alerted recently
+            res.dilution.append(hit)
         else:
             continue   # a prefix match such as 424B2: filtered out every time, so not worth recording
         state.seen.append(acc)
@@ -363,11 +372,14 @@ _Opened automatically by the filing watcher._
 def summary_lines(res: PollResult) -> list[str]:
     lines = [f"{res.filings} new filings, {len(res.new_buys)} qualifying buys, {len(res.stakes)} 13D/13G, "
              f"{len(res.clusters)} cluster alerts, {len(res.big)} large-buy alerts, "
-             f"{len(res.tracked_stakes)} tracked-investor stakes" + (f", {res.failures} fetch failures" if res.failures else "")]
+             f"{len(res.tracked_stakes)} tracked-investor stakes, {len(res.dilution)} offering filings by alerted companies"
+             + (f", {res.failures} fetch failures" if res.failures else "")]
     for c in res.clusters:
         lines.append(f"  CLUSTER {c.symbol or '-'} {c.issuer_name}: {len(c.insiders)} insiders, {_money(c.total_value)}")
     for b in res.big:
         lines.append(f"  BIG     {b.symbol or '-'} {b.issuer_name}: {b.insider} {_money(b.value)}")
+    for e in res.dilution:
+        lines.append(f"  DILUTE  {e.form:<8} {e.name[:50]}")
     for s in res.stakes:
         lines.append(f"  {'TRACKED' if s.tracked else 'STAKE  '} {s.form:<14} {s.filer_name[:40]} -> {s.subject_name[:40]}")
     return lines

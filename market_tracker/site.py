@@ -16,7 +16,7 @@ import shutil
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
-from . import alerts, http, journal, realtime
+from . import alerts, dilution, http, journal, realtime, scorecard
 from .providers import market
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_static")
@@ -77,7 +77,7 @@ def cluster_rows(buys: list[alerts.Buy], alerted: dict[str, str], today: date,
         if status == "alerted" and c.last_filed < (today - timedelta(days=2 * alerts.ALERT_MAX_AGE_DAYS)).isoformat():
             status = "older"
         out.append({
-            "symbol": c.symbol, "company": c.issuer_name, "status": status,
+            "symbol": c.symbol, "company": c.issuer_name, "issuer_cik": c.issuer_cik, "status": status,
             "insiders": len(c.insiders), "total_value": c.total_value,
             "first_trade": c.first_trade, "last_trade": c.last_trade, "last_filed": c.last_filed,
             "trade_days": c.trade_days,
@@ -98,7 +98,8 @@ def big_buy_rows(buys: list[alerts.Buy], today: date, is_fund: Callable[[str], b
     for b in realtime.big_buys([b for b in buys if b.filed >= since]):
         if b.symbol.strip().upper() in alerts.NO_TICKER or is_fund(b.issuer_cik):
             continue
-        out.append({"symbol": b.symbol, "company": b.issuer_name, "insider": b.insider, "role": b.role,
+        out.append({"symbol": b.symbol, "company": b.issuer_name, "issuer_cik": b.issuer_cik,
+                    "insider": b.insider, "role": b.role,
                     "value": b.value, "trade_dates": b.trade_dates,
                     "url": realtime.filing_url(b.issuer_cik, b.accession)})
         if len(out) >= limit:
@@ -116,16 +117,46 @@ def stake_rows(stakes: list[realtime.Stake], today: date, days: int = 30, limit:
             for s in keep[:limit]]
 
 
+def add_dilution(rows: list[dict], ciks: list[str], check_fn: Callable[[str], dilution.DilutionCheck]) -> None:
+    """Attach a dilution label to each row (one cached EDGAR lookup per company)."""
+    seen: dict[str, dilution.DilutionCheck] = {}
+    for row, cik in zip(rows, ciks):
+        if cik not in seen:
+            seen[cik] = check_fn(cik)
+        d = seen[cik]
+        row["dilution"] = {"label": dilution.short_label(d), "notes": d.notes} if d.flagged else None
+
+
+def scorecard_data(log: list[scorecard.AlertRecord], history_fn) -> dict | None:
+    if not log:
+        return None
+    result = scorecard.evaluate(log, history_fn)
+    keep = ("alerted", "kind", "symbol", "company", "detail", "status", "entry_date", "entry",
+            "to_date", "to_date_excess", "days_held", *(f"excess_{h}" for h in scorecard.HORIZONS))
+    return {"benchmark": result.get("benchmark"), "error": result.get("error"), "by_kind": result["by_kind"],
+            "alerts": [{k: r.get(k) for k in keep} for r in result["alerts"][:60]],
+            "horizons": list(scorecard.HORIZONS), "min_resolved": scorecard.MIN_RESOLVED}
+
+
 def build_data(journal_rows: list[dict], buys: list[alerts.Buy], alerted: dict[str, str], *,
                today: date, quote_fn=market.get_quote, history_fn=journal.history_closes,
                is_fund=alerts.issuer_is_fund, backtest: dict | None = None,
-               now: datetime | None = None, stakes: list[realtime.Stake] | None = None) -> dict:
+               now: datetime | None = None, stakes: list[realtime.Stake] | None = None,
+               log: list[scorecard.AlertRecord] | None = None, dilution_fn=None,
+               price_fn=scorecard.history_closes) -> dict:
+    check = dilution_fn or (lambda cik: dilution.check(cik, today))
+    clusters = cluster_rows(buys, alerted, today, is_fund)
+    featured = [r for r in clusters if r["status"] in ("new", "alerted")]
+    add_dilution(featured, [r["issuer_cik"] for r in featured], check)
+    big = big_buy_rows(buys, today, is_fund)
+    add_dilution(big, [r["issuer_cik"] for r in big], check)
     return {
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
         "universe": universe_rows(journal.DEFAULT_UNIVERSE, latest_scores(journal_rows), quote_fn),
         "track_record": track_record(journal_rows, history_fn) if journal_rows else None,
-        "clusters": cluster_rows(buys, alerted, today, is_fund),
-        "big_buys": big_buy_rows(buys, today, is_fund),
+        "clusters": clusters,
+        "big_buys": big,
+        "scorecard": scorecard_data(log or [], price_fn),
         "stakes": stake_rows(stakes or [], today),
         "alert_rules": {
             "min_insiders": alerts.CLUSTER_MIN_INSIDERS, "min_total": alerts.CLUSTER_MIN_TOTAL,
@@ -146,6 +177,7 @@ def build(out_dir: str, journal_file: str | None, alerts_dir: str | None, today:
         buys = alerts.load_buys(os.path.join(alerts_dir, "insider_buys.csv"))
         alerted = alerts.load_alerted(os.path.join(alerts_dir, "alerted.csv"))
         stakes = realtime.load_stakes(os.path.join(alerts_dir, "stakes.csv"))
+        kw.setdefault("log", scorecard.load_log(os.path.join(alerts_dir, "alert_log.csv")))
     backtest_file = os.path.join(STATIC_DIR, "backtest.json")
     backtest = json.load(open(backtest_file, encoding="utf-8")) if os.path.exists(backtest_file) else None
     data = build_data(rows, buys, alerted, today=today, backtest=backtest, stakes=stakes, **kw)

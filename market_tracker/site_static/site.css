@@ -44,7 +44,7 @@ p { margin: 0; }
 .top-inner { max-width: 1160px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 12px 24px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
 .brand-name { font: 400 26px/1 "Instrument Serif", Georgia, serif; }
-nav { display: flex; gap: 18px; font-size: 14px; }
+nav { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; }
 nav a { color: var(--ink-2); text-decoration: none; }
 nav a:hover { color: var(--ink); text-decoration: underline; }
 .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
@@ -132,3 +132,13 @@ footer { max-width: 1160px; margin: 0 auto; padding: 24px 16px 48px; color: var(
 .move-list .amt { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
 .move-list .sub { grid-column: 1 / -1; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .chip.tracked { background: var(--accent); color: var(--surface); margin-left: 6px; }
+
+/* scorecard */
+.sc-kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 12px; }
+.sc-kinds > * { min-width: 0; align-content: start; }
+.sc-kinds h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.sc-kinds .verdict-sm { font-size: 14px; color: var(--ink-2); }
+.sc-kinds table { font-size: 13px; }
+.chip.dil { background: var(--warn-bg); color: var(--warn-ink); }
+.status-open { color: var(--muted); }
+@media (max-width: 640px) { .co-col { display: none; } }

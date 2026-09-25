@@ -341,7 +341,8 @@ def issue_title(c: Cluster) -> str:
     return f"Insider cluster buy: {ticker} ({c.issuer_name}), {len(c.insiders)} insiders, {_money(c.total_value)}"
 
 
-def issue_body(c: Cluster) -> str:
+def issue_body(c: Cluster, extra: str = "") -> str:
+    """`extra` (markdown, e.g. the dilution check) goes between the purchases and the notes."""
     same_day = ("> **Check this one:** every purchase is on the same day. That can mean a coordinated "
                 "or structured transaction rather than independent decisions.\n\n" if c.trade_days == 1 else "")
     rows = "\n".join(
@@ -354,6 +355,7 @@ def issue_body(c: Cluster) -> str:
 |---|---|---|---:|---:|---:|---|
 {rows}
 
+{extra}
 **How to read this**
 - Open-market purchases (Form 4, code P) of at least {_money(MIN_BUY_VALUE)} each; awards, option exercises and sales are excluded.
 - Insiders buying together is the insider signal with the most research behind it, but it is not a guarantee, and small companies can be illiquid and volatile. Size any position for the volatility.
