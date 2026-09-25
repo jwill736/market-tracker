@@ -1,8 +1,12 @@
 import json
 from datetime import date, datetime, timezone
 
-from market_tracker import alerts, http, journal, site
+from market_tracker import alerts, dilution, http, journal, site
 from market_tracker.providers import market
+
+
+def NO_DILUTION(cik):
+    return dilution.DilutionCheck(cik=cik)
 
 
 def _quote(sym):
@@ -35,7 +39,7 @@ def test_build_data_shape_and_failures_are_contained():
     fresh = [_buy(n, f"2026-09-1{i}", "2026-09-23") for i, n in enumerate("ABC")]
     fund = [_buy(n, f"2026-09-1{i}", "2026-09-23", cik="0000040417", symbol="GAM") for i, n in enumerate("ABC")]
     data = site.build_data(rows, fresh + fund, {}, today=date(2026, 9, 24), quote_fn=_quote,
-                           history_fn=lambda s: [], is_fund=lambda cik: cik == "0000040417",
+                           history_fn=lambda s: [], is_fund=lambda cik: cik == "0000040417", dilution_fn=NO_DILUTION,
                            now=datetime(2026, 9, 24, 21, tzinfo=timezone.utc))
     assert data["generated_at"] == "2026-09-24T21:00:00+00:00"
     by_sym = {r["symbol"]: r for r in data["universe"]}
@@ -72,7 +76,7 @@ def test_build_writes_static_files_and_data(tmp_path):
                      str(adir / "insider_buys.csv"), date(2026, 9, 24))
     out = tmp_path / "_site"
     site.build(str(out), str(jpath), str(adir), today=date(2026, 9, 24), quote_fn=_quote,
-               history_fn=lambda s: [], is_fund=lambda cik: False)
+               history_fn=lambda s: [], is_fund=lambda cik: False, dilution_fn=NO_DILUTION)
     for name in ("index.html", "site.js", "site.css", "data.json"):
         assert (out / name).exists(), name
     data = json.loads((out / "data.json").read_text())

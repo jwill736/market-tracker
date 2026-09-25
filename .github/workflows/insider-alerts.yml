@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/alerts"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
-            for f in insider_buys.csv alerted.csv alerts_state.json; do
+            for f in insider_buys.csv alerted.csv alerts_state.json alert_log.csv; do
               git show "origin/journal-data:$f" > "$RUNNER_TEMP/alerts/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/alerts/$f"
             done
           fi
@@ -78,6 +78,6 @@ jobs:
             git rm -rfq .
           fi
           cp "$RUNNER_TEMP"/alerts/*.csv "$RUNNER_TEMP"/alerts/*.json .
-          git add insider_buys.csv alerted.csv alerts_state.json
+          git add insider_buys.csv alerted.csv alerts_state.json alert_log.csv
           git commit -qm "Insider alerts $(date -u +%F)" || { echo "No changes"; exit 0; }
           git push origin journal-data

@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/watch"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
-            for f in insider_buys.csv alerted.csv stakes.csv; do
+            for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv; do
               git show "origin/journal-data:$f" > "$RUNNER_TEMP/watch/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/watch/$f"
             done
           fi
@@ -79,10 +79,10 @@ jobs:
             git checkout --orphan journal-data
             git rm -rfq .
           fi
-          for f in insider_buys.csv alerted.csv stakes.csv; do
+          for f in insider_buys.csv alerted.csv stakes.csv alert_log.csv; do
             [ -f "$RUNNER_TEMP/watch/$f" ] && cp "$RUNNER_TEMP/watch/$f" .
           done
-          git add insider_buys.csv alerted.csv stakes.csv
+          git add insider_buys.csv alerted.csv stakes.csv alert_log.csv
           if git diff --cached --quiet; then
             echo "No new data"
           else

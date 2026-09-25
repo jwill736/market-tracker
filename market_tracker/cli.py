@@ -239,7 +239,7 @@ def cmd_alerts(args) -> int:
     import os
     from datetime import date as _date, timedelta
 
-    from . import alerts
+    from . import alerts, dilution, scorecard
 
     data_dir = args.data_dir
     os.makedirs(data_dir, exist_ok=True)
@@ -277,19 +277,20 @@ def cmd_alerts(args) -> int:
         print(f"  {tag} {c.symbol or '-':<6} {c.issuer_name[:40]:<40} "
               f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade} "
               f"({c.trade_days} trading day{'s' if c.trade_days != 1 else ''}; roles: {'; '.join(roles)[:120]})")
+    checks = {c.issuer_cik: dilution.check(c.issuer_cik, today) for c in fresh}
     if args.issues_dir:
-        os.makedirs(args.issues_dir, exist_ok=True)
         for i, c in enumerate(fresh):
-            with open(os.path.join(args.issues_dir, f"{i:03d}.title"), "w") as fh:
-                fh.write(alerts.issue_title(c))
-            with open(os.path.join(args.issues_dir, f"{i:03d}.md"), "w") as fh:
-                fh.write(alerts.issue_body(c))
+            _write_issue(args.issues_dir, i, "insider-alert", alerts.issue_title(c),
+                         alerts.issue_body(c, dilution.issue_section(checks[c.issuer_cik])))
     if args.notify and not args.dry_run:
         for c in fresh:
-            _notify_cluster(c)
+            _notify_cluster(c, checks[c.issuer_cik])
     if not args.dry_run:
+        log_path = os.path.join(data_dir, "alert_log.csv")
+        log = scorecard.ensure_log(log_path, alerted, buys)
         for c in fresh:
             alerted[c.issuer_cik] = today.isoformat()
+        scorecard.save_log(log + [scorecard.from_cluster(c, today) for c in fresh], log_path)
         alerts.save_buys(buys, buys_path, today)
         alerts.save_alerted(alerted, alerted_path)
         with open(state_path, "w") as fh:
@@ -297,72 +298,152 @@ def cmd_alerts(args) -> int:
     return 0
 
 
-def _notify_cluster(c) -> None:
-    from . import alerts, notify
+def _notify_cluster(c, dil=None) -> None:
+    from . import alerts, dilution, notify
 
     latest = max(c.buys, key=lambda b: b.filed)
+    warn = f" {dilution.short_label(dil)}." if dil is not None and dil.flagged else ""
     notify.send(notify.Message(
         title=f"Insider cluster: {c.symbol or c.issuer_name} - {len(c.insiders)} insiders, {alerts._money(c.total_value)}",
         body=f"{c.issuer_name}: {len(c.insiders)} officers/directors bought on the open market, "
-             f"{c.first_trade} to {c.last_trade}. An alert issue has been opened.",
+             f"{c.first_trade} to {c.last_trade}.{warn} An alert issue has been opened.",
         url=f"{alerts.ARCHIVES}edgar/data/{int(latest.issuer_cik)}/{latest.accession.replace('-', '')}/",
         priority=4, tags=("chart_with_upwards_trend",)))
+
+
+def _write_issue(issues_dir: str, n: int, label: str, title: str, body: str) -> None:
+    """The file name carries the issue label (insider-alert or stake-alert)."""
+    import os
+
+    os.makedirs(issues_dir, exist_ok=True)
+    stem = os.path.join(issues_dir, f"{n:03d}.{label}")
+    with open(stem + ".title", "w") as fh:
+        fh.write(title)
+    with open(stem + ".md", "w") as fh:
+        fh.write(body)
 
 
 def cmd_watch(args) -> int:
     import os
     import time
-    from datetime import date as _date, datetime, timezone
+    from datetime import date as _date, datetime, timedelta, timezone
 
-    from . import alerts, notify, realtime
+    from . import alerts, dilution, notify, realtime, scorecard
 
     os.makedirs(args.data_dir, exist_ok=True)
     buys_path = os.path.join(args.data_dir, "insider_buys.csv")
     alerted_path = os.path.join(args.data_dir, "alerted.csv")
     stakes_path = os.path.join(args.data_dir, "stakes.csv")
+    log_path = os.path.join(args.data_dir, "alert_log.csv")
     if args.notify and not notify.configured():
         print("NTFY_TOPIC is not set: alerts will be written but not pushed to a phone", file=sys.stderr)
     issue_no = 0
     while True:
         started = time.monotonic()
+        today = _date.today()
         state = realtime.WatchState.load(args.state)
         buys = alerts.load_buys(buys_path)
         alerted = alerts.load_alerted(alerted_path)
         stakes = realtime.load_stakes(stakes_path)
-        res = realtime.poll(state, buys, alerted, now=datetime.now(timezone.utc),
+        log = scorecard.ensure_log(log_path, alerted, buys) if not args.dry_run else scorecard.load_log(log_path)
+        since = (today - timedelta(days=90)).isoformat()
+        watch_ciks = {r.issuer_cik for r in log if r.alerted >= since}
+        res = realtime.poll(state, buys, alerted, now=datetime.now(timezone.utc), watch_ciks=watch_ciks,
                             log=lambda m: print(m, file=sys.stderr, flush=True))
         print("\n".join(realtime.summary_lines(res)), flush=True)
+        checks = {c.issuer_cik: dilution.check(c.issuer_cik, today) for c in res.clusters}
         if args.issues_dir:
-            os.makedirs(args.issues_dir, exist_ok=True)
-            # The file name carries the issue label: insider-alert or stake-alert.
-            items = [("insider-alert", alerts.issue_title(c), alerts.issue_body(c)) for c in res.clusters]
-            items += [("stake-alert", realtime.stake_title(s), realtime.stake_body(s)) for s in res.tracked_stakes]
-            for label, title, body in items:
-                stem = os.path.join(args.issues_dir, f"{issue_no:03d}.{label}")
-                with open(stem + ".title", "w") as fh:
-                    fh.write(title)
-                with open(stem + ".md", "w") as fh:
-                    fh.write(body)
+            for c in res.clusters:
+                _write_issue(args.issues_dir, issue_no, "insider-alert", alerts.issue_title(c),
+                             alerts.issue_body(c, dilution.issue_section(checks[c.issuer_cik])))
+                issue_no += 1
+            for s in res.tracked_stakes:
+                _write_issue(args.issues_dir, issue_no, "stake-alert", realtime.stake_title(s), realtime.stake_body(s))
                 issue_no += 1
         if args.notify:
             for c in res.clusters:
-                _notify_cluster(c)
+                _notify_cluster(c, checks[c.issuer_cik])
             for b in res.big:
                 title, body, url = realtime.big_buy_message(b)
+                d = dilution.check(b.issuer_cik, today)
+                if d.flagged:
+                    body += f" {dilution.short_label(d)}: {d.notes[0]}."
                 notify.send(notify.Message(title=title, body=body, url=url, priority=3, tags=("moneybag",)))
             for s in res.tracked_stakes:
                 notify.send(notify.Message(title=realtime.stake_title(s), body=f"{s.filer_name} filed {s.form} on "
                                            f"{s.subject_name}.", url=s.url, priority=4, tags=("rotating_light",)))
+            for e in res.dilution:
+                notify.send(notify.Message(
+                    title=f"Offering filing: {e.name} ({e.form})",
+                    body=f"{e.name}, which alerted in the last 90 days, filed a {e.form}: it may be selling shares.",
+                    url=e.link, priority=3, tags=("warning",)))
         if not args.dry_run:
-            today = _date.today()
             keep = [s for s in res.stakes if s.tracked or realtime.is_initial_13d(s.form)]
+            log += [scorecard.from_cluster(c, today) for c in res.clusters]
+            log += [scorecard.from_big(b, today) for b in res.big]
+            log += [scorecard.from_stake(s, today, scorecard.ticker_for_cik(s.subject_cik)) for s in res.tracked_stakes]
             alerts.save_buys(buys, buys_path, today)
             alerts.save_alerted(alerted, alerted_path)
             realtime.save_stakes(stakes + keep, stakes_path, today)
+            scorecard.save_log(log, log_path)
             state.save(args.state)
         if not args.loop:
             return 0
         realtime.sleep_until_next(args.loop, started)
+
+
+def cmd_scorecard(args) -> int:
+    import os
+
+    from . import scorecard
+
+    records = scorecard.load_log(os.path.join(args.data_dir, "alert_log.csv"))
+    if not records:
+        print("No alerts logged yet.")
+        return 0
+    result = scorecard.evaluate(records, scorecard.history_closes)
+    if result.get("error"):
+        print(result["error"], file=sys.stderr)
+        return 1
+    for kind, k in result["by_kind"].items():
+        print(f"{k['label']} ({k['alerts']} alerts): {k['verdict']}")
+        for h in k["horizons"]:
+            if h["n"]:
+                print(f"  {h['horizon_days']:>3}d: n={h['n']:<3} mean vs SPY {h['mean_excess']:+.1%}  "
+                      f"median {h['median_excess']:+.1%}  beat SPY {h['hit_rate']:.0%}")
+    print("\nLatest alerts (return since entry, vs SPY):")
+    for r in result["alerts"][:25]:
+        if r.get("to_date") is None:
+            print(f"  {r['alerted']}  {r['kind']:<7} {r['symbol']:<6} {r['status']}")
+        else:
+            ex = r["to_date_excess"]
+            print(f"  {r['alerted']}  {r['kind']:<7} {r['symbol']:<6} {r['to_date']:+7.1%}  "
+                  f"vs SPY {'' if ex is None else f'{ex:+.1%}'}  ({r['days_held']} trading days)")
+    for e in result["errors"]:
+        print(f"  no price: {e}", file=sys.stderr)
+    return 0
+
+
+def cmd_dilution(args) -> int:
+    from datetime import date as _date
+
+    from . import dilution
+    from .providers import sec
+
+    cik = sec.ticker_map().cik_for(args.symbol)
+    if not cik:
+        print(f"{args.symbol}: not in the SEC ticker list", file=sys.stderr)
+        return 1
+    d = dilution.check(cik, _date.today())
+    if d.error:
+        print(f"{args.symbol}: {d.error}", file=sys.stderr)
+        return 1
+    print(f"{args.symbol.upper()}: {dilution.short_label(d) or 'no dilution filings on record'}")
+    for n in d.notes:
+        print(f"  - {n}")
+    for r in d.latest[:5]:
+        print(f"    {r['filed']}  {r['form']:<7} {r['url']}")
+    return 0
 
 
 def cmd_site(args) -> int:
@@ -452,6 +533,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dry-run", action="store_true", help="Don't save state (for testing)")
     s.add_argument("--notify", action="store_true", help="Push new alerts to ntfy (needs NTFY_TOPIC)")
     s.set_defaults(func=cmd_alerts)
+
+    s = sub.add_parser("scorecard", help="How alerts did against SPY at 1, 3 and 6 months")
+    s.add_argument("--data-dir", default="alerts_data", help="Folder holding alert_log.csv")
+    s.set_defaults(func=cmd_scorecard)
+
+    s = sub.add_parser("dilution", help="Shelf registrations and share sales on file for a ticker")
+    s.add_argument("symbol")
+    s.set_defaults(func=cmd_dilution)
 
     s = sub.add_parser("watch", help="Poll EDGAR's latest filings for insider buys and 13D/13G stakes")
     s.add_argument("--data-dir", default="alerts_data", help="Shared with `mt alerts`: buys, alert history, stakes")
