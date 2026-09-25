@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
-               sentinel, service, strategy, taxes)
+               sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
