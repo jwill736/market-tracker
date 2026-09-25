@@ -1,0 +1,19 @@
+name: Probe sources (temporary)
+on:
+  push:
+    branches: [claude/hopeful-keller-qnxl0c]
+    paths: [scripts/probe_sources.py, .github/workflows/probe.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install httpx
+      - run: python scripts/probe_sources.py
