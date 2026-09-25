@@ -46,3 +46,29 @@ def test_serve_just_opens_the_browser_when_the_service_runs(monkeypatch, capsys)
 def test_venv_bin_prefers_this_environment():
     import os
     assert bgservice.venv_bin("python") == os.path.join(os.path.dirname(sys.executable), "python")
+
+
+def test_lan_needs_a_password(monkeypatch, capsys):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    assert cli.main(["serve", "--lan", "--port", "8124"]) == 2
+    assert "APP_PASSWORD" in capsys.readouterr().out
+    # With one set it lists the Wi-Fi address (and here finds the running service)
+    monkeypatch.setenv("APP_PASSWORD", "correct horse battery")
+    monkeypatch.setattr(bgservice, "answering", lambda port, timeout=2.0: True)
+    monkeypatch.setattr(cli, "lan_addresses", lambda: ["192.168.1.20"])
+    assert cli.main(["serve", "--lan", "--port", "8124"]) == 0
+    assert "http://192.168.1.20:8124" in capsys.readouterr().out
+
+
+def test_service_files_carry_lan():
+    assert "<string>--lan</string></array>" in bgservice.mac_plist("/x/mt", "/x", 8000, lan=True)
+    assert "serve --port 8000 --lan --log" in bgservice.windows_vbs("C:\\p.exe", "C:\\x", 8000, lan=True)
+    assert "serve --port 8000 --lan\n" in bgservice.systemd_unit("/x/mt", "/x", 8000, lan=True)
+    assert "--lan" not in bgservice.systemd_unit("/x/mt", "/x", 8000)
+
+
+def test_service_install_lan_refuses_without_password(tmp_path, monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    monkeypatch.setattr(bgservice, "root_dir", lambda: str(tmp_path))
+    said = []
+    assert bgservice.install(8000, say=said.append, lan=True) == 2 and "APP_PASSWORD" in said[0]

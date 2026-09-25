@@ -38,6 +38,18 @@ def test_pages_and_api_need_login(locked):
     assert "Sign in" in locked.get("/login").text
 
 
+def test_phone_app_files_are_open_but_data_is_not(locked):
+    sw = locked.get("/sw.js")
+    assert sw.status_code == 200 and sw.headers["content-type"].startswith("application/javascript")
+    assert "/api/" in sw.text and "never stored" in sw.text
+    man = locked.get("/static/manifest.webmanifest")
+    assert man.status_code == 200 and man.json()["display"] == "standalone"
+    for icon in man.json()["icons"]:
+        r = locked.get(icon["src"])
+        assert r.status_code == 200 and r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert locked.get("/static/app.js", follow_redirects=False).status_code == 303      # the app itself still needs login
+
+
 def test_login_flow_and_throttle(locked):
     assert locked.post("/login", content="password=wrong",
                        headers={"content-type": "application/x-www-form-urlencoded"}).status_code == 401

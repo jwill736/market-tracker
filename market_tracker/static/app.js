@@ -2036,3 +2036,7 @@ api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() =>
 loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadHome(); });
 loadHeadsup();
 if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
+// Installable on a phone (Add to Home Screen). Browsers only allow this on https or localhost.
+if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}

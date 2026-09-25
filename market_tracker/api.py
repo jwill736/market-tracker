@@ -58,6 +58,12 @@ def session():
     return {"auth": auth.enabled()}
 
 
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    """Served from the root so it can cover the whole app (installing it on a phone)."""
+    return FileResponse(STATIC / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
