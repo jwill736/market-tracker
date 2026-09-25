@@ -1,49 +1,34 @@
-"""Temporary: status and a sample of each candidate source (removed before merge)."""
+"""Temporary: field shapes for the new sources (removed before merge)."""
 import json
 import httpx
 
 BROWSER = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9"}
-
-
-def show(name, r, n=700):
-    print(f"=== {name} {r.status_code} {r.headers.get('content-type', '')[:40]} len={len(r.content)}")
-    print(" " + r.text[:n].replace("\n", " "))
-
-
 with httpx.Client(timeout=25, follow_redirects=True, headers=BROWSER) as c:
-    # Yahoo with cookie + crumb
-    try:
-        c.get("https://fc.yahoo.com")
-        crumb = c.get("https://query1.finance.yahoo.com/v1/test/getcrumb").text
-        print("=== yahoo-crumb", repr(crumb[:20]))
-        for name, url in [
-            ("yahoo-options", f"https://query1.finance.yahoo.com/v7/finance/options/AAPL?crumb={crumb}"),
-            ("yahoo-options-date", f"https://query2.finance.yahoo.com/v7/finance/options/NVDA?crumb={crumb}"),
-            ("yahoo-calendar", f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=calendarEvents,earnings&crumb={crumb}"),
-        ]:
-            show(name, c.get(url), 1500)
-    except Exception as exc:
-        print("=== yahoo ERROR", type(exc).__name__, exc)
-    for name, url, n in [
-        ("nasdaq-optionchain", "https://api.nasdaq.com/api/quote/AAPL/option-chain?assetclass=stocks&limit=40&fromdate=all&todate=undefined&excode=oprac&callput=callput&money=at&type=all", 1500),
-        ("nasdaq-earnings-date", "https://api.nasdaq.com/api/analyst/AAPL/earnings-date", 900),
-        ("nasdaq-earnings-cal-oct", "https://api.nasdaq.com/api/calendar/earnings?date=2026-10-29", 600),
-        ("nasdaq-econ-cal", "https://api.nasdaq.com/api/calendar/economicevents?date=2026-10-02", 900),
-        ("fed-fomc", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", 300),
-        ("bls-ics", "https://www.bls.gov/schedule/news_release/bls.ics", 600),
-        ("stocktwits-user", "https://api.stocktwits.com/api/2/streams/user/howardlindzon.json", 1500),
-        ("stocktwits-user-2", "https://api.stocktwits.com/api/2/streams/user/zerohedge.json", 600),
-        ("stocktwits-sugg", "https://api.stocktwits.com/api/2/streams/suggested.json", 600),
-        ("llama-hacks", "https://api.llama.fi/hacks", 1200),
-        ("llama-emissions", "https://api.llama.fi/emissions", 900),
-        ("llama-unlocks-ds", "https://defillama-datasets.llama.fi/emissionsBreakdown", 600),
-        ("farside-btc", "https://farside.co.uk/btc/", 400),
-        ("coinbase-status", "https://status.coinbase.com/api/v2/incidents.json", 600),
-        ("coingecko-coin", "https://api.coingecko.com/api/v3/coins/solana?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false", 400),
-        ("rekt-news", "https://rekt.news/", 300),
-    ]:
-        try:
-            show(name, c.get(url), n)
-        except Exception as exc:
-            print(f"=== {name} ERROR", type(exc).__name__, exc)
+    for url in ["https://api.nasdaq.com/api/quote/NVDA/option-chain?assetclass=stocks&limit=400&fromdate=2026-11-20&todate=2026-11-20&excode=oprac&callput=callput&money=at&type=all",
+                "https://api.nasdaq.com/api/quote/NVDA/option-chain?assetclass=stocks&limit=10&fromdate=all&todate=undefined&excode=oprac&callput=callput&money=all&type=all"]:
+        d = c.get(url).json()["data"]
+        rows = d["table"]["rows"]
+        print("=== chain", d.get("lastTrade"), "rows", len(rows), "keys", list(d.keys()))
+        for r in rows[:6]:
+            print(" ", json.dumps(r)[:300])
+        print("  filterlist:", json.dumps(d.get("filterlist"))[:900])
+    d = c.get("https://api.nasdaq.com/api/analyst/NVDA/earnings-date").json()["data"]
+    print("=== nvda earnings", d.get("announcement"), "|", json.dumps(d)[:300])
+    d = c.get("https://api.nasdaq.com/api/calendar/economicevents?date=2026-10-28").json()["data"]
+    print("=== econ", [(r["gmt"], r["country"], r["eventName"]) for r in d["rows"] if r["country"] == "United States"][:30])
+    d = c.get("https://api.stocktwits.com/api/2/streams/user/howardlindzon.json").json()
+    for m in d["messages"][:8]:
+        print("=== st", m["created_at"], json.dumps(m.get("entities"))[:200], json.dumps(m.get("prices"))[:200], [s["symbol"] for s in m.get("symbols", [])])
+    print("=== st keys", list(d["messages"][0].keys()))
+    d = c.get("https://api.stocktwits.com/api/2/streams/suggested.json").json()
+    print("=== suggested users", sorted({(m["user"]["username"], m["user"]["followers"]) for m in d["messages"]}, key=lambda x: -x[1])[:20])
+    d = c.get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=solana,sui,aptos,bitcoin&sparkline=false").json()
+    for x in d:
+        print("=== cg", x["id"], x.get("circulating_supply"), x.get("total_supply"), x.get("max_supply"), x.get("fully_diluted_valuation"), x.get("market_cap"))
+    d = c.get("https://api.llama.fi/hacks").json()
+    recent = sorted(d, key=lambda h: -h["date"])[:8]
+    for h in recent:
+        print("=== hack", h["date"], h["name"], h["amount"], h["chain"], h["targetType"], h.get("classification"))
+    d = c.get("https://status.coinbase.com/api/v2/incidents/unresolved.json").json()
+    print("=== cb unresolved", [(i["name"], i["impact"], [cmp.get("name") for cmp in i.get("components", [])][:5]) for i in d.get("incidents", [])][:10])
