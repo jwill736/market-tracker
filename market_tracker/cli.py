@@ -234,6 +234,60 @@ def cmd_score_backtest(args) -> int:
     return 0
 
 
+def cmd_alerts(args) -> int:
+    import json
+    import os
+    from datetime import date as _date, timedelta
+
+    from . import alerts
+
+    data_dir = args.data_dir
+    os.makedirs(data_dir, exist_ok=True)
+    buys_path = os.path.join(data_dir, "insider_buys.csv")
+    alerted_path = os.path.join(data_dir, "alerted.csv")
+    state_path = os.path.join(data_dir, "alerts_state.json")
+    state = json.load(open(state_path)) if os.path.exists(state_path) else {}
+    today = _date.today()
+    if args.days:
+        start = today - timedelta(days=args.days)
+    elif state.get("last_scanned"):
+        start = _date.fromisoformat(state["last_scanned"]) + timedelta(days=1)
+    else:
+        start = today - timedelta(days=3)
+    buys = alerts.load_buys(buys_path)
+    last_scanned = state.get("last_scanned")
+    day = start
+    while day < today:  # today's index isn't published until after the close
+        if day.weekday() < 5:
+            found = alerts.scan_day(day, log=lambda m: print(m, file=sys.stderr, flush=True))
+            if found is not None:
+                buys.extend(found)
+                last_scanned = day.isoformat()
+        day += timedelta(days=1)
+    clusters = alerts.find_clusters(buys, today)
+    alerted = alerts.load_alerted(alerted_path)
+    fresh = alerts.new_clusters(clusters, alerted, today)
+    print(f"{len(clusters)} active clusters, {len(fresh)} new")
+    for c in clusters:
+        print(f"  {'NEW ' if c in fresh else '    '}{c.symbol or '-':<6} {c.issuer_name[:40]:<40} "
+              f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade}")
+    if args.issues_dir:
+        os.makedirs(args.issues_dir, exist_ok=True)
+        for i, c in enumerate(fresh):
+            with open(os.path.join(args.issues_dir, f"{i:03d}.title"), "w") as fh:
+                fh.write(alerts.issue_title(c))
+            with open(os.path.join(args.issues_dir, f"{i:03d}.md"), "w") as fh:
+                fh.write(alerts.issue_body(c))
+    if not args.dry_run:
+        for c in fresh:
+            alerted[c.issuer_cik] = today.isoformat()
+        alerts.save_buys(buys, buys_path, today)
+        alerts.save_alerted(alerted, alerted_path)
+        with open(state_path, "w") as fh:
+            json.dump({"last_scanned": last_scanned}, fh)
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
@@ -299,6 +353,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", help="Write full results and per-stock rows to this file")
     s.add_argument("--summary-file", help="Also append the Markdown report to this file")
     s.set_defaults(func=cmd_score_backtest)
+
+    s = sub.add_parser("alerts", help="Scan every company's Form 4 filings for insider cluster buys")
+    s.add_argument("--data-dir", default="alerts_data", help="Where the rolling buys and alert history live")
+    s.add_argument("--days", type=int, help="Scan the last N calendar days instead of resuming")
+    s.add_argument("--issues-dir", help="Write one title/body pair per new cluster here")
+    s.add_argument("--dry-run", action="store_true", help="Don't save state (for testing)")
+    s.set_defaults(func=cmd_alerts)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")
