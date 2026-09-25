@@ -124,7 +124,7 @@ and compare it with SPY over the same days at 21, 63 and 126 trading days, plus 
 The verdict needs about 30 alerts with 3 months behind them before it claims anything; with daily alerts that takes
 roughly four to six months. The 20 alerts from the first backfill are included, starting from their alert date.
 
-**Dilution check.** For every alert, the company's EDGAR filing list is checked for a shelf registration (S-3/F-3),
+**Dilution check.** For every alert, the company's EDGAR filing list is checked for a shelf registration (S-3/F-3; the automatic S-3ASR shelves large companies keep for bonds don't count on their own),
 a prospectus supplement in the last 90 days (424B5 and similar: shares being sold, often through an at-the-market
 program) or an S-1 in the last year. The result goes into the alert issue and the notification, and shows as a badge on
 the site. The watcher also sends a notification when a company that alerted in the last 90 days files one of these.

@@ -3,8 +3,8 @@
 Small companies are where insider buying carries the most information, and also where a
 share sale can erase it. Three kinds of SEC filing show that a sale is possible or under way:
 
-- a shelf registration (S-3, S-3ASR, or F-3 for foreign issuers): the company can sell
-  shares at any time for three years;
+- a shelf registration (S-3, or F-3 for foreign issuers): the company can sell shares at any
+  time for three years;
 - a prospectus supplement (424B5, sometimes 424B3/424B4/424B7): shares are being sold off
   a shelf, often through an at-the-market program that sells into the market day by day;
 - an S-1 (or F-1) registration after the company is already public, for small companies
@@ -22,7 +22,10 @@ from datetime import date, timedelta
 from . import http
 from .providers import sec
 
-SHELF_FORMS = {"S-3", "S-3/A", "S-3ASR", "F-3", "F-3/A", "F-3ASR"}
+# Automatic shelves (S-3ASR/F-3ASR) are left out: only very large companies can file them, and
+# they mostly use them for bonds (Apple has one). One that is used to sell stock still shows
+# up through its 424B5 prospectus supplements.
+SHELF_FORMS = {"S-3", "S-3/A", "F-3", "F-3/A"}
 SALE_FORMS = {"424B5", "424B3", "424B4", "424B7"}
 REGISTRATION_FORMS = {"S-1", "S-1/A", "F-1", "F-1/A"}
 WATCH_FORMS = SHELF_FORMS | SALE_FORMS | REGISTRATION_FORMS

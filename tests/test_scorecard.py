@@ -22,8 +22,12 @@ def test_dilution_levels():
                                                    ("S-3", _ago(200), "a3")))
     assert active.level == "active" and len(active.notes) == 2 and active.latest[0]["form"] == "424B5"
     assert active.latest[0]["url"] == "https://www.sec.gov/Archives/edgar/data/777777/a2/"
-    shelf = dilution.check("777777", TODAY, _subs(("S-3ASR", _ago(400), "a1"), ("424B5", _ago(200), "a2")))
+    shelf = dilution.check("777777", TODAY, _subs(("S-3", _ago(400), "a1"), ("424B5", _ago(200), "a2")))
     assert shelf.level == "shelf"          # the sale is too old to count, the shelf is still live
+    # An automatic shelf alone is how large companies register bonds (Apple has one): not flagged.
+    assert dilution.check("320193", TODAY, _subs(("S-3ASR", _ago(300), "a"), ("424B2", _ago(20), "b"))).level == "none"
+    # Used to sell stock, it shows up through the prospectus supplements.
+    assert dilution.check("1", TODAY, _subs(("S-3ASR", _ago(300), "a"), ("424B5", _ago(20), "b"))).level == "active"
     assert dilution.check("1", TODAY, _subs(("10-K", _ago(10), "a"), ("S-3", _ago(1200), "b"))).level == "none"
     s1 = dilution.check("1", TODAY, _subs(("S-1", _ago(100), "a")))
     assert s1.level == "active" and "S-1" in s1.notes[0]

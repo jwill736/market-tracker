@@ -133,7 +133,9 @@ def _():
     from market_tracker import dilution
     d = dilution.check("320193", date.today())
     assert not d.error, d.error
-    return f"AAPL: {dilution.short_label(d) or 'none'} ({len(d.latest)} shelf/offering filings in range)"
+    # Apple keeps an automatic shelf for bond issues; it must not read as a dilution risk.
+    assert not d.flagged, (d.level, d.notes)
+    return "AAPL: not flagged (automatic debt shelf ignored)"
 
 
 @check("SEC fund filter (insider alerts)")
