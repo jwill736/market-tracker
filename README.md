@@ -1,6 +1,8 @@
-# Market Tracker
+# Plumbline
 
-Portfolio tracker and research tool for stocks and crypto. It combines live prices, what well-known investors
+*Measure it true before you trust it.*
+
+Plumbline (repo and Python package `market-tracker`, command `mt`) is a portfolio tracker and research tool for stocks and crypto. It combines live prices, what well-known investors
 (Buffett, Ackman, Druckenmiller, Burry, and others) disclosed in their SEC filings, insider trades, news sentiment,
 probabilistic price ranges, and Claude-powered deep-dive research.
 
