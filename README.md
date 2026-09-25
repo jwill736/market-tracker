@@ -56,12 +56,13 @@ Everything runs locally with live data: nothing to deploy, and your portfolio ne
 1. Install **Python 3.11+** (python.org/downloads) and **Git**.
 2. Get the code: `git clone https://github.com/jwill736/market-tracker.git` (or GitHub → Code → Download ZIP).
 3. Start it:
-   - **Mac / Linux:** in the folder, run `./start.sh`
+   - **Mac:** open Terminal, `cd` into the folder, run `bash start.sh`
    - **Windows:** double-click `start.bat`
 
-   The first run sets everything up (a minute or two) and creates `.env`. Open `.env` and put your email in
-   `SEC_USER_AGENT` (the SEC asks every user of its data for a contact), then start it again. Your browser opens
-   at http://localhost:8000. Every later start also pulls the latest version.
+   The first run sets everything up (a minute or two), then asks two questions in that window: your email (the SEC
+   asks every user of its filing data for a contact) and whether you want phone alerts (it makes up a private ntfy
+   topic and tells you how to subscribe). Your browser then opens at http://localhost:8000. Every later start pulls
+   the latest version first. To stop it, press Ctrl+C in that window (or close it). `mt setup` asks the questions again.
 4. **Load your accounts** in Portfolio → Import your accounts: Robinhood (account activity CSV), Coinbase
    (transaction history CSV), Stash (type your holdings once: Stash has no export).
 5. **Phone alerts (optional):** install the ntfy app, subscribe to a long random topic name, and put the same name in
