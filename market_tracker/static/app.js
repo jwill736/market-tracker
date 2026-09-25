@@ -45,7 +45,9 @@ function selectTab(name) {
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
+  if (name === "plan") loadPlan();
   if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
+  if (name !== "plan" && typeof Live !== "undefined") Live.drop("plan");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
 }
 
@@ -100,7 +102,9 @@ function renderNews(listEl, termsEl, pillEl, data) {
       <div class="meta">${esc(a.source)} · ${esc((a.published || "").slice(0, 16).replace("T", " "))}</div></div></li>`).join("")
     || `<li class="muted">No headlines${data.errors?.length ? " (" + esc(data.errors[0]) + ")" : ""}</li>`;
 }
+let newsLoadedAt = 0;
 async function loadMarketNews() {
+  newsLoadedAt = Date.now();
   try { renderNews($("#mkt-news"), $("#mkt-terms"), $("#mkt-sentiment"), await api("/api/news/market")); }
   catch (err) { $("#mkt-news").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 }
@@ -349,15 +353,20 @@ async function loadPortfolio() {
   try {
     const [p, txs] = await Promise.all([api("/api/portfolio"), api("/api/transactions")]);
     $("#pf-tiles").innerHTML = [
-      tile("Portfolio value", fmtMoney(p.total_value, 0), `cost ${fmtMoney(p.total_cost, 0)}`),
-      tile("Unrealized P&L", `<span class="${cls(p.unrealized_pnl)}">${fmtMoney(p.unrealized_pnl, 0)}</span>`, fmtPct(p.unrealized_pct)),
-      tile("Today", `<span class="${cls(p.day_change_value)}">${fmtMoney(p.day_change_value, 0)}</span>`, "crypto: 24h"),
+      tile("Portfolio value", `<span data-book="value">${fmtMoney(p.total_value, 2)}</span>`, `cost ${fmtMoney(p.total_cost, 0)} · live`),
+      tile("Unrealized P&L", `<span data-book="unreal">${fmtMoney(p.unrealized_pnl, 0)}</span>`, `<span data-book="unrealpct">${fmtPct(p.unrealized_pct)}</span>`),
+      tile("Today", `<span data-book="today-value">${fmtMoney(p.day_change_value, 0)}</span>`, `<span data-book="today-pct"></span> · crypto: 24h`),
       tile("Realized P&L", fmtMoney(p.realized_pnl, 0), ""),
     ].join("");
-    $("#pf-table").innerHTML = p.positions.length ? `<thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">P&L</th><th class="num">Weight</th></tr></thead><tbody>` +
-      p.positions.map((x) => `<tr class="clickable" data-open="${esc(x.symbol)}"><td><b>${esc(x.symbol)}</b></td><td class="num">${x.quantity.toLocaleString()}</td><td class="num">${fmtMoney(x.avg_cost)}</td><td class="num">${fmtMoney(x.price)}</td>
-        <td class="num ${cls(x.unrealized_pnl)}">${fmtMoney(x.unrealized_pnl, 0)} <span class="small">${fmtPct(x.unrealized_pct)}</span></td><td class="num">${x.weight != null ? x.weight.toFixed(1) + "%" : "—"}</td></tr>`).join("") + "</tbody>"
+    $("#pf-table").innerHTML = p.positions.length ? `<thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Today</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Weight</th></tr></thead><tbody>` +
+      p.positions.map((x) => { const s = esc(x.symbol), q = x.quantity, c = x.cost_basis; return `<tr class="clickable" data-open="${s}"><td><b>${s}</b></td><td class="num">${q.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td class="num">${fmtMoney(x.avg_cost)}</td>
+        <td class="num" data-live="${s}" data-lf="price">${fmtMoney(x.price)}</td><td class="num ${cls(x.day_change_pct)}" data-live="${s}" data-lf="chg">${fmtPct(x.day_change_pct, 2)}</td>
+        <td class="num" data-live="${s}" data-lf="value" data-qty="${q}">${fmtMoney(x.market_value)}</td>
+        <td class="num"><span class="${cls(x.unrealized_pnl)}" data-live="${s}" data-lf="pnl" data-qty="${q}" data-cost="${c}">${fmtMoney(x.unrealized_pnl, 0)}</span> <span class="small ${cls(x.unrealized_pct)}" data-live="${s}" data-lf="pnlpct" data-qty="${q}" data-cost="${c}">${fmtPct(x.unrealized_pct)}</span></td>
+        <td class="num" data-book="weight:${s}">${x.weight != null ? x.weight.toFixed(1) + "%" : "—"}</td></tr>`; }).join("") + "</tbody>"
       : "<tr><td class='muted'>No positions yet — record a trade.</td></tr>";
+    bindLive("portfolio", $("#tab-portfolio"));
+    Book.paint();
     $("#pf-table").querySelectorAll("[data-open]").forEach((tr) => tr.addEventListener("click", () => openSymbol(tr.dataset.open)));
     renderAlloc(p.rebalance_hint || []);
     const r = p.risk || {};
@@ -498,15 +507,19 @@ const Live = {
     this.es.onmessage = (e) => { this.apply(JSON.parse(e.data)); setLiveState("on"); };
     this.es.onerror = () => setLiveState("off");   // EventSource reconnects by itself
   },
+  lastTick: 0, stockSession: null,
   apply(t) {
     const prev = this.prices[t.symbol];
+    this.lastTick = Date.now();
+    if (t.session && t.session !== "24h") this.stockSession = { name: t.session, at: Date.now() };
     this.prices[t.symbol] = t;
     this.listeners.forEach((fn) => fn(t, prev));
   },
 };
 function setLiveState(state) {
-  const dot = $("#live-dot");
-  if (dot) { dot.classList.toggle("on", state === "on"); dot.title = { on: "Live", off: "Reconnecting…", connecting: "Connecting…" }[state]; }
+  for (const dot of document.querySelectorAll("#live-dot, #live-dot-global")) {
+    dot.classList.toggle("on", state === "on"); dot.title = { on: "Live", off: "Reconnecting…", connecting: "Connecting…" }[state];
+  }
 }
 function flash(el, t, prev) {
   if (!prev || prev.price === t.price || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -538,6 +551,7 @@ function paintTape(t, prev) {
 }
 async function loadHoldings() {
   try { holdingsList = await api("/api/holdings"); } catch { holdingsList = []; }
+  Book.set(holdingsList);
   refreshTape();
 }
 Live.onTick((t, prev) => { paintTape(t, prev); paintWatchRow(t, prev); if (t.symbol === symState.sym) paintSymbol(t, prev); });
@@ -590,7 +604,8 @@ function paintSymbol(t, prev) {
   const c = $("#sym-change");
   c.textContent = `${abs != null ? (abs >= 0 ? "+" : "-") + fmtMoney(Math.abs(abs), 2) + " " : ""}(${fmtPct(chg, 2)}) ${label}`;
   c.className = "sym-change " + cls(chg);
-  $("#sym-src").textContent = `${t.source} · ${new Date(t.ts).toLocaleTimeString()}`;
+  const sess = { pre: "Pre-market", post: "After hours", closed: "Market closed · last trade" }[t.session] || "";
+  $("#sym-src").textContent = `${sess ? sess + " · " : ""}${t.source} · ${new Date(t.ts).toLocaleTimeString()}`;
   if (symState.range === "1d" && symState.points.length) {
     const now = Math.floor(Date.now() / 1000), last = symState.points[symState.points.length - 1];
     if (now - last.t < 60) last.p = t.price; else symState.points.push({ t: now, p: t.price });
@@ -723,7 +738,7 @@ const pulseState = { data: null, list: "gainers", loadedAt: 0 };
 async function loadPulse(force = false) {
   loadSellWatch();
   if (!force && pulseState.data && Date.now() - pulseState.loadedAt < 170000) return renderMovers();
-  $("#pulse-meta").textContent = "Scanning movers and their news… (about 10–20 seconds the first time)";
+  if (!pulseState.data) $("#pulse-meta").textContent = "Scanning movers and their news… (about 10–20 seconds the first time)";
   try {
     pulseState.data = await api("/api/pulse" + (force ? "?refresh=true" : ""));
     pulseState.loadedAt = Date.now();
@@ -737,24 +752,23 @@ function renderMovers() {
   const d = pulseState.data;
   if (!d) return;
   const rows = d.movers[pulseState.list] || [];
-  Live.want("pulse", rows.map((m) => m.symbol));
   $("#movers-table").innerHTML = rows.length ? `<thead><tr><th>Symbol</th><th class="num">Price</th><th class="num">Today</th><th class="num">Volume vs avg</th><th class="num">News 48h</th><th>Why it's here</th></tr></thead><tbody>` +
     rows.map((m) => `<tr class="clickable" data-open="${esc(m.symbol)}"><td><b>${esc(m.symbol.replace(/-USD$/, ""))}</b><div class="muted small">${esc(m.name)}</div></td>
-      <td class="num" data-live-price="${esc(m.symbol)}">${fmtMoney(m.price)}</td>
-      <td class="num ${cls(m.change_pct)}" data-live-chg="${esc(m.symbol)}">${fmtPct(m.change_pct, 2)}</td>
+      <td class="num" data-live="${esc(m.symbol)}" data-lf="price">${fmtMoney(m.price)}</td>
+      <td class="num ${cls(m.change_pct)}" data-live="${esc(m.symbol)}" data-lf="chg">${fmtPct(m.change_pct, 2)}</td>
       <td class="num">${m.rel_volume ? m.rel_volume.toFixed(1) + "×" : "—"}</td>
       <td class="num">${m.attention ? m.attention.count_48h : "—"}</td>
       <td>${moverTags(m) || '<span class="muted small">—</span>'}${m.attention?.headline ? `<div class="small muted clip">${esc(m.attention.headline.title)}</div>` : ""}</td></tr>`).join("") + "</tbody>"
     : `<tr><td class="muted">Nothing in this list right now.</td></tr>`;
   $("#movers-table").querySelectorAll("[data-open]").forEach((tr) => tr.addEventListener("click", () => openSymbol(tr.dataset.open)));
+  bindLive("pulse", $("#tab-pulse"));
 }
 function renderPulse() {
   const d = pulseState.data;
   renderMovers();
-  const when = new Date(d.generated_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  $("#pulse-meta").innerHTML = `Scanned ${esc(when)}. Prices update live. ${d.errors.length ? `<span class="muted">(${d.errors.map(esc).join("; ")})</span>` : ""} <button class="ghost" id="pulse-refresh">Rescan</button>`;
+  $("#pulse-meta").innerHTML = `Scanned <span data-ago="${esc(d.generated_at)}"></span>; rescans every 3 minutes. Prices update live. ${d.errors.length ? `<span class="muted">(${d.errors.map(esc).join("; ")})</span>` : ""} <button class="ghost" id="pulse-refresh">Rescan</button>`;
   $("#pulse-refresh").addEventListener("click", () => loadPulse(true));
-  const item = (m, extra) => `<li class="clickable" data-open="${esc(m.symbol)}"><div><b>${esc(m.symbol.replace(/-USD$/, ""))}</b> <span class="${cls(m.change_pct)}">${fmtPct(m.change_pct, 1)}</span> <span class="muted small">${esc(m.name)}</span></div>${extra}</li>`;
+  const item = (m, extra) => `<li class="clickable" data-open="${esc(m.symbol)}"><div><b>${esc(m.symbol.replace(/-USD$/, ""))}</b> <span data-live="${esc(m.symbol)}" data-lf="price">${fmtMoney(m.price)}</span> <span class="${cls(m.change_pct)}" data-live="${esc(m.symbol)}" data-lf="chg">${fmtPct(m.change_pct, 2)}</span> <span class="muted small">${esc(m.name)}</span></div>${extra}</li>`;
   const link = (a) => `<a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a> <span class="muted small">${esc(a.source)}</span>`;
   $("#hot-list").innerHTML = d.in_the_news.filter((m) => m.attention.count_48h).map((m) => item(m,
     `<div class="small">${m.attention.count_48h} headlines · mood <span class="${cls(m.attention.sentiment)}">${m.attention.sentiment >= 0 ? "+" : ""}${m.attention.sentiment.toFixed(2)}</span></div>${m.attention.headline ? `<div class="small">${link(m.attention.headline)}</div>` : ""}`)).join("")
@@ -765,26 +779,21 @@ function renderPulse() {
   $("#sleeper-rule").textContent = `Officers and directors bought in the last 30 days (a cluster, or $1M+ by one of them), yet the stock had ${r.sleeper_max_news_7d} or fewer headlines this week and is up less than ${Math.round(r.sleeper_max_run_1m * 100)}% over the month. Research finds insider buying pays off over months, mostly in smaller, more volatile companies; the scorecard hasn't confirmed it for these alerts yet.`;
   $("#sleeper-list").innerHTML = d.sleepers.map((s) => `<div class="sleeper clickable" data-open="${esc(s.symbol)}">
       <div class="sl-head"><b class="sl-sym">${esc(s.symbol)}</b><span class="muted small clip">${esc(s.company)}</span>${s.dilution ? `<span class="chip dil">${esc(s.dilution)}</span>` : ""}</div>
-      <div class="sl-price">${fmtMoney(s.price)} <span class="${cls(s.change_pct)}">${fmtPct(s.change_pct, 1)}</span></div>
+      <div class="sl-price"><span data-live="${esc(s.symbol)}" data-lf="price">${fmtMoney(s.price)}</span> <span class="${cls(s.change_pct)}" data-live="${esc(s.symbol)}" data-lf="chg">${fmtPct(s.change_pct, 2)}</span></div>
       <ul>${s.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")
     || `<p class="muted">No sleepers right now: recent insider buying is either already in the news or already priced up.</p>`;
   document.querySelectorAll("#tab-pulse [data-open]").forEach((el) => el.addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
     openSymbol(el.dataset.open);
   }));
+  bindLive("pulse", $("#tab-pulse"));
+  paintAgo();
 }
 document.querySelectorAll("#mover-seg button").forEach((b) => b.addEventListener("click", () => {
   pulseState.list = b.dataset.list;
   document.querySelectorAll("#mover-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   renderMovers();
 }));
-Live.onTick((t, prev) => {
-  const p = document.querySelector(`[data-live-price="${CSS.escape(t.symbol)}"]`);
-  if (!p) return;
-  p.textContent = fmtMoney(t.price); flash(p, t, prev);
-  const c = document.querySelector(`[data-live-chg="${CSS.escape(t.symbol)}"]`);
-  if (c) { c.textContent = fmtPct(t.change_pct, 2); c.className = "num " + cls(t.change_pct); }
-});
 
 async function loadSellWatch() {
   if (!holdingsList.length) { $("#sw-card").hidden = true; return; }
@@ -793,12 +802,270 @@ async function loadSellWatch() {
   try {
     const { holdings } = await api("/api/sellwatch");
     $("#sw-list").innerHTML = holdings.map((h) => `<div class="sw-row clickable" data-open="${esc(h.symbol)}">
-        <div class="sw-head"><b>${esc(h.symbol)}</b><span class="chip ${h.verdict === "Review" ? "chip-review" : h.verdict === "Watch" ? "dil" : h.verdict === "Couldn't check" ? "chip-muted" : "chip-ok"}">${esc(h.verdict)}</span>
+        <div class="sw-head"><b>${esc(h.symbol)}</b><span data-live="${esc(h.symbol)}" data-lf="price">—</span><span class="small" data-live="${esc(h.symbol)}" data-lf="chg"></span><span class="chip ${h.verdict === "Review" ? "chip-review" : h.verdict === "Watch" ? "dil" : h.verdict === "Couldn't check" ? "chip-muted" : "chip-ok"}">${esc(h.verdict)}</span>
           <span class="muted small">${h.weight != null ? h.weight.toFixed(1) + "% of portfolio" : ""}${h.unrealized_pct != null ? ` · <span class="${cls(h.unrealized_pct)}">${fmtPct(h.unrealized_pct)} vs cost</span>` : ""}${h.score != null ? ` · signal ${h.score > 0 ? "+" : ""}${h.score}` : ""}</span></div>
         ${h.flags.length ? `<ul>${h.flags.map((f) => `<li class="${f.severity > 1 ? "sev2" : ""}">${esc(f.text)}</li>`).join("")}</ul>` : `<p class="muted small">No rule fired.${h.error ? " (" + esc(h.error) + ")" : ""}</p>`}</div>`).join("");
     $("#sw-list").querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+    bindLive("pulse", $("#tab-pulse"));
   } catch (err) { $("#sw-list").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 }
+
+// ---------------------------------------------------------------- live bindings
+// Any element with data-live="SYM" repaints on every tick for that symbol. data-lf picks what
+// it shows: price, chg, value (x data-qty), pnl / pnlpct (vs data-cost), since (vs data-p0),
+// verdict (did the move since data-p0 go the data-side way).
+function setSign(el, v) { el.classList.remove("up", "down"); const c = cls(v); if (c) el.classList.add(c); }
+function paintBound(t, prev, root = document) {
+  root.querySelectorAll(`[data-live="${CSS.escape(t.symbol)}"]`).forEach((el) => {
+    const qty = +el.dataset.qty || 0, cost = +el.dataset.cost || 0, p0 = +el.dataset.p0 || 0;
+    switch (el.dataset.lf) {
+      case "price": el.textContent = fmtMoney(t.price); flash(el, t, prev); break;
+      case "chg": el.textContent = fmtPct(t.change_pct, 2); setSign(el, t.change_pct); break;
+      case "value": el.textContent = fmtMoney(qty * t.price, 2); flash(el, t, prev); break;
+      case "pnl": { const v = qty * t.price - cost; el.textContent = (v >= 0 ? "+" : "") + fmtMoney(v, 2); setSign(el, v); break; }
+      case "pnlpct": { const v = cost ? (qty * t.price / cost - 1) * 100 : null; el.textContent = fmtPct(v, 2); setSign(el, v); break; }
+      case "since": { const v = p0 ? (t.price / p0 - 1) * 100 : null; el.textContent = fmtPct(v, 2); setSign(el, v); break; }
+      case "verdict": {
+        if (!p0 || t.price === p0) { el.textContent = "—"; setSign(el, 0); break; }
+        const right = (t.price > p0) === (el.dataset.side === "up");
+        el.textContent = right ? "Right so far" : "Wrong so far"; setSign(el, right ? 1 : -1); break;
+      }
+    }
+  });
+}
+function bindLive(owner, root) {
+  const syms = [...new Set([...root.querySelectorAll("[data-live]")].map((e) => e.dataset.live))];
+  Live.want(owner, syms);
+  syms.forEach((s) => Live.prices[s] && paintBound(Live.prices[s], null, root));
+}
+
+// Your holdings, valued at the latest tick: header strip, Portfolio tiles and weights.
+const Book = {
+  pos: [], timer: null, lastValue: null,
+  set(list) { this.pos = list || []; Live.want("book", this.pos.map((h) => h.symbol)); $("#sb-book").hidden = !this.pos.length; this.paint(); },
+  has(sym) { return this.pos.some((h) => h.symbol === sym); },
+  totals() {
+    let value = 0, cost = 0, today = 0;
+    const w = {};
+    for (const h of this.pos) {
+      const t = Live.prices[h.symbol];
+      if (!t) continue;
+      const v = h.quantity * t.price;
+      value += v; cost += h.cost_basis; w[h.symbol] = v;
+      if (t.change_pct != null) today += v - v / (1 + t.change_pct / 100);
+    }
+    for (const s in w) w[s] = value ? w[s] / value * 100 : null;
+    return { value, cost, today, todayPct: value - today ? today / (value - today) * 100 : null,
+             unreal: value - cost, unrealPct: cost ? (value / cost - 1) * 100 : null, weights: w };
+  },
+  schedule() { if (!this.timer) this.timer = setTimeout(() => { this.timer = null; this.paint(); }, 200); },
+  paint() {
+    if (!this.pos.length) return;
+    const T = this.totals();
+    const moved = this.lastValue != null && T.value !== this.lastValue ? { price: T.value } : null;
+    const prev = moved && { price: this.lastValue };
+    this.lastValue = T.value;
+    document.querySelectorAll("[data-book]").forEach((el) => {
+      const k = el.dataset.book;
+      if (k === "value") { el.textContent = fmtMoney(T.value, 2); if (moved) flash(el, moved, prev); }
+      else if (k === "today") { el.textContent = `${T.today >= 0 ? "+" : "-"}${fmtMoney(Math.abs(T.today), 2)} (${fmtPct(T.todayPct, 2)}) today`; setSign(el, T.today); }
+      else if (k === "today-value") { el.textContent = (T.today >= 0 ? "+" : "-") + fmtMoney(Math.abs(T.today), 2); setSign(el, T.today); }
+      else if (k === "today-pct") { el.textContent = fmtPct(T.todayPct, 2); setSign(el, T.todayPct); }
+      else if (k === "unreal") { el.textContent = (T.unreal >= 0 ? "+" : "") + fmtMoney(T.unreal, 2); setSign(el, T.unreal); }
+      else if (k === "unrealpct") { el.textContent = fmtPct(T.unrealPct, 2); setSign(el, T.unrealPct); }
+      else if (k.startsWith("weight:")) { const v = T.weights[k.slice(7)]; el.textContent = v != null ? v.toFixed(2) + "%" : "—"; }
+    });
+  },
+};
+Live.onTick((t, prev) => { paintBound(t, prev); if (Book.has(t.symbol)) Book.schedule(); });
+
+// ---------------------------------------------------------------- clocks
+// US session from the New York clock (holidays aside: a recent stock tick's session wins).
+const SESSION_EDGES = [[240, "pre"], [570, "regular"], [960, "post"], [1200, "closed"]];
+function usSession(now = new Date()) {
+  const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const day = et.getDay(), mins = et.getHours() * 60 + et.getMinutes() + et.getSeconds() / 60;
+  const weekday = (d) => d !== 0 && d !== 6;
+  let name = "closed";
+  if (weekday(day)) for (const [edge, n] of SESSION_EDGES) if (mins >= edge) name = n;
+  for (let off = 0; off < 8; off++) {
+    const d = (day + off) % 7;
+    if (!weekday(d)) continue;
+    for (const [edge, n] of SESSION_EDGES) {
+      if (off === 0 && edge <= mins) continue;
+      return { name, next: n, minutes: off * 1440 + edge - mins };
+    }
+  }
+  return { name, next: "pre", minutes: 0 };
+}
+const fmtSpan = (m) => m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.floor(m % 1440 / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${Math.floor(m % 60)}m` : `${Math.max(1, Math.round(m))}m`;
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  return s < 5 ? "just now" : s < 60 ? `${Math.floor(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`;
+}
+function paintAgo() {
+  document.querySelectorAll("[data-ago]").forEach((el) => {
+    const v = el.dataset.ago, ts = /^\d+$/.test(v) ? +v : Date.parse(v);
+    if (!isNaN(ts)) el.textContent = ago(ts);
+  });
+}
+function paintClock() {
+  const s = usSession();
+  const server = Live.stockSession && Date.now() - Live.stockSession.at < 120000 ? Live.stockSession.name : null;
+  const name = server || s.name;
+  const label = { pre: "Pre-market", regular: "US market open", post: "After hours", closed: "US market closed" }[name];
+  const nextLabel = { pre: "pre-market in", regular: "opens in", post: "closes in", closed: "after-hours ends in" }[s.next];
+  $("#sb-session").textContent = `${label} · ${nextLabel} ${fmtSpan(s.minutes)} · crypto 24/7`;
+  $("#sb-session").dataset.session = name;
+  $("#sb-tick").textContent = Live.lastTick ? `last tick ${ago(Live.lastTick)}` : "waiting for prices…";
+  paintAgo();
+}
+setInterval(paintClock, 1000);
+paintClock();
+
+// Lists that aren't prices refresh themselves while their tab is open.
+const currentTab = () => document.querySelector('#tabs [aria-selected="true"]')?.dataset.tab;
+setInterval(() => {
+  if (document.hidden) return;
+  const tab = currentTab(), now = Date.now();
+  if (tab === "pulse" && pulseState.data && now - pulseState.loadedAt > 180000) loadPulse();
+  if (tab === "dashboard" && now - newsLoadedAt > 120000) loadMarketNews();
+  if (tab === "plan" && planState.data && now - planState.loadedAt > 300000) loadPlan();
+}, 15000);
+
+// ---------------------------------------------------------------- strategy plan
+const planState = { data: null, loadedAt: 0 };
+const PLAN_CASH_KEY = "plumbline.plan.cash";
+try { $("#plan-cash").value = localStorage.getItem(PLAN_CASH_KEY) || ""; } catch { /* storage blocked */ }
+$("#plan-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  try { localStorage.setItem(PLAN_CASH_KEY, $("#plan-cash").value); } catch { /* storage blocked */ }
+  loadPlan();
+});
+const SELLS = new Set(["Sell", "Trim"]);
+const ACT_CLASS = { Sell: "act-sell", Trim: "act-trim", Add: "act-add", Buy: "act-buy", Hold: "act-hold" };
+const fmtShares = (x) => Number(x).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const localDate = () => new Date().toLocaleDateString("en-CA");
+const rhUrl = (sym) => isCryptoSym(sym) ? `https://robinhood.com/crypto/${encodeURIComponent(sym.replace(/-USD$/, ""))}`
+  : `https://robinhood.com/stocks/${encodeURIComponent(sym)}`;
+
+async function loadPlan() {
+  const cash = Math.max(0, +($("#plan-cash").value || 0));
+  if (!planState.data) $("#plan-meta").textContent = "Checking every holding… (up to a minute the first time)";
+  try {
+    planState.data = await api("/api/plan?cash=" + cash);
+    planState.loadedAt = Date.now();
+    renderPlan();
+  } catch (err) { $("#plan-meta").textContent = err.message; }
+}
+function planCard(a) {
+  const s = esc(a.symbol), sell = SELLS.has(a.action);
+  return `<div class="card plan-card ${ACT_CLASS[a.action]}">
+    <div class="pc-head"><span class="act">${esc(a.action)}</span>
+      <button type="button" class="linkish pc-sym" data-open="${s}">${esc(a.symbol.replace(/-USD$/, ""))}</button>
+      <span class="pc-price" data-live="${s}" data-lf="price">${fmtMoney(a.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
+      <span class="muted small pc-w">${(a.current_weight * 100).toFixed(1)}% → ${(a.target_weight * 100).toFixed(1)}% of portfolio · limit ${(a.limit * 100).toFixed(0)}%</span></div>
+    <p class="pc-order">${sell ? "Sell" : "Buy"} <b>${fmtShares(a.shares)}</b>${isCryptoSym(a.symbol) ? "" : " shares"} ≈
+      <b data-live="${s}" data-lf="value" data-qty="${a.shares}">${fmtMoney(a.value, 2)}</b></p>
+    <ul class="pc-why">${a.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    ${a.tax ? `<p class="pc-tax small"><b>Tax:</b> ${esc(a.tax)}</p>` : ""}
+    <div class="pc-buttons"><button type="button" data-ticket>Order ticket</button>
+      <a class="button-secondary" href="${esc(rhUrl(a.symbol))}" target="_blank" rel="noopener noreferrer">Open in Robinhood ↗</a></div>
+    <div class="ticket" hidden></div></div>`;
+}
+function openTicket(card, a) {
+  const el = card.querySelector(".ticket");
+  if (!el.hidden) { el.hidden = true; return; }
+  const side = SELLS.has(a.action) ? "sell" : "buy";
+  const t = Live.prices[a.symbol], px = t ? t.price : a.price;
+  const limit = +(side === "sell" ? px * 0.998 : px * 1.002).toFixed(px < 1 ? 4 : 2);
+  const ext = t && ["pre", "post", "closed"].includes(t.session);
+  el.innerHTML = `<div class="ticket-grid">
+      <label>Side<output>${side === "sell" ? "Sell" : "Buy"} ${esc(a.symbol)}</output></label>
+      <label>Quantity<input type="number" step="any" min="0" name="qty" value="${a.shares}"></label>
+      <label>Order type<output>Limit</output></label>
+      <label>Limit price<input type="number" step="any" min="0" name="limit" value="${limit}"></label>
+      <label>Estimated total<output name="est">${fmtMoney(a.shares * limit, 2)}</output></label>
+      <label>Time in force<output>${ext ? "Good for day · extended hours" : "Good for day"}</output></label></div>
+    <p class="muted small">The limit sits 0.2% ${side === "sell" ? "below" : "above"} the live price, so it fills without chasing the price.
+      ${ext && !isCryptoSym(a.symbol) ? "Outside regular hours only limit orders work and spreads are wider." : ""}</p>
+    <div class="pc-buttons"><button type="button" data-copy>Copy order</button>
+      <button type="button" class="secondary" data-record>It filled: record the trade</button><span class="muted small" data-status></span></div>`;
+  el.hidden = false;
+  const q = el.querySelector('[name="qty"]'), l = el.querySelector('[name="limit"]'), est = el.querySelector('[name="est"]');
+  const status = (m) => { el.querySelector("[data-status]").textContent = m; };
+  const upd = () => { est.textContent = fmtMoney((+q.value || 0) * (+l.value || 0), 2); };
+  q.addEventListener("input", upd); l.addEventListener("input", upd);
+  el.querySelector("[data-copy]").addEventListener("click", async () => {
+    const txt = `${side.toUpperCase()} ${q.value} ${a.symbol} LIMIT ${l.value} DAY`;
+    try { await navigator.clipboard.writeText(txt); status("Copied: " + txt); } catch { status(txt); }
+  });
+  el.querySelector("[data-record]").addEventListener("click", async () => {
+    if (!(+q.value > 0 && +l.value > 0)) { status("Enter the quantity and price that filled."); return; }
+    if (!confirm(`Record ${side} ${q.value} ${a.symbol} at ${fmtMoney(+l.value)} today? Only once it has filled in Robinhood.`)) return;
+    try {
+      await api("/api/transactions", { method: "POST", body: JSON.stringify({ symbol: a.symbol, side, quantity: +q.value, price: +l.value, fees: 0, date: localDate() }) });
+      status("Recorded. Rebuilding the plan…");
+      await loadHoldings();
+      loadPlan();
+    } catch (err) { status(err.message); }
+  });
+}
+function renderPlan() {
+  const d = planState.data, T = d.totals, acts = d.actions.filter((a) => a.action !== "Hold"), holds = d.actions.filter((a) => a.action === "Hold");
+  $("#plan-meta").innerHTML = `Built <span data-ago="${planState.loadedAt}"></span>; rebuilt every 5 minutes. Shares and values move with the live price.`;
+  $("#plan-tiles").innerHTML = [
+    tile("Invested now", `<span data-book="value">${fmtMoney(T.invested, 2)}</span>`, `plus ${fmtMoney(T.cash, 0)} cash`),
+    tile("Plan sells", fmtMoney(T.sell_value, 0), `${d.actions.filter((a) => SELLS.has(a.action)).length} sell or trim`),
+    tile("Plan buys", fmtMoney(T.buy_value, 0), `${d.actions.filter((a) => a.action === "Add" || a.action === "Buy").length} add or buy`),
+    tile("Cash after", fmtMoney(Math.abs(T.cash_after) < 0.5 ? 0 : T.cash_after, 0), "if every order fills"),
+  ].join("");
+  let html = acts.map(planCard).join("");
+  if (!d.actions.length) html = `<div class="card"><p class="muted">No holdings yet. Import your Robinhood history in Portfolio (or record trades), and enter cash above to see buys from your watchlist and the sleepers.</p></div>`;
+  else if (!acts.length) html = `<div class="card"><p class="muted">No trades today: nothing is oversized or flagged enough to act on${T.cash ? ", and no candidate cleared the buy rules" : ", and there's no cash to add with"}.</p></div>`;
+  if (holds.length) html += `<div class="card"><h2>Hold</h2><div class="hold-list">${holds.map((h) => { const s = esc(h.symbol); return `<div class="hold-row clickable" data-open="${s}">
+      <b>${esc(h.symbol.replace(/-USD$/, ""))}</b><span data-live="${s}" data-lf="price">${fmtMoney(h.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
+      <span class="muted small">${(h.current_weight * 100).toFixed(1)}% · limit ${(h.limit * 100).toFixed(0)}% · ${esc(h.reasons[0])}</span></div>`; }).join("")}</div></div>`;
+  $("#plan-actions").innerHTML = html;
+  $("#plan-actions").querySelectorAll(".plan-card").forEach((card, i) => card.querySelector("[data-ticket]").addEventListener("click", () => openTicket(card, acts[i])));
+  $("#plan-actions").querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+
+  const hist = d.history || [];
+  $("#plan-history").innerHTML = hist.length ? `<thead><tr><th>Day</th><th>Call</th><th>Symbol</th><th class="num">Price then</th><th class="num">Now</th><th class="num">Since</th><th>So far</th></tr></thead><tbody>` +
+    hist.map((h) => { const s = esc(h.symbol), up = h.action === "Add" || h.action === "Buy"; return `<tr class="clickable" data-open="${s}"><td>${esc(h.day)}</td>
+      <td><span class="act-chip ${ACT_CLASS[h.action]}">${esc(h.action)}</span></td><td><b>${s}</b></td><td class="num">${fmtMoney(h.price)}</td>
+      <td class="num" data-live="${s}" data-lf="price">—</td><td class="num" data-live="${s}" data-lf="since" data-p0="${h.price}">—</td>
+      <td data-live="${s}" data-lf="verdict" data-p0="${h.price}" data-side="${up ? "up" : "down"}">—</td></tr>`; }).join("") + "</tbody>"
+    : `<tr><td class="muted">Nothing logged yet: today's calls are logged the first time the plan has any.</td></tr>`;
+  $("#plan-history").querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  const r = d.rules, pct = (x) => Math.round(x * 100) + "%";
+  $("#plan-rules").innerHTML = [
+    `Size limit per position: the most a normal (1-sigma) month can cost is 2% of the portfolio, capped at ${pct(r.max_weight)}; ${pct(r.default_cap)} when volatility is unknown.`,
+    `Sell: warning flags add up to ${r.sell_flags}+ and the composite signal is ${r.sell_score} or worse.`,
+    `Trim to the limit: the position is more than ${r.oversize}× its limit.`,
+    `Trim by half: the flags add up to ${r.trim_flags}+ (the sell watch's "Review").`,
+    `Add (at most ${pct(r.starter_weight)} more of the portfolio per plan, never past the limit): no serious flag, signal +${r.add_score} or better, above the 200-day average, under 60% of its limit. Paid only from cash and this plan's sales.`,
+    `Over its limit but under ${r.oversize}×: hold, and say so.`,
+    `Buy a starter position (${pct(r.starter_weight)}, or the limit if smaller): your watchlist and the latest sleepers, signal +${r.buy_score} or better, above the 200-day average, no serious flag, best first while money lasts.`,
+    "Trades under $25 are skipped. Taxes assume the oldest shares are sold first; over a year held is long-term (US).",
+  ].map((x) => `<li>${esc(x)}</li>`).join("");
+  bindLive("plan", $("#tab-plan"));
+  Book.paint();
+  paintAgo();
+  paintPlanScore();
+}
+function paintPlanScore() {
+  const cells = [...document.querySelectorAll('#plan-history [data-lf="verdict"]')];
+  if (!cells.length) { $("#plan-score").textContent = ""; return; }
+  const right = cells.filter((c) => c.classList.contains("up")).length, wrong = cells.filter((c) => c.classList.contains("down")).length;
+  const oldest = planState.data.history[planState.data.history.length - 1].day;
+  const days = Math.round((Date.now() - Date.parse(oldest)) / 86400000);
+  $("#plan-score").textContent = `Right so far on ${right} of ${right + wrong} calls (oldest ${days} day${days === 1 ? "" : "s"} ago).` +
+    (days < 90 ? " Far too early to mean anything." : "");
+}
+Live.onTick(() => { if (currentTab() === "plan" && planState.data) paintPlanScoreSoon(); });
+let planScoreTimer = null;
+function paintPlanScoreSoon() { if (!planScoreTimer) planScoreTimer = setTimeout(() => { planScoreTimer = null; paintPlanScore(); }, 500); }
 
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});

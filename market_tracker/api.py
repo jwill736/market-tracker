@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -17,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, db, dilution, http, importers, journal, livefeed, pulse, research, service
+from . import auth, db, dilution, http, importers, journal, livefeed, pulse, research, service, strategy
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -129,7 +130,7 @@ async def stream_quotes(symbols: str, interval: float = Query(5.0, ge=2.0, le=30
 
 def _safe_quote(symbol: str) -> dict | None:
     try:
-        return market.get_quote(symbol).to_dict()
+        return market.get_live_quote(symbol).to_dict()
     except http.DataUnavailable:
         return None
 
@@ -138,7 +139,7 @@ def _safe_quote(symbol: str) -> dict | None:
 async def stream_live(request: Request, symbols: str, snapshot_only: bool = False):
     """Server-sent events: a snapshot of each symbol's price, then every live tick (see livefeed).
     `snapshot_only` ends the stream after the snapshot (a one-off batch quote)."""
-    syms = [s for s in (x.strip() for x in symbols.split(",")) if s][:60]
+    syms = [s for s in (x.strip() for x in symbols.split(",")) if s][:150]
     hub = livefeed.hub
     client = hub.subscribe(syms)
 
@@ -149,7 +150,7 @@ async def stream_live(request: Request, symbols: str, snapshot_only: bool = Fals
         if q and q.get("previous_close"):
             hub.prev_close.setdefault(sym, q["previous_close"])
         return q and {"symbol": sym, "price": q["price"], "change_pct": q["change_pct"], "ts": q["as_of"],
-                      "source": q["source"]}
+                      "source": q["source"], "session": q.get("session", "")}
 
     async def gen():
         try:
@@ -300,13 +301,77 @@ async def sell_watch():
     positions = [{"symbol": p["symbol"], "weight": p.get("weight"), "unrealized_pct": p.get("unrealized_pct")}
                  for p in summary["positions"]]
     key = tuple(sorted((p["symbol"], round(p["weight"] or 0)) for p in positions))
-    today = date.today()
 
     def compute():
-        return pulse.sell_watch(
-            positions, analyze_fn=lambda s: service.analyze(s, with_smart_money=False),
-            cik_fn=pulse.cik_for_symbol, dilution_fn=lambda cik: dilution.check(cik, today))
+        return pulse.sell_watch(positions, analyze_fn=_analysis, cik_fn=pulse.cik_for_symbol, dilution_fn=_dilution)
     return {"holdings": await asyncio.to_thread(pulse.sellwatch_cache.get, key, compute)}
+
+
+def _analysis(symbol: str) -> dict:
+    return pulse.analysis_cache.get(symbol, lambda: service.analyze(symbol, with_smart_money=False))
+
+
+def _dilution(cik: str) -> dilution.DilutionCheck:
+    return pulse.dilution_cache.get(cik, lambda: dilution.check(cik, date.today()))
+
+
+plan_cache = pulse.Cache(300)
+
+
+def _plan_candidates(watch: list[str], held: set[str], limit: int = 10) -> list[tuple[str, str]]:
+    """Symbols the plan may suggest buying: your watchlist, then the latest scan's sleepers."""
+    out = [(s, "Watchlist") for s in watch]
+    hit = pulse.pulse_cache.store.get("pulse")
+    if hit:
+        out += [(s["symbol"], "Sleeper: " + s["reasons"][0]) for s in hit[1].get("sleepers", [])]
+    seen: set[str] = set()
+    keep = []
+    for sym, why in out:
+        if sym not in held and sym not in seen:
+            seen.add(sym)
+            keep.append((sym, why))
+    return keep[:limit]
+
+
+@app.get("/api/plan")
+async def strategy_plan(cash: float = Query(0.0, ge=0, le=1e10)):
+    """Sell / trim / hold / add for each holding, plus new buys, with shares, reasons and tax
+    notes. Each day's first recommendations are logged and returned as `history`."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        watch = db.watchlist(conn)
+    summary = {"positions": [], "total_value": 0.0}
+    if txs:
+        try:
+            summary = await asyncio.to_thread(service.portfolio_summary, txs, False)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    positions = [p for p in summary["positions"] if p.get("quantity")]
+    held = {p["symbol"] for p in positions}
+    cands = _plan_candidates(watch, held)
+    key = (tuple(sorted((p["symbol"], round(p["quantity"], 6)) for p in positions)), round(cash, 2),
+           tuple(c[0] for c in cands))
+
+    def compute():
+        syms = [p["symbol"] for p in positions] + [c[0] for c in cands]
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            analyses = dict(zip(syms, pool.map(lambda s: pulse._safe(_analysis, s), syms)))
+        flags = {}
+        for p in positions:
+            a = analyses.get(p["symbol"])
+            dil = None
+            if a and market.asset_class(p["symbol"]) == "stock":
+                cik = pulse.cik_for_symbol(p["symbol"])
+                dil = pulse._safe(_dilution, cik) if cik else None
+            # Position size is the plan's own rule (weights including cash), so no size flag here.
+            flags[p["symbol"]] = pulse.sell_flags(a, None, dil, p.get("unrealized_pct")) if a else []
+        return strategy.build_plan(summary, analyses, flags, txs, cash, cands)
+
+    plan = await asyncio.to_thread(plan_cache.get, key, compute)
+    with db.connect() as conn:
+        db.log_plan(conn, plan["as_of"], plan["actions"])
+        history = db.plan_history(conn)
+    return dict(plan, history=history)
 
 
 class ImportIn(BaseModel):

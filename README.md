@@ -156,11 +156,40 @@ holdings deserve a second look. Every row says why it is there; click any ticker
 `GET /api/pulse` (cached 3 minutes, `?refresh=true` rescans) and `GET /api/sellwatch` (cached 10
 minutes per portfolio) return the same data as JSON.
 
+## Strategy plan (what to sell, trim, add and buy)
+
+The **Plan** tab turns your holdings into orders. For each position: Sell, Trim, Hold or Add, and new Buys from
+your watchlist and the latest sleepers, each with a share count, the value at the live price, the reasons, and
+the tax effect (short- vs long-term gain, the date shares turn long-term, harvestable losses and the wash-sale
+rule). Enter the cash you have to invest; adds and buys are paid only from that cash and the plan's own sales.
+
+- Size limit per position: the most a normal (1-sigma) month can cost is 2% of the portfolio, capped at 20%
+  (10% when volatility is unknown).
+- **Sell**: sell-watch flags add up to 4+ and the composite signal is -15 or worse.
+- **Trim** to the limit when a position is over 1.25x it; **trim by half** when flags add up to 3+.
+- **Add** (at most 4 points of weight per plan): no serious flag, signal +15 or better, above the 200-day average,
+  under 60% of its limit.
+- **Buy** a 4% starter position: signal +25 or better, above the 200-day average, no serious flag.
+
+Each order has a ticket: quantity, a limit price 0.2% through the live price, the estimated total, time in force
+(extended hours outside the regular session), **Copy order**, **Open in Robinhood**, and **It filled: record the
+trade**, which adds it to your ledger. Placing the order is yours to do: Robinhood has no public trading API.
+
+These rules are not validated (the backtest found no reliable edge in the composite score). So the plan keeps
+score on itself: each day's first calls are logged, and the tab shows each call's price then, the price now (live)
+and whether it has been right so far. Judge it after months, not days. `GET /api/plan?cash=...` returns the plan
+and the log as JSON.
+
 ## Private app (your dashboard, online, behind a password)
 
 The full dashboard (`mt serve`) can run on a small always-on server so you can use it from your phone:
 - live prices: crypto tick by tick from Coinbase; US stocks tick by tick from Finnhub if `FINNHUB_API_KEY` is set,
-  otherwise refreshed every ~8 seconds;
+  otherwise the latest trade every ~5 seconds, **pre-market (4:00 ET) and after hours (to 8:00 PM ET) included**;
+- every number on screen follows the price: portfolio value, today's change, P&L per position and in total,
+  weights, order values, and the plan's track record. A strip under the tape shows your portfolio, the US session
+  (open / pre-market / after hours / closed, with a countdown) and how long since the last tick. Lists that aren't
+  prices (movers, news, the plan) refresh themselves every few minutes. Outside 4 AM–8 PM ET on weekdays, US stocks
+  don't trade anywhere, so only crypto moves;
 - a ticker tape of your holdings and watchlist; click any ticker for its page, with a live 1D/1W/1M/1Y chart, your
   position, the signal and news, and Buy/Sell buttons that fill in the trade form;
 - your portfolio, imported from Robinhood (Portfolio → Import from Robinhood), plus deep dives.
@@ -177,7 +206,9 @@ persistent disk.
    plus optionally `FINNHUB_API_KEY=...` (free at finnhub.io) and `ANTHROPIC_API_KEY=...` for deep dives.
 4. `fly deploy`, then open `https://<app-name>.fly.dev`.
 
-**Render** (Starter plan, about $7 a month plus the disk): New → Blueprint → choose this repo. `render.yaml` sets
+**Render** (Starter plan, about $7 a month plus the disk):
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/jwill736/market-tracker)
+or New → Blueprint → choose this repo. `render.yaml` sets
 up the service and disk and asks for the secrets. The free plan sleeps after 15 minutes and has no disk, so it
 doesn't suit this app.
 

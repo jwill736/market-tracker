@@ -31,6 +31,7 @@ class Quote:
     currency: str
     source: str
     as_of: str
+    session: str = ""    # stocks: pre / regular / post / closed; crypto: "24h"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -180,6 +181,50 @@ def get_quote(symbol: str) -> Quote:
     if asset_class(sym) == "crypto":
         return _coinbase_quote(sym)
     return _finnhub_quote(sym) or parse_yahoo_quote(sym, _yahoo_chart(sym, "5d", "1d", ttl=15))
+
+
+def market_session(meta: dict, now: float | None = None) -> str:
+    """'pre', 'regular', 'post' or 'closed', from the trading periods Yahoo reports."""
+    periods = meta.get("currentTradingPeriod") or {}
+    now = now if now is not None else datetime.now(timezone.utc).timestamp()
+    for name in ("pre", "regular", "post"):
+        w = periods.get(name) or {}
+        if w.get("start", 0) <= now < w.get("end", 0):
+            return name
+    return "closed"
+
+
+def parse_live_quote(symbol: str, result: dict, now: float | None = None) -> Quote:
+    """Today's 1-minute bars including pre-market and after-hours trading. Outside regular hours
+    the latest extended-hours trade is the price (as Robinhood shows it); the change is measured
+    from the previous regular close either way."""
+    q = parse_yahoo_quote(symbol, result)
+    meta = result["meta"]
+    stamps = result.get("timestamp") or []
+    closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+    last = next(((t, c) for t, c in zip(reversed(stamps), reversed(closes)) if c is not None), None)
+    q.session = market_session(meta, now)
+    regular_time = meta.get("regularMarketTime") or 0
+    if last and last[0] > regular_time:
+        q.price = float(last[1])
+        q.as_of = _iso(last[0])
+        q.change_pct = (q.price / q.previous_close - 1) * 100 if q.previous_close else None
+    return q
+
+
+def get_live_quote(symbol: str) -> Quote:
+    """The freshest price available without an API key: extended hours included for stocks."""
+    sym = normalize_symbol(symbol)
+    if asset_class(sym) == "crypto":
+        q = _coinbase_quote(sym)
+        q.session = "24h"
+        return q
+    try:
+        result = http.get(YAHOO_CHART.format(symbol=sym),
+                          params={"range": "1d", "interval": "1m", "includePrePost": "true"}, ttl=3)
+        return parse_live_quote(sym, result["chart"]["result"][0])
+    except (http.DataUnavailable, KeyError, IndexError, TypeError):
+        return get_quote(sym)
 
 
 def get_history(symbol: str, days: int = 400) -> list[PriceBar]:

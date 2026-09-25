@@ -1,4 +1,4 @@
-"""SQLite persistence for transactions and the watchlist."""
+"""SQLite persistence for transactions, the watchlist and the strategy plan's log."""
 
 from __future__ import annotations
 
@@ -21,6 +21,17 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS watchlist (
     symbol TEXT PRIMARY KEY,
     added TEXT NOT NULL DEFAULT (date('now'))
+);
+CREATE TABLE IF NOT EXISTS plan_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    action TEXT NOT NULL,
+    price REAL NOT NULL,
+    shares REAL NOT NULL,
+    value REAL NOT NULL,
+    reason TEXT,
+    UNIQUE (day, symbol, action)
 );
 """
 
@@ -77,3 +88,22 @@ def add_watch(conn, symbol: str) -> None:
 
 def remove_watch(conn, symbol: str) -> None:
     conn.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
+
+
+def log_plan(conn, day: str, actions: list[dict]) -> int:
+    """Record the day's first recommendation per symbol and action, so the plan can be scored
+    later against what the prices did. Holds are not logged."""
+    n = 0
+    for a in actions:
+        if a["action"] == "Hold" or not a.get("price"):
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO plan_log (day, symbol, action, price, shares, value, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (day, a["symbol"], a["action"], a["price"], a["shares"], a["value"], (a.get("reasons") or [""])[0]))
+        n += cur.rowcount
+    return n
+
+
+def plan_history(conn, limit: int = 200) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM plan_log ORDER BY day DESC, id DESC LIMIT ?", (limit,))]
