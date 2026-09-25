@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS early_log (
     headline TEXT,
     PRIMARY KEY (day, symbol)
 );
+CREATE TABLE IF NOT EXISTS snapshots (
+    source TEXT NOT NULL,
+    day TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (source, day)
+);
+CREATE TABLE IF NOT EXISTS follows (
+    who TEXT PRIMARY KEY,
+    grp TEXT NOT NULL,
+    added TEXT NOT NULL DEFAULT (date('now'))
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -199,3 +210,26 @@ def early_logged(conn, day: str) -> set[str]:
 def early_history(conn, limit: int = 150) -> list[dict]:
     return [dict(r) for r in conn.execute("SELECT * FROM early_log WHERE price IS NOT NULL ORDER BY day DESC, strength DESC "
                                           "LIMIT ?", (limit,))]
+
+
+def save_snapshot(conn, source: str, day: str, data: str, keep: int = 15) -> None:
+    conn.execute("INSERT OR REPLACE INTO snapshots (source, day, data) VALUES (?, ?, ?)", (source, day, data))
+    conn.execute("DELETE FROM snapshots WHERE source = ? AND day NOT IN "
+                 "(SELECT day FROM snapshots WHERE source = ? ORDER BY day DESC LIMIT ?)", (source, source, keep))
+
+
+def snapshots(conn, source: str, limit: int = 2) -> list[tuple[str, str]]:
+    return [(r["day"], r["data"]) for r in
+            conn.execute("SELECT day, data FROM snapshots WHERE source = ? ORDER BY day DESC LIMIT ?", (source, limit))]
+
+
+def follows(conn) -> dict[str, str]:
+    return {r["who"]: r["grp"] for r in conn.execute("SELECT who, grp FROM follows ORDER BY who")}
+
+
+def follow(conn, who: str, grp: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO follows (who, grp) VALUES (?, ?)", (who, grp))
+
+
+def unfollow(conn, who: str) -> None:
+    conn.execute("DELETE FROM follows WHERE who = ?", (who,))

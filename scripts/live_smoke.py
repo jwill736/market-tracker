@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import http, pulse, radar, reading, service
+from market_tracker import charts, early, http, people, pulse, radar, reading, service
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -231,6 +231,47 @@ def _():
     assert len(picks) >= 10, f"{len(picks)} picks"
     both = sum(1 for p in picks if len(p.picked_by) > 1)
     return f"{len(picks)} picks, {both} picked by both; e.g. {picks[0].title[:60]} ({picks[0].domain})"
+
+
+@check("Candles with volume (AAPL 1D, BTC 1W)")
+def _():
+    a = charts.candles("AAPL", "1d")
+    b = charts.candles("BTC-USD", "1w")
+    assert len(a["candles"]) > 10 and a["candles"][-1]["v"] >= 0 and len(b["candles"]) > 50, (len(a["candles"]), len(b["candles"]))
+    return f"AAPL {len(a['candles'])} 5-min candles (prev close {a['reference']}); BTC {len(b['candles'])} hourly"
+
+
+@check("Early wire: social, wires, filings, crypto")
+def _():
+    sigs, errors, pairs = early.gather()
+    kinds = {}
+    for s in sigs:
+        kinds[s.kind] = kinds.get(s.kind, 0) + 1
+    assert kinds.get("social") and pairs, (kinds, errors)
+    return f"{len(sigs)} signals {kinds}; {len(pairs)} Coinbase USD pairs" + (f"; down: {'; '.join(errors)}" if errors else "")
+
+
+@check("People: ARK daily holdings (all funds)")
+def _():
+    got = people.fetch_ark()
+    assert "ARKK" in got and len(got["ARKK"][1]) > 20, list(got)
+    return ", ".join(f"{f} {len(rows)} holdings ({day})" for f, (day, rows) in got.items())
+
+
+@check("People: House trade reports (index + PDF text)")
+def _():
+    moves, errors = people.house_moves(date.today(), days=21, limit=6)
+    parsed = [m for m in moves if m.symbol]
+    assert moves, errors
+    return f"{len(moves)} rows from {len({m.url for m in moves})} reports; {len(parsed)} trades parsed" + \
+        (f"; e.g. {parsed[0].who} {parsed[0].action} {parsed[0].symbol}" if parsed else "") + (f"; notes: {len(errors)}" if errors else "")
+
+
+@check("People: Senate trade reports (eFD)")
+def _():
+    moves, errors = people.senate_moves(date.today(), days=21)
+    assert moves or not errors, errors
+    return f"{len(moves)} rows" + (f"; e.g. {moves[0].who} {moves[0].action} {moves[0].symbol}" if moves else " (none filed)")
 
 
 @check("Full analysis MSFT (with SEC)")

@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, db, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, db, people, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -485,6 +485,51 @@ async def early_wire(limit: int = Query(80, ge=1, le=200), refresh: bool = False
         sentinel.early_cache.clear()
     data = await asyncio.to_thread(sentinel.build_early, set(held + watched))
     return dict(data, signals=data["signals"][:limit])
+
+
+@app.get("/api/people")
+async def people_view(refresh: bool = False):
+    """Congress trades, ARK's daily trades, big insider buys and activist stakes; your follows."""
+    with db.connect() as conn:
+        follows = db.follows(conn)
+    if refresh:
+        sentinel.people_cache.clear()
+    data = await asyncio.to_thread(sentinel.people_cache.get, "people", lambda: people.build(follows=follows))
+    followed = [m for ms in data["sections"].values() for m in ms if m["who"] in follows]
+    return dict(data, follows=follows, following=sorted(followed, key=lambda m: m["disclosed"], reverse=True))
+
+
+class FollowIn(BaseModel):
+    who: str = Field(min_length=1, max_length=120)
+    group: str = Field("congress", max_length=20)
+
+
+@app.post("/api/people/follow", status_code=201)
+def follow_person(body: FollowIn):
+    with db.connect() as conn:
+        db.follow(conn, body.who, body.group)
+        return db.follows(conn)
+
+
+@app.delete("/api/people/follow")
+def unfollow_person(who: str):
+    with db.connect() as conn:
+        db.unfollow(conn, who)
+        return db.follows(conn)
+
+
+copy_cache = pulse.Cache(3600)
+
+
+@app.get("/api/people/copy")
+async def copy_person(who: str):
+    """What copying this person's disclosed moves would have made, against SPY."""
+    data = await asyncio.to_thread(sentinel.people_cache.get, "people", lambda: people.build())
+    moves = [people.Move(**{k: v for k, v in m.items() if k != "lag_days"})
+             for ms in data["sections"].values() for m in ms if m["who"] == who]
+    if not moves:
+        raise HTTPException(404, f"No disclosed moves for {who}")
+    return await asyncio.to_thread(copy_cache.get, (who, len(moves)), lambda: dict(people.copy_sim(moves), who=who))
 
 
 class TopicIn(BaseModel):

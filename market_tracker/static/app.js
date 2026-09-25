@@ -54,6 +54,7 @@ function selectTab(name) {
   if (name === "radar") loadRadar();
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
   if (name !== "early" && typeof Live !== "undefined") Live.drop("early");
+  if (name !== "people" && typeof Live !== "undefined") Live.drop("people");
   if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
   if (name !== "plan" && typeof Live !== "undefined") Live.drop("plan");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
@@ -1042,6 +1043,7 @@ setInterval(() => {
   if (tab === "radar" && now - rrState.loadedAt > 120000) loadRadar();
   if (tab === "home" && now - homeState.loadedAt > (homeState.range === "1d" ? 60000 : 600000)) loadHome(true);
   if (tab === "early" && typeof earlyState !== "undefined" && now - earlyState.loadedAt > 120000) loadEarly();
+  if (tab === "people" && typeof peopleState !== "undefined" && now - peopleState.loadedAt > 1800000) loadPeople();
 }, 15000);
 
 // ---------------------------------------------------------------- strategy plan
@@ -1623,6 +1625,80 @@ document.querySelectorAll("#ew-filter button").forEach((b) => b.addEventListener
 $("#ew-early").addEventListener("change", (e) => { earlyState.earlyOnly = e.target.checked; if (earlyState.data) renderEarly(); });
 let earlyScoreTimer = null;
 Live.onTick(() => { if (currentTab() === "early" && !earlyScoreTimer) earlyScoreTimer = setTimeout(() => { earlyScoreTimer = null; paintEarlyScore(); }, 1000); });
+
+// ---------------------------------------------------------------- people
+const peopleState = { data: null, loadedAt: 0, copies: {} };
+async function loadPeople(force = false) {
+  if (!peopleState.data) $("#pp-meta").textContent = "Reading Congress disclosures, ARK's holdings and insider filings… (a minute the first time)";
+  try {
+    peopleState.data = await api("/api/people" + (force ? "?refresh=true" : ""));
+    peopleState.loadedAt = Date.now();
+    renderPeople();
+  } catch (err) { $("#pp-meta").textContent = err.message; }
+}
+const actionChip = (a) => `<span class="act-chip ${/Buy|New/.test(a) ? "act-buy" : /Sell|Exit/.test(a) ? "act-sell" : "act-hold"}">${esc(a)}</span>`;
+function personCell(m) {
+  const f = peopleState.data.follows || {}, on = m.who in f;
+  return `<span class="pp-who">${esc(m.who)}</span> <button type="button" class="chipbtn" data-follow="${esc(m.who)}" data-group="${esc(m.group)}" aria-pressed="${on}">${on ? "Following" : "Follow"}</button>
+    <button type="button" class="ghost small" data-copy="${esc(m.who)}">If you'd copied</button><div class="pp-copy small" data-copyout="${esc(m.who)}"></div>`;
+}
+function symCell(m) {
+  if (!m.symbol) return `<span class="muted">—</span>`;
+  const s = esc(m.symbol);
+  return `<button type="button" class="linkish pp-sym" data-open="${s}">${s}</button> <span class="small" data-live="${s}" data-lf="price"></span> <span class="small" data-live="${s}" data-lf="chg"></span>`;
+}
+function renderPeople() {
+  const d = peopleState.data, sec = d.sections || {};
+  $("#pp-meta").innerHTML = `Updated ${esc(d.as_of)} · refreshed every 30 minutes${d.errors.length ? ` · ${d.errors.length} source note${d.errors.length > 1 ? "s" : ""}` : ""}`;
+  const follows = Object.keys(d.follows || {});
+  $("#pp-follows").innerHTML = follows.map((w) => `<button type="button" class="chipbtn" aria-pressed="true" data-unfollow="${esc(w)}">${esc(w)} ✕</button>`).join("") || `<span class="muted small">Nobody yet: use Follow on anyone below.</span>`;
+  $("#pp-following").innerHTML = (d.following || []).slice(0, 20).map((m) => `<li><div>${actionChip(m.action)} <b>${esc(m.symbol || "")}</b> ${esc(m.who)} <span class="muted small">${esc(m.amount || "")}</span></div>
+      <div class="muted small">${esc(m.detail)} · disclosed ${esc(m.disclosed)}${m.url ? ` · <a href="${esc(safeUrl(m.url))}" target="_blank" rel="noopener noreferrer">filing ↗</a>` : ""}</div></li>`).join("")
+    || (follows.length ? `<li class="muted">No new moves by the people you follow.</li>` : "");
+  const table = (rows, cols) => rows.length ? `<thead><tr>${cols.map((c) => `<th${c.num ? ' class="num"' : ""}>${c.h}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map((m) => `<tr>${cols.map((c) => `<td${c.num ? ' class="num"' : ""}>${c.f(m)}</td>`).join("")}</tr>`).join("") + "</tbody>" : `<tr><td class="muted">Nothing in this window.</td></tr>`;
+  const link = (m) => m.url ? `<a href="${esc(safeUrl(m.url))}" target="_blank" rel="noopener noreferrer">↗</a>` : "";
+  $("#pp-congress").innerHTML = table((sec.congress || []).slice(0, 80), [
+    { h: "Disclosed", f: (m) => `${esc(m.disclosed)}${m.lag_days != null ? `<div class="muted small">${m.lag_days} days late</div>` : ""}` },
+    { h: "Who", f: personCell }, { h: "Move", f: (m) => actionChip(m.action) }, { h: "Symbol", f: symCell },
+    { h: "Amount", f: (m) => esc(m.amount || "") }, { h: "Detail", f: (m) => `<span class="small">${esc(m.detail)}</span> ${link(m)}` }]);
+  $("#pp-ark").innerHTML = table((sec.ark || []).slice(0, 60), [
+    { h: "Day", f: (m) => esc(m.disclosed) }, { h: "Fund", f: (m) => personCell(m) }, { h: "Move", f: (m) => actionChip(m.action) },
+    { h: "Symbol", f: symCell }, { h: "Detail", f: (m) => `<span class="small">${esc(m.detail)}</span>` }]);
+  $("#pp-ark-status").textContent = Object.entries(d.ark_status || {}).map(([f, st]) => `${f}: ${st}`).slice(0, 2).join(" · ");
+  $("#pp-insider").innerHTML = table((sec.insider || []).slice(0, 40), [
+    { h: "Filed", f: (m) => esc(m.disclosed) }, { h: "Who", f: personCell }, { h: "Symbol", f: symCell },
+    { h: "Value", num: true, f: (m) => esc(m.amount) }, { h: "", f: link }]);
+  $("#pp-activist").innerHTML = table((sec.activist || []).slice(0, 40), [
+    { h: "Filed", f: (m) => esc(m.disclosed) }, { h: "Who", f: personCell }, { h: "Symbol", f: symCell },
+    { h: "Filing", f: (m) => `<span class="small">${esc(m.detail)}</span> ${link(m)}` }]);
+  document.querySelectorAll("#tab-people [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  document.querySelectorAll("#tab-people [data-follow]").forEach((b) => b.addEventListener("click", async () => {
+    const on = b.getAttribute("aria-pressed") === "true";
+    try {
+      d.follows = on ? await api("/api/people/follow?who=" + encodeURIComponent(b.dataset.follow), { method: "DELETE" })
+        : await api("/api/people/follow", { method: "POST", body: JSON.stringify({ who: b.dataset.follow, group: b.dataset.group }) });
+      renderPeople();
+    } catch (err) { alert(err.message); }
+  }));
+  document.querySelectorAll("#tab-people [data-unfollow]").forEach((b) => b.addEventListener("click", async () => {
+    d.follows = await api("/api/people/follow?who=" + encodeURIComponent(b.dataset.unfollow), { method: "DELETE" }); renderPeople();
+  }));
+  document.querySelectorAll("#tab-people [data-copy]").forEach((b) => b.addEventListener("click", () => loadCopy(b.dataset.copy)));
+  Object.entries(peopleState.copies).forEach(([w, html]) => document.querySelectorAll(`[data-copyout="${CSS.escape(w)}"]`).forEach((el) => { el.innerHTML = html; }));
+  bindLive("people", $("#tab-people"));
+}
+async function loadCopy(who) {
+  const out = () => document.querySelectorAll(`[data-copyout="${CSS.escape(who)}"]`);
+  out().forEach((el) => { el.textContent = "Simulating…"; });
+  try {
+    const c = await api("/api/people/copy?who=" + encodeURIComponent(who));
+    const html = c.trades ? `Copying ${c.trades} disclosed move${c.trades > 1 ? "s" : ""} since ${esc(c.since)}: <b class="${cls(c.return_pct)}">${fmtPct(c.return_pct, 1)}</b> vs ${esc(c.benchmark)} <b class="${cls(c.benchmark_return_pct)}">${fmtPct(c.benchmark_return_pct, 1)}</b>`
+      : "No priced moves to copy yet.";
+    peopleState.copies[who] = html;
+    out().forEach((el) => { el.innerHTML = html; });
+  } catch (err) { out().forEach((el) => { el.textContent = err.message; }); }
+}
 
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});

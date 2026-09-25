@@ -369,3 +369,10 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .ew-why { margin: 2px 0 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
 .ew-why a { overflow-wrap: anywhere; }
 .chip-early { background: color-mix(in srgb, var(--gain) 16%, transparent); color: var(--gain); }
+
+/* ---------------------------------------------------------------- people */
+.pp-who { font-weight: 600; }
+.pp-sym { font-size: 18px; }
+.pp-copy:empty { display: none; }
+.pp-copy { margin-top: 3px; }
+#tab-people td { vertical-align: top; }

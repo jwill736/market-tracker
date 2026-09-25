@@ -172,6 +172,7 @@ class Sentinel:
                     await asyncio.to_thread(self.reading_headsups, mine, news_data, read_data)
                     early_data = await asyncio.to_thread(build_early, set(mine))
                     await asyncio.to_thread(early_headsups, early_data)
+                    await asyncio.to_thread(people_headsups)
                     self.reading_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 except Exception:
                     pass
@@ -195,7 +196,7 @@ def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", u
     if new:
         notify.send(notify.Message(title=title, body=body, url=url, priority=PUSH_PRIORITY.get(level, 3),
                                    tags=({"radar": ("rotating_light",), "news": ("newspaper",), "reading": ("books",),
-                                          "topic": ("fire",), "early": ("zap",)}.get(kind, ()))))
+                                          "topic": ("fire",), "early": ("zap",), "people": ("eyes",)}.get(kind, ()))))
     return int(new)
 
 
@@ -269,6 +270,25 @@ def early_headsups(data: dict) -> int:
     return n
 
 
+def people_headsups() -> int:
+    """New disclosed moves by people you follow."""
+    from . import people
+    with db.connect() as conn:
+        follows = db.follows(conn)
+    if not follows:
+        return 0
+    data = people_cache.get("people", lambda: people.build(follows=follows))
+    n = 0
+    for ms in data["sections"].values():
+        for m in ms:
+            if m["who"] in follows and m["symbol"] and m["disclosed"] >= (date.today() - timedelta(days=3)).isoformat():
+                n += raise_headsup(f"people:{m['who']}:{m['symbol']}:{m['action']}:{m['disclosed']}", "people", 2,
+                                   f"{m['who']}: {m['action']} {m['symbol']}", f"{m['detail']} {m['amount']}".strip(),
+                                   m["url"], m["symbol"])
+    return n
+
+
+people_cache = Cache(1800)
 news_cache = Cache(300)
 reading_cache = Cache(600)
 radar_cache = Cache(300)
