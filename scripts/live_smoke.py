@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, early, http, people, pulse, radar, reading, service
+from market_tracker import charts, cryptoradar, early, events, http, people, pickers, pulse, radar, reading, service
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -274,6 +274,40 @@ def _():
     moves, errors = people.senate_moves(date.today(), days=21)
     assert moves or not errors, errors
     return f"{len(moves)} rows" + (f"; e.g. {moves[0].who} {moves[0].action} {moves[0].symbol}" if moves else " (none filed)")
+
+
+@check("Earnings date and options-implied move (Nasdaq)")
+def _():
+    row = events.earnings_for("NVDA", 10_000.0, date.today(), within_days=200)
+    assert row, "no upcoming NVDA earnings date"
+    assert row["move_pct"] and 1 < row["move_pct"] < 40, row
+    return f"NVDA reports {row['date']}{' (estimated)' if row['estimated'] else ''}: options price ±{row['move_pct']}% to {row['expiry']}, ±${row['move_dollars']:,.0f} on $10,000"
+
+
+@check("Fed and economic calendar")
+def _():
+    rows, errors = events.macro(date.today(), days=14)
+    fed = [r for r in rows if r["kind"] == "Fed decision"]
+    assert not any(e.startswith("Fed calendar") for e in errors), errors
+    return f"{len(rows)} events in 2 weeks (+ Fed in 60 days); next Fed decision {fed[0]['date'] if fed else 'not within 60 days'}; " + \
+        ", ".join(f"{r['date']} {r['kind']}" for r in rows[:4])
+
+
+@check("Crypto radar: hacks, Coinbase status, supply")
+def _():
+    r = cryptoradar.build(["BTC-USD", "ETH-USD", "SOL-USD", "SUI-USD"])
+    assert not r["errors"], r["errors"]
+    assert "SUI" in r["supply"], r["supply"]
+    return f"{len(r['alerts'])} alerts ({', '.join(sorted({a['kind'] for a in r['alerts']})) or 'none'}); SUI {r['supply']['SUI']['circulating_pct']}% circulating"
+
+
+@check("StockTwits picker stream (tagged calls with prices)")
+def _():
+    profile, calls = pickers.fetch_calls("alphatrends", pages=2)
+    assert profile.get("username"), profile
+    sugg = pickers.suggested()
+    return f"{profile['username']}: {len(calls)} tagged calls in 2 pages" + (f", e.g. {calls[0]['side']} {calls[0]['symbol']} at {calls[0]['price']}" if calls else "") + \
+        f"; {len(sugg)} suggested accounts"
 
 
 @check("Full analysis MSFT (with SEC)")

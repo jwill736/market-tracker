@@ -385,3 +385,47 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 #tab-people td { vertical-align: top; }
 
 .bk-restore { cursor: pointer; text-align: center; }
+
+/* hold plan */
+.hp-list { display: grid; gap: 10px; }
+.hp-row { border-left: 4px solid var(--axis); display: grid; gap: 4px; }
+.hp-row.v-sell { border-left-color: var(--bad); }
+.hp-row.v-trim { border-left-color: var(--s2); }
+.hp-row.v-review { border-left-color: var(--warn-ink); }
+.hp-row.v-sell .act, .chip.v-sell { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.hp-row.v-trim .act, .chip.v-trim, .hp-row.v-review .act, .chip.v-review { background: var(--warn-bg); color: var(--warn-ink); }
+.hp-row .pc-why li.t-sell { color: var(--bad); font-weight: 600; }
+.hp-row .pc-why li.t-info { color: var(--muted); }
+.hp-thesis { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding-top: 4px; border-top: 1px solid var(--grid); }
+.hp-settings { margin-top: 8px; }
+.hp-settings summary { cursor: pointer; }
+.inline-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 8px 0; }
+.inline-form input[type="number"] { width: 5.5em; }
+.tax-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 8px 0 12px; }
+.tax-sums div { display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--mid); }
+.tax-sums b { font-size: 18px; font-variant-numeric: tabular-nums; }
+#hp-tax h3 { margin: 12px 0 4px; font-size: 14px; }
+.th-form { display: grid; gap: 10px; }
+.th-form label { display: grid; gap: 4px; font-size: 13px; }
+.th-form textarea { width: 100%; resize: vertical; font: inherit; }
+.th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+
+/* morning brief */
+.brief-card { margin-bottom: 14px; }
+.brief-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.brief-list li { display: flex; gap: 10px; align-items: baseline; font-size: 14px; }
+.brief-list li.lvl3 { color: var(--bad); font-weight: 600; }
+.brief-list li.lvl0 { font-weight: 600; }
+.hb-sec { flex: none; width: 9.5em; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+@media (max-width: 560px) { .brief-list li { display: grid; gap: 0; } .hb-sec { width: auto; } }
+
+/* stock pickers */
+.pk-card { border-top: 1px solid var(--grid); padding: 10px 0; display: grid; gap: 4px; }
+#pk-suggested { margin: 6px 0; align-items: center; }
+#pk-suggested .chip { cursor: pointer; border: 0; }
+.brief-list button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
+.pk-card button.linkish, #pk-list button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+.hp-thesis button.linkish { color: var(--accent); }
+.hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
+.hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
+.hp-lines li:first-child { border-top: 0; }

@@ -24,6 +24,7 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Composite signal** | A score from -100 to +100 built from trend, momentum, smart money, insiders, and news, with a per-component explanation and a volatility-based maximum position size | computed locally |
 | **Portfolio** | Trade ledger, average-cost P&L (realized and unrealized), allocation, volatility, Sharpe, max drawdown, VaR, concentration and correlation warnings, risk-balanced target weights | SQLite |
 | **Track record** | Logs each day's scores to a CSV, then measures them against what prices did 1, 3 and 6 months later. Reports the IC (rank correlation) with its error band, average return by label, and a per-component IC. A scheduled GitHub Actions job records 15 symbols every weekday | computed locally + GitHub Actions |
+| **Hold plan** | Hold by default; sell/trim/review only on your own tripwires, serious filings, concentration or taxes. Reinvest queue, earnings in dollars, cross-account wash-sale guard and loss harvesting, and an 8:30 ET morning brief | computed locally + SEC, Nasdaq, Fed |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
 ## Always on (alerts while your laptop sleeps)
@@ -259,9 +260,61 @@ filings.
     **heats up** at twice its usual daily pace (5+ stories). Five default topics are set up (rates, AI, crypto
     policy, tariffs, recession); add your own with the words to match.
 
+## Hold plan (when a buy-and-hold investor should sell)
+
+The **Hold plan** tab is for people who buy and hold. Every holding is **Hold** unless something real fires. Price
+wiggles, "extended" charts and 200-day averages are not on the list: for long-term investors, trading on them mostly
+costs money. A holding is raised for a decision only by:
+
+1. **Your own tripwire.** Write down why you own it and what would prove you wrong, and set the lines the app can check:
+   sell below a price, re-think after a loss from your cost, take some off at a price, a target share of the portfolio,
+   a review date. Crossing a line puts it on the list with your own words.
+2. **A serious SEC filing** in the last 90 days: delisting or bankruptcy (Sell?), going-concern doubt, restatement,
+   auditor change or late report (Review).
+3. **Concentration.** One position past your cap (20%, settable; loosened to 1.5x an equal share so a 3-stock
+   portfolio can hold 50% each) or past the target you set. Trimming back is the sale buy-and-hold research supports.
+4. **Taxes.** Sales that would turn long-term within 90 days say when, and what waiting saves; losses worth harvesting
+   come with a replacement to hold for 31 days so you stay invested.
+
+Money a trim frees up (plus buying power) goes to a **reinvest queue**: holdings below the target you set, watchlist
+names with no serious filings, then a broad market fund (VTI). **Coming up** lists your earnings with the options-implied
+move in dollars ("NVDA reports Nov 18: options price ±11%, ±$1,016 on yours"), Fed decisions, CPI and jobs reports.
+
+**Taxes across your accounts**: realized gains this year, and wash sales that no single broker can see: selling at a loss
+in Robinhood and buying the same stock, or a fund on the same index, in Stash within 30 days either side. A don't-buy-until
+list after loss sales, the short- to long-term clock per lot, and harvest candidates with the recent buys that would wash
+them. Rates are settable (24% short-term and 15% long-term by default). Not tax advice: IRA and spouse accounts count too
+and aren't visible here; crypto has not been under the wash-sale rule, which the app notes rather than assumes.
+
+## Morning brief (8:30 ET)
+
+Each weekday at 8:30 ET the app pushes one notification and shows the same brief on **Home**: holdings that need a decision
+and why, new serious filings on your companies, your earnings today or tomorrow (with the move in dollars), CPI/jobs/Fed
+releases, pre-market moves of 2% or more and what the whole portfolio is doing, early-wire hits on your holdings, crypto
+radar items and tax dates this week. On a quiet day it says so. `POST /api/brief/send` pushes it now to test your phone.
+
+## Receipts (a public, tamper-evident record)
+
+The filing watcher records the day's strongest early-wire tickers with the price when first seen (`early_calls.csv` on the
+`journal-data` branch). When a day ends its calls, together with that day's insider alerts, are hashed with SHA-256 and
+chained to the previous day (`receipts.jsonl`), so changing, adding or dropping a past call breaks every later seal. The
+public site's **Receipts** section shows every call older than 24 hours, scored 5 trading days on against SPY, misses
+included. `mt receipts verify --data-dir <folder>` recomputes the chain from the raw files.
+
+## Stock pickers and crypto radar
+
+**People → Stock pickers, graded**: follow any StockTwits account. Posts tagged Bullish or Bearish are calls, with the
+price StockTwits recorded at posting, scored 5 trading days later against SPY (bearish calls are right when the stock
+lagged). Calls are stored when first seen, so deleted posts still count.
+
+**Radar → Crypto radar** for the coins you hold or watch: exchange hacks of $10M+ and hacks on your coins' chains
+(DefiLlama), Coinbase incidents naming your coins, supply not yet circulating (CoinGecko), and stablecoins off their
+peg. Exact unlock dates and ETF flows need paid data, so they're left out rather than guessed. Serious items also arrive
+as heads-ups.
+
 ## Strategy plan (what to sell, trim, add and buy)
 
-The **Plan** tab turns your holdings into orders. For each position: Sell, Trim, Hold or Add, and new Buys from
+The **Plan** tab (for active trading; buy-and-hold investors should start with the Hold plan) turns your holdings into orders. For each position: Sell, Trim, Hold or Add, and new Buys from
 your watchlist and the latest sleepers, each with a share count, the value at the live price, the reasons, and
 the tax effect (short- vs long-term gain, the date shares turn long-term, harvestable losses and the wash-sale
 rule). Enter the cash you have to invest; adds and buys are paid only from that cash and the plan's own sales.
