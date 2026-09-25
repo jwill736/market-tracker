@@ -112,11 +112,35 @@ def candles(symbol: str, range_: str = "1d", get=None) -> dict:
             raise http.DataUnavailable(f"no chart data for {sym}") from exc
         out = parse_yahoo_candles(result)
         meta = result.get("meta", {})
+        if range_ == "1d" and len(out) < MIN_1D_CANDLES:
+            out = _with_previous_session(sym, out, meta, get)
         prev = meta.get("chartPreviousClose") or meta.get("previousClose")
         ref = float(prev) if range_ == "1d" and prev else (out[0].o if out else None)
         label = "previous close" if range_ == "1d" else "start of range"
     return {"symbol": sym, "range": range_, "candles": [c.to_dict() for c in out], "reference": ref,
             "reference_label": label}
+
+
+MIN_1D_CANDLES = 30        # fewer (early pre-market): show the previous session too
+
+
+def _with_previous_session(sym: str, today: list[Candle], meta: dict, get) -> list[Candle]:
+    """Early in the morning today's chart has a few pre-market bars; prepend the last session so
+    the chart isn't empty. The reference line stays at the previous close."""
+    try:
+        data = get(market.YAHOO_CHART.format(symbol=sym), params={"range": "5d", "interval": "5m", "includePrePost": "true"},
+                   ttl=300)
+        older = parse_yahoo_candles(data["chart"]["result"][0])
+    except (http.DataUnavailable, KeyError, IndexError, TypeError):
+        return today
+    offset = int(meta.get("gmtoffset") or 0)
+    day = lambda c: datetime.fromtimestamp(c.t + offset, timezone.utc).date()  # noqa: E731
+    first_today = today[0].t if today else None
+    prior = [c for c in older if first_today is None or c.t < first_today]
+    if not prior:
+        return today
+    last_day = day(prior[-1])
+    return [c for c in prior if day(c) == last_day] + today
 
 
 def _iso(ts: float) -> str:

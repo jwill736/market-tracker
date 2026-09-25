@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 import re
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -304,7 +304,8 @@ def check_mainstream(merged: list[Merged], now: datetime, news_fn=None, limit: i
 # ------------------------------------------------------------------ assembled
 
 def gather(*, get=http.get, now: datetime | None = None, known_pairs: set[str] | None = None,
-           quote_fn=market.get_quote, tickers_fn=radar.cik_to_ticker) -> tuple[list[Signal], list[str], set[str]]:
+           quote_fn=market.get_quote, tickers_fn=radar.cik_to_ticker,
+           deadline: float = 45.0) -> tuple[list[Signal], list[str], set[str]]:
     now = now or datetime.now(timezone.utc)
     errors: list[str] = []
     out: list[Signal] = []
@@ -324,17 +325,25 @@ def gather(*, get=http.get, now: datetime | None = None, known_pairs: set[str] |
         "Reddit crypto": lambda: apewisdom_signals(get(APEWISDOM.format(filter="all-crypto"), headers=browser, ttl=300),
                                                    crypto=True, min_mentions=5),
         "GlobeNewswire": lambda: wire_signals(parse_feed(get(GLOBENEWSWIRE, headers={"User-Agent": BROWSER_UA}, ttl=120,
-                                                             as_json=False, timeout=40)), "GlobeNewswire"),
+                                                             as_json=False, timeout=25, retries=0)),
+                                       "GlobeNewswire"),
         "Wires via Google": lambda: wire_signals(google_wire_items(get), "Press release"),
         "CoinGecko": lambda: coingecko_signals(get(COINGECKO_TRENDING, headers=browser, ttl=300)),
         "Binance": lambda: binance_signals(get(BINANCE_LISTINGS, headers=browser, ttl=300), now),
         "SEC 8-K": lambda: filing_signals(radar.fetch_feed("8-K", 100, get), tickers_fn()),
         "Stablecoins": lambda: depeg_signals(quote_fn),
     }
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {name: pool.submit(attempt, name, fn) for name, fn in tasks.items()}
-        for f in futures.values():
+    # One slow source must not hold up the rest: whatever isn't back by the deadline is reported
+    # and skipped this round (its thread finishes in the background and warms the cache).
+    pool = ThreadPoolExecutor(max_workers=len(tasks))
+    futures = {name: pool.submit(attempt, name, fn) for name, fn in tasks.items()}
+    done, _ = wait(futures.values(), timeout=deadline)
+    for name, f in futures.items():
+        if f in done:
             out += f.result() or []
+        else:
+            errors.append(f"{name}: slow to answer, skipped this round")
+    pool.shutdown(wait=False)
     got = attempt("Coinbase listings", lambda: coinbase_new_pairs(get(COINBASE_PRODUCTS, ttl=300), pairs))
     if got:
         new, pairs = got

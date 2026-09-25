@@ -237,7 +237,7 @@ def _():
 def _():
     a = charts.candles("AAPL", "1d")
     b = charts.candles("BTC-USD", "1w")
-    assert len(a["candles"]) > 10 and a["candles"][-1]["v"] >= 0 and len(b["candles"]) > 50, (len(a["candles"]), len(b["candles"]))
+    assert len(a["candles"]) >= charts.MIN_1D_CANDLES and a["candles"][-1]["v"] >= 0 and len(b["candles"]) > 50, (len(a["candles"]), len(b["candles"]))
     return f"AAPL {len(a['candles'])} 5-min candles (prev close {a['reference']}); BTC {len(b['candles'])} hourly"
 
 

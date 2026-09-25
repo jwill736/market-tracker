@@ -164,3 +164,24 @@ def test_build_and_endpoints(monkeypatch):
     monkeypatch.setattr(sentinel, "date", type("D", (), {"today": staticmethod(lambda: date(2026, 9, 2))}))
     assert sentinel.people_headsups() == 1 and sent[0].title == "Rep. Nancy Pelosi: Buy AAA"
     assert c.delete("/api/people/follow", params={"who": "Rep. Nancy Pelosi"}).json() == {}
+
+
+def test_stale_ark_file_is_rediscovered_or_skipped():
+    old = ARK_DAY1.replace("09/24/2026", "01/02/2026").replace("ARKK", "ARKF")
+    fresh = ARK_DAY2.replace("ARKK", "ARKF")
+
+    def get(url, **kw):
+        if "ARKF" in url:
+            return fresh if "NEW_NAME" in url else old
+        if "/funds/arkf" in url:
+            return '<a href="https://assets.ark-funds.com/fund-documents/funds-etf-csv/ARK_NEW_NAME_ETF_ARKF_HOLDINGS.csv">'
+        if "/funds/" in url:
+            return "<html></html>"
+        return ARK_DAY2
+    got = people.fetch_ark(get)
+    assert got["ARKF"][0] == "2026-09-25" and not people.stale_funds(got)
+
+    def get_no_link(url, **kw):
+        return "<html></html>" if "/funds/" in url else (old if "ARKF" in url else ARK_DAY2)
+    got = people.fetch_ark(get_no_link)
+    assert people.stale_funds(got) == ["ARKF"]

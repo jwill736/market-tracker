@@ -107,6 +107,20 @@ def ark_trades(fund: str, prev_day: str, prev: dict, day: str, cur: dict, min_ch
     return out
 
 
+ARK_FUND_PAGE = "https://www.ark-funds.com/funds/{fund}"
+STALE_DAYS = 7
+
+
+def _discover_ark_file(fund: str, get) -> str | None:
+    """The holdings CSV the fund's own page links to (ARK renames files when a fund is renamed)."""
+    try:
+        page = get(ARK_FUND_PAGE.format(fund=fund.lower()), headers={"User-Agent": BROWSER_UA}, ttl=86400, as_json=False)
+    except http.DataUnavailable:
+        return None
+    m = re.search(r"funds-etf-csv/([^\"'?<>\s]*" + fund + r"[^\"'?<>\s]*\.csv)", page)
+    return m.group(1) if m else None
+
+
 def fetch_ark(get=http.get) -> dict[str, tuple[str, dict]]:
     out = {}
     for fund, file in ARK_FUNDS.items():
@@ -115,7 +129,25 @@ def fetch_ark(get=http.get) -> dict[str, tuple[str, dict]]:
                                           as_json=False))
         except http.DataUnavailable:
             continue
+    newest = max((d for d, _ in out.values() if d), default="")
+    for fund in stale_funds(out, newest):          # a file left behind: look for the one the fund page links
+        found = _discover_ark_file(fund, get)
+        if found and found != ARK_FUNDS[fund]:
+            try:
+                out[fund] = parse_ark_csv(get(ARK_URL.format(file=found), headers={"User-Agent": BROWSER_UA},
+                                              ttl=3600, as_json=False))
+            except http.DataUnavailable:
+                pass
     return out
+
+
+def stale_funds(got: dict[str, tuple[str, dict]], newest: str | None = None) -> list[str]:
+    """Funds whose file is more than STALE_DAYS behind the newest one (diffing it would show nothing)."""
+    newest = newest or max((d for d, _ in got.values() if d), default="")
+    if not newest:
+        return []
+    cutoff = (date.fromisoformat(newest) - timedelta(days=STALE_DAYS)).isoformat()
+    return [f for f, (d, _) in got.items() if not d or d < cutoff]
 
 
 # ------------------------------------------------------------------ Congress: House
@@ -370,7 +402,12 @@ def ark_moves_stored(get=http.get) -> tuple[list[Move], dict[str, str]]:
     from . import db
     moves: list[Move] = []
     status: dict[str, str] = {}
-    for fund, (day, rows) in fetch_ark(get).items():
+    got = fetch_ark(get)
+    stale = set(stale_funds(got))
+    for fund, (day, rows) in got.items():
+        if fund in stale:
+            status[fund] = f"ARK's file is dated {day or 'unknown'}; skipped until it updates"
+            continue
         if not day or not rows:
             continue
         with db.connect() as conn:

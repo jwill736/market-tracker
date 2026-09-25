@@ -119,3 +119,26 @@ def test_early_endpoint_logs_first_sighting_once(monkeypatch):
     assert len(c.get("/api/early").json()["history"]) == 1               # logged once a day
     assert sentinel.early_headsups(d) == 1 and sentinel.early_headsups(d) == 0
     assert "not in the mainstream yet" in sent[0].title
+
+
+def test_gather_skips_a_source_that_hangs():
+    import threading
+    import time
+
+    from market_tracker import http
+    release = threading.Event()
+
+    def get(url, **kw):
+        if "globenewswire" in url:
+            release.wait(5)                     # a wire that never answers in time
+            raise http.DataUnavailable("late")
+        if "stocktwits" in url:
+            return STOCKTWITS
+        raise http.DataUnavailable("blocked")
+
+    t0 = time.monotonic()
+    sigs, errors, _ = early.gather(get=get, now=NOW, quote_fn=lambda s: (_ for _ in ()).throw(http.DataUnavailable("x")),
+                                   tickers_fn=lambda: {}, deadline=0.5)
+    release.set()
+    assert time.monotonic() - t0 < 3 and "AMD" in {s.symbol for s in sigs}
+    assert "GlobeNewswire: slow to answer, skipped this round" in errors

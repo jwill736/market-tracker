@@ -74,6 +74,24 @@ def test_candles_for_a_stock_uses_previous_close_on_1d():
     assert d["reference"] == 99.0 and len(d["candles"]) == 2 and d["candles"][1]["c"] == 102
 
 
+def test_early_premarket_1d_keeps_the_last_session():
+    day = 86400
+    today0 = MONDAY + day + 8 * 3600                     # Tue 08:00 UTC, pre-market
+    def chart(ts):
+        n = len(ts)
+        return {"chart": {"result": [{"timestamp": ts, "meta": {"chartPreviousClose": 50.0, "gmtoffset": -14400},
+                                      "indicators": {"quote": [{"open": [1.0] * n, "high": [2.0] * n, "low": [0.5] * n,
+                                                                "close": [1.5] * n, "volume": [1] * n}]}}]}}
+    friday = [MONDAY - 3 * day + 14 * 3600 + i * 300 for i in range(5)]
+    monday = [MONDAY + 14 * 3600 + i * 300 for i in range(40)]
+    today = [today0 + i * 300 for i in range(3)]
+
+    def get(url, params=None, **kw):
+        return chart(today) if params["range"] == "1d" else chart(friday + monday + today)
+    d = charts.candles("AAPL", "1d", get=get)
+    assert [c["t"] for c in d["candles"]] == monday + today and d["reference"] == 50.0
+
+
 def test_sparklines_downsample():
     pts = [{"t": i, "p": float(i)} for i in range(500)]
     out = charts.sparklines(["AAA", "BAD"], intraday_fn=lambda s, r: {"points": pts, "reference": 1.0} if s == "AAA"

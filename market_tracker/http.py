@@ -52,11 +52,12 @@ RETRIES = 3  # attempts after the first, for timeouts, connection errors, 429 an
 
 
 def _request(url: str, *, params: dict | None = None, headers: dict | None = None,
-             timeout: float | None = None) -> httpx.Response:
+             timeout: float | None = None, retries: int | None = None) -> httpx.Response:
     """GET with throttling, and retries with backoff for transient failures. SEC EDGAR in
     particular answers bursts with 503s; a 404 or 403 is final and raised immediately."""
     host = urlparse(url).hostname or ""
-    for attempt in range(RETRIES + 1):
+    retries = RETRIES if retries is None else retries
+    for attempt in range(retries + 1):
         _throttle(host)
         try:
             kwargs = {"params": params, "headers": headers}
@@ -70,7 +71,7 @@ def _request(url: str, *, params: dict | None = None, headers: dict | None = Non
         except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             transient = status is None or status == 429 or status >= 500
-            if not transient or attempt == RETRIES:
+            if not transient or attempt == retries:
                 raise DataUnavailable(f"{url}: {exc}") from exc
             time.sleep(_BACKOFF * 2 ** attempt)
     raise AssertionError("unreachable")
@@ -80,15 +81,17 @@ _BACKOFF = 1.0
 
 
 def get(url: str, *, params: dict | None = None, headers: dict | None = None,
-        ttl: float = 60.0, as_json: bool = True, timeout: float | None = None) -> Any:
-    """GET a URL, returning parsed JSON (or text). Results are cached for `ttl` seconds."""
+        ttl: float = 60.0, as_json: bool = True, timeout: float | None = None,
+        retries: int | None = None) -> Any:
+    """GET a URL, returning parsed JSON (or text). Results are cached for `ttl` seconds.
+    `retries` overrides how many times a transient failure is retried (default RETRIES)."""
     key = url + "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
     now = time.time()
     with _cache_lock:
         hit = _cache.get(key)
         if hit and hit[0] > now:
             return hit[1]
-    resp = _request(url, params=params, headers=headers, timeout=timeout)
+    resp = _request(url, params=params, headers=headers, timeout=timeout, retries=retries)
     try:
         data = resp.json() if as_json else resp.text
     except ValueError as exc:
