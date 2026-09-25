@@ -22,6 +22,24 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+// Company logos (served by this app from its own cache) and names, next to tickers everywhere.
+const Names = {
+  map: {}, pending: new Set(), timer: null,
+  want(syms) {
+    syms.forEach((s) => { if (s && !(s in this.map)) this.pending.add(s); });
+    if (this.pending.size && !this.timer) this.timer = setTimeout(() => this.flush(), 60);
+  },
+  async flush() {
+    const list = [...this.pending]; this.pending.clear(); this.timer = null;
+    try { Object.assign(this.map, await api("/api/names?symbols=" + encodeURIComponent(list.join(",")))); } catch { /* names are a nicety */ }
+    list.forEach((s) => { if (!(s in this.map)) this.map[s] = ""; });
+    document.querySelectorAll("[data-name]").forEach((el) => { const n = this.map[el.dataset.name]; if (n && el.textContent !== n) el.textContent = n; });
+  },
+};
+const logoImg = (sym, size = 28) => `<img class="logo" src="/api/logo/${encodeURIComponent(sym)}" width="${size}" height="${size}" alt="" loading="lazy" decoding="async">`;
+const nameOf = (sym) => { Names.want([sym]); return `<span class="tk-name" data-name="${esc(sym)}">${esc(Names.map[sym] || "")}</span>`; };
+const tick = (sym, size = 18) => `<span class="tk">${logoImg(sym, size)}<b>${esc(sym.replace(/-USD$/, ""))}</b></span>`;
+
 const tooltip = $("#tooltip");
 function showTip(evt, html) {
   tooltip.innerHTML = html;
@@ -40,6 +58,8 @@ let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(btn.dataset.tab)));
 function selectTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  const cur = document.querySelector(`#tabs button[data-tab="${name}"]`);
+  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });   // keeps the chosen tab visible in the phone's scrolling row
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   if (name === "portfolio") loadPortfolio();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
@@ -546,7 +566,7 @@ function refreshTape() {
   const syms = [...new Set([...held, ...watchlist])];
   Live.want("tape", syms);
   $("#tape").innerHTML = syms.map((s) => `<button class="tape-item${held.includes(s) ? " held" : ""}" data-sym="${esc(s)}" title="${held.includes(s) ? "You own this" : "Watchlist"}">
-      <span class="t-sym">${esc(s.replace(/-USD$/, ""))}</span><span class="t-price">—</span><span class="t-chg"></span></button>`).join("")
+      ${logoImg(s, 16)}<span class="t-sym">${esc(s.replace(/-USD$/, ""))}</span><span class="t-price">—</span><span class="t-chg"></span></button>`).join("")
     || `<span class="muted small">Add symbols to your watchlist or import your holdings to see them here.</span>`;
   $("#tape").querySelectorAll("[data-sym]").forEach((b) => b.addEventListener("click", () => openSymbol(b.dataset.sym)));
   syms.forEach((s) => Live.prices[s] && paintTape(Live.prices[s]));
@@ -576,7 +596,7 @@ async function openSymbol(raw) {
   if (!sym) return;
   Object.assign(symState, { sym, range: "1d", points: [], reference: null, analysis: null });
   selectTab("symbol");
-  $("#sym-name").textContent = sym;
+  $("#sym-name").innerHTML = `${logoImg(sym, 36)}<span>${esc(sym)}</span> ${nameOf(sym)}`;
   $("#sym-price").textContent = Live.prices[sym] ? fmtMoney(Live.prices[sym].price) : "—";
   $("#sym-change").textContent = ""; $("#sym-src").textContent = "";
   document.querySelectorAll("#tab-symbol .range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === "1d")));
@@ -758,6 +778,8 @@ function renderPosition() {
     <tr><td>Average cost</td><td class="num">${fmtMoney(h.avg_cost)}</td></tr>
     <tr><td>Market value</td><td class="num">${fmtMoney(value)}</td></tr>
     <tr><td>Total return</td><td class="num ${cls(pnl)}">${fmtMoney(pnl)} ${h.cost_basis ? `(${fmtPct(pnl / h.cost_basis * 100)})` : ""}</td></tr>
+    ${Object.keys(h.by_account || {}).length > 1 || Object.keys(h.by_account || {})[0] ? `<tr><td>Where</td><td class="num">${Object.entries(h.by_account).map(([a, q]) =>
+      `${esc(a || "Unlabeled")} ${q.toLocaleString(undefined, { maximumFractionDigits: 6 })}`).join(" · ")}</td></tr>` : ""}
   </tbody></table>`;
 }
 
@@ -1498,7 +1520,7 @@ function drawHome() {
 let homeTimer = null;
 Live.onTick((t) => {
   if (currentTab() !== "home" || !Book.has(t.symbol) || homeState.hover) return;
-  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = null; if (homeState.range === "1d") drawHome(); else if (homeState.data) paintHomeHeader(Book.totals().value || homeState.data.end); }, 700);
+  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = null; renderAccounts(); if (homeState.range === "1d") drawHome(); else if (homeState.data) paintHomeHeader(Book.totals().value || homeState.data.end); }, 700);
 });
 
 function sparkSvg(sym, w = 72, h = 28) {
@@ -1511,11 +1533,54 @@ function sparkSvg(sym, w = 72, h = 28) {
 }
 function rhRow(sym, sub) {
   const s = esc(sym);
-  return `<button type="button" class="rh-row" data-open="${s}">
-    <span class="rh-sym"><b>${esc(sym.replace(/-USD$/, ""))}</b><span class="muted small">${sub}</span></span>
+  return `<button type="button" class="rh-row" data-open="${s}">${logoImg(sym, 32)}
+    <span class="rh-sym"><span class="rh-top"><b>${esc(sym.replace(/-USD$/, ""))}</b> ${nameOf(sym)}</span><span class="muted small">${sub}</span></span>
     <span class="rh-spark" data-spark="${s}">${sparkSvg(sym)}</span>
     <span class="rh-pill" data-live="${s}" data-lf="pill">${Live.prices[sym] ? fmtMoney(Live.prices[sym].price) : "—"}</span></button>`;
 }
+// ---------------------------------------------------------------- accounts
+let acctData = null;
+async function loadAccounts() {
+  try { acctData = await api("/api/accounts"); } catch (err) { $("#home-accounts").innerHTML = `<p class="muted small">${esc(err.message)}</p>`; return; }
+  renderAccounts();
+}
+function renderAccounts() {
+  if (!acctData) return;
+  const ICON = { Robinhood: "robinhood", Coinbase: "coinbase", Stash: "stash" };
+  const rows = acctData.accounts.map((a) => {
+    let value = 0, priced = true;
+    a.positions.forEach((p) => { const t = Live.prices[p.symbol]; if (t) value += p.quantity * t.price; else { priced = false; value += p.cost; } });
+    const how = a.auto ? a.auto.how : Object.keys(a.sources).join(" + ");
+    const last = a.auto && a.auto.last ? `synced ${new Date(a.auto.last.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+      : a.last_trade ? `latest trade ${a.last_trade}` : "";
+    const action = a.name === "Coinbase" && acctData.connections.coinbase_api ? `<button type="button" class="ghost small" data-acct-sync="coinbase">Sync now</button>`
+      : a.auto && a.auto.how.startsWith("SnapTrade") ? `<button type="button" class="ghost small" data-acct-sync="snaptrade">Sync now</button>`
+      : `<button type="button" class="ghost small" data-acct-import="${esc(a.name === "Robinhood" ? "robinhood" : a.name === "Coinbase" ? "coinbase" : "holdings")}">Update</button>`;
+    return `<div class="acct-row">
+      <div class="acct-top"><span class="acct-badge acct-${ICON[a.name] || "other"}">${esc(a.name.slice(0, 1))}</span><b>${esc(a.name)}</b>
+        <span class="acct-value">${fmtMoney(value, 0)}${priced ? "" : "*"}</span></div>
+      <div class="muted small">${a.positions.length} holding${a.positions.length === 1 ? "" : "s"} · ${esc(how)}${last ? " · " + esc(last) : ""}</div>
+      <div class="acct-logos">${a.positions.slice(0, 8).map((p) => `<span title="${esc(p.symbol)} ${fmtShares(p.quantity)}">${logoImg(p.symbol, 20)}</span>`).join("")}${a.positions.length > 8 ? `<span class="muted small">+${a.positions.length - 8}</span>` : ""}</div>
+      <div class="small ${a.auto && a.auto.last && !a.auto.last.ok ? "down" : "muted"}">${esc(a.advice)}</div>
+      <div>${action}</div></div>`;
+  });
+  $("#home-accounts").innerHTML = rows.join("") || `<p class="muted small">No accounts yet: Portfolio → Import your accounts.</p>`;
+  $("#home-acct-meta").textContent = acctData.connections.snaptrade ? "SnapTrade connected" : "";
+  document.querySelectorAll("[data-acct-import]").forEach((b) => b.addEventListener("click", () => {
+    selectTab("portfolio");
+    const seg = document.querySelector(`#imp-seg button[data-src="${b.dataset.acctImport}"]`);
+    if (seg) { seg.click(); seg.scrollIntoView({ block: "center" }); }
+  }));
+  document.querySelectorAll("[data-acct-sync]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true; b.textContent = "Syncing…";
+    try {
+      const r = await api(`/api/sync/${b.dataset.acctSync}`, { method: "POST" });
+      b.textContent = `${r.new} new`;
+      loadHoldings(); loadAccounts();
+    } catch (err) { b.textContent = "Failed"; b.title = err.message; }
+  }));
+}
+
 function renderHomeLists() {
   const stocks = holdingsList.filter((h) => !isCryptoSym(h.symbol)), crypto = holdingsList.filter((h) => isCryptoSym(h.symbol));
   const shares = (h) => `${h.quantity.toLocaleString(undefined, { maximumFractionDigits: isCryptoSym(h.symbol) ? 6 : 4 })} ${isCryptoSym(h.symbol) ? "" : "shares"}${(h.accounts || []).length ? " · " + h.accounts.join(", ") : ""}`;
@@ -1525,6 +1590,8 @@ function renderHomeLists() {
   $("#home-watch").innerHTML = watchlist.filter((w) => !held.has(w)).map((w) => rhRow(w, "")).join("") || `<p class="muted small">Add symbols from any page with Watch.</p>`;
   document.querySelectorAll("#tab-home .rh-row").forEach((b) => b.addEventListener("click", () => openSymbol(b.dataset.open)));
   bindLive("home", $("#tab-home"));
+  if (!acctData || Date.now() - (acctData._at || 0) > 60000) loadAccounts().then(() => { if (acctData) acctData._at = Date.now(); });
+  else renderAccounts();
   const syms = [...new Set([...holdingsList.map((h) => h.symbol), ...watchlist])];
   if (syms.length && Date.now() - homeState.sparksAt > 120000) {
     homeState.sparksAt = Date.now();
@@ -1814,7 +1881,7 @@ function holdRow(h) {
   const e = h.earnings;
   return `<div class="card hp-row ${VERDICT_CLASS[h.verdict]}">
     <div class="pc-head"><span class="act">${esc(h.verdict)}</span>
-      <button type="button" class="linkish pc-sym" data-open="${s}">${esc(h.symbol.replace(/-USD$/, ""))}</button>
+      ${logoImg(h.symbol, 28)}<button type="button" class="linkish pc-sym" data-open="${s}">${esc(h.symbol.replace(/-USD$/, ""))}</button> ${nameOf(h.symbol)}
       <span class="pc-price" data-live="${s}" data-lf="price">${fmtMoney(h.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
       <span class="muted small pc-w"><b data-live="${s}" data-lf="value" data-qty="${h.quantity}">${fmtMoney(h.value, 0)}</b> · ${(h.weight * 100).toFixed(1)}% of portfolio${h.cost_pct != null ? ` · <span class="${cls(h.cost_pct)}">${fmtPct(h.cost_pct, 0)}</span> from cost` : ""}</span></div>
     ${trig.length ? `<ul class="pc-why">${trig.map((x) => `<li class="t-${esc(x.level)}">${esc(x.text)}</li>`).join("")}</ul>` : `<p class="muted small">Nothing says otherwise: holding is the plan.</p>`}
@@ -1832,7 +1899,7 @@ function renderHold() {
   $("#hp-cap").value = Math.round(d.rules.cap * 100); $("#hp-st").value = Math.round(d.rules.short_term_rate * 100); $("#hp-lt").value = Math.round(d.rules.long_term_rate * 100);
   $("#hp-list").innerHTML = d.holdings.map(holdRow).join("");
   $("#hp-freed").textContent = d.freed ? `${fmtMoney(d.freed, 0)} to place (trims + buying power)` : "";
-  $("#hp-reinvest").innerHTML = d.reinvest.map((q) => `<li><button type="button" class="linkish" data-open="${esc(q.symbol)}"><b>${esc(q.symbol)}</b></button>
+  $("#hp-reinvest").innerHTML = d.reinvest.map((q) => `<li><button type="button" class="linkish" data-open="${esc(q.symbol)}">${tick(q.symbol)}</button>
       ${q.amount ? `<b>${fmtMoney(q.amount, 0)}</b> ` : ""}<span class="muted small">${esc(q.why)}</span></li>`).join("");
   const ev = d.events || { earnings: [], macro: [] };
   $("#hp-events").innerHTML = [...ev.earnings.map((e) => `<li><b>${esc(e.date)}</b> <button type="button" class="linkish" data-open="${esc(e.symbol)}">${esc(e.symbol)}</button> earnings${e.estimated ? " (estimated)" : ""}
@@ -1917,10 +1984,10 @@ async function loadIncome(force = false) {
   const max = Math.max(...d.months.map((m) => m.amount), 1);
   $("#in-months").innerHTML = d.months.map((m) => `<div class="in-month"><span class="muted small">${esc(new Date(m.month + "-15").toLocaleString(undefined, { month: "short" }))}</span>
     <span class="in-bar"><span style="width:${(m.amount / max * 100).toFixed(1)}%"></span></span><b>${fmtMoney(m.amount, m.amount && m.amount < 10 ? 2 : 0)}</b></div>`).join("");
-  $("#in-upcoming").innerHTML = d.upcoming.map((u) => `<li><b>${esc(u.ex_date)}</b> <button type="button" class="linkish" data-open="${esc(u.symbol)}">${esc(u.symbol)}</button>
+  $("#in-upcoming").innerHTML = d.upcoming.map((u) => `<li><b>${esc(u.ex_date)}</b> <button type="button" class="linkish" data-open="${esc(u.symbol)}">${tick(u.symbol)}</button>
     about <b>${fmtMoney(u.amount, 2)}</b> <span class="muted small">(${fmtMoney(u.per_share, 4)} a share${u.pay_date ? `, paid ${esc(u.pay_date)}` : ""}${u.estimated ? ", date estimated from past spacing" : ", declared"})</span></li>`).join("")
     || `<li class="muted">None of your holdings pays a regular dividend.</li>`;
-  $("#in-rows").innerHTML = d.holdings.map((h) => `<tr><td><button type="button" class="linkish" data-open="${esc(h.symbol)}">${esc(h.symbol)}</button></td>
+  $("#in-rows").innerHTML = d.holdings.map((h) => `<tr><td><button type="button" class="linkish" data-open="${esc(h.symbol)}">${tick(h.symbol)}</button></td>
     <td>${h.per_share != null ? `${fmtMoney(h.per_share, 4)} ×${h.per_year}` : "—"}</td><td><b>${fmtMoney(h.annual_income, 2)}</b></td>
     <td>${h.yield_on_cost != null ? h.yield_on_cost.toFixed(2) + "%" : "—"}</td><td>${h.current_yield != null ? h.current_yield.toFixed(2) + "%" : "—"}</td>
     <td>${fmtMoney(h.paid_12m, 2)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No dividend payers among your holdings.</td></tr>`;
@@ -1937,7 +2004,7 @@ $("#nm-form").addEventListener("submit", async (e) => {
   out.innerHTML = `<li class="muted">Working it out…</li>`;
   try {
     const d = await api("/api/holdplan/newmoney?amount=" + encodeURIComponent(+$("#nm-amount").value));
-    out.innerHTML = d.buys.map((b) => `<li><b>${fmtMoney(b.amount, 2)}</b> → <button type="button" class="linkish" data-open="${esc(b.symbol)}"><b>${esc(b.symbol)}</b></button>
+    out.innerHTML = d.buys.map((b) => `<li><b>${fmtMoney(b.amount, 2)}</b> → <button type="button" class="linkish" data-open="${esc(b.symbol)}">${tick(b.symbol)}</button>
         ${b.shares != null ? `<span class="muted small">≈ ${fmtShares(b.shares)} sh</span>` : ""}
         <span class="muted small">${esc(b.why)}${b.weight_now != null ? ` · ${(b.weight_now * 100).toFixed(1)}% → ${(b.weight_after * 100).toFixed(1)}%` : ""}</span></li>`).join("")
       + d.skipped.map((x) => `<li class="muted small">Not ${esc(x.symbol)}: ${esc(x.why)}</li>`).join("")

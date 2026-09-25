@@ -250,6 +250,23 @@ minutes per portfolio) return the same data as JSON.
   with cost basis and reports balances the ledger can't explain), Stash and anything else (type holdings once), or
   **Automatic** sync through SnapTrade (below).
 
+### How each account reaches the app
+
+Home → **Accounts** shows each account's holdings and value, how its data gets here, and how fresh it is. Every
+symbol page says which accounts hold it ("Robinhood 40 · Stash 2").
+
+| Account | Today | Automatic option |
+|---|---|---|
+| Robinhood | Account-activity CSV (trades, splits, dividends, interest). Newer trades appear when you import again | SnapTrade (paid) |
+| Coinbase | Transaction CSV, or a free **View-only API key**: then it syncs itself every 6 hours | Built in (free key) |
+| Stash | Typed in by hand: Stash has no export or API. Auto-invest and reinvested dividends change it without telling the app, so update it after each statement | SnapTrade, if it supports Stash (check their list) |
+
+Syncs that are set up run in the background (Coinbase every 6 hours, SnapTrade twice a day) and raise a heads-up
+when they bring in something new; a failed sync shows its error on the Accounts card.
+
+Robinhood's and Stash's own logins aren't used: neither offers an API for individuals, and tools that log in as you
+with your password and 2FA break the brokers' terms and put your account at risk.
+
 ### Automatic account sync (SnapTrade)
 
 SnapTrade connects to brokers for you, so trades, reinvested dividends, dividends and interest arrive without CSVs.
@@ -266,6 +283,13 @@ It's a paid service; a **personal API key** covers your own accounts.
 Check SnapTrade's current broker list for Stash before relying on it; if it isn't there, keep typing Stash holdings once.
 The sync's request signing is tested against SnapTrade's own SDK, but it hasn't run against a real account yet: the
 first sync with your key is the real test, and any error it shows is SnapTrade's own message.
+
+### Logos and names
+
+Every ticker shows its company logo and name. The app fetches each logo once (Financial Modeling
+Prep's public images or Parqet for stocks and funds, the cryptocurrency-icons set or CoinGecko for coins) and keeps it in
+`logo_cache/` next to the database; your browser only ever talks to this app, so no logo service sees what you look at.
+A ticker with no logo gets its first letter on a colored circle.
 
 ## Early wire (before the mainstream)
 

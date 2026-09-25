@@ -440,3 +440,34 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .in-bar span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
 .in-table td, .in-table th { text-align: right; white-space: nowrap; }
 .in-table td:first-child, .in-table th:first-child { text-align: left; }
+
+/* logos and names next to tickers */
+img.logo { border-radius: 50%; object-fit: contain; background: #fff; flex: none; vertical-align: middle; box-shadow: 0 0 0 1px var(--grid); }
+.tk { display: inline-flex; align-items: center; gap: 6px; }
+.tk-name { color: var(--muted); font-size: 12px; font-weight: 400; }
+.rh-row { grid-template-columns: 32px minmax(0, 1fr) 76px auto; }
+.rh-top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.rh-top .tk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tape-item img.logo { align-self: center; }
+.pc-head img.logo { align-self: center; }
+.sym-name { display: flex; align-items: center; gap: 10px; }
+.sym-name .tk-name { font-size: 14px; }
+
+/* accounts card */
+.acct-row { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--grid); }
+.acct-row:first-child { border-top: 0; }
+.acct-top { display: flex; align-items: center; gap: 8px; }
+.acct-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.acct-badge { width: 22px; height: 22px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--axis); }
+.acct-robinhood { background: #1f9d3a; } .acct-coinbase { background: #1652f0; } .acct-stash { background: #6c3cdf; }
+.acct-logos { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+button.small { font-size: 12px; padding: 3px 8px; }
+
+/* phones: one scrollable row of tabs, so the sticky header stays short */
+@media (max-width: 720px) {
+  .topbar { gap: 8px 12px; padding: 8px 12px; }
+  nav#tabs { flex-wrap: nowrap; overflow-x: auto; width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(90deg, #000 90%, transparent); }
+  nav#tabs::-webkit-scrollbar { display: none; }
+  nav#tabs button { flex: none; white-space: nowrap; padding: 6px 9px; }
+}

@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, cryptoradar, dividends, early, events, fundamentals, http, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, cryptoradar, dividends, early, events, fundamentals, http, logos, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -362,6 +362,17 @@ def _():
     denied = httpx.get(snaptrade.HOST + "/accounts", timeout=20)
     assert denied.status_code in (401, 403), denied.status_code
     return f"online (API version {up.json().get('version')}); /accounts without a key: {denied.status_code}"
+
+
+@check("Logos and names: AAPL, VOO, SUI; unknown ticker falls back")
+def _():
+    got = {s: logos.fetch_logo(s) for s in ("AAPL", "VOO", "SUI-USD", "ZZZZQ")}
+    for s in ("AAPL", "VOO", "SUI-USD"):
+        assert got[s] and got[s][1].startswith("image/") and len(got[s][0]) > 200, (s, got[s] and got[s][1])
+    assert got["ZZZZQ"] is None, "an unknown ticker should have no logo (the app draws a letter instead)"
+    assert logos.lookup_name("SUI-USD") == "Sui"
+    assert "Apple" in logos.lookup_name("AAPL")
+    return ", ".join(f"{s} {len(v[0]):,} B {v[1]}" for s, v in got.items() if v) + f"; names: AAPL = {logos.lookup_name('AAPL')}, VOO = {logos.lookup_name('VOO') or '(none)'}"
 
 
 def main() -> int:
