@@ -48,6 +48,37 @@ def _throttle(host: str) -> None:
         _last_request[host] = time.monotonic()
 
 
+RETRIES = 3  # attempts after the first, for timeouts, connection errors, 429 and 5xx
+
+
+def _request(url: str, *, params: dict | None = None, headers: dict | None = None,
+             timeout: float | None = None) -> httpx.Response:
+    """GET with throttling, and retries with backoff for transient failures. SEC EDGAR in
+    particular answers bursts with 503s; a 404 or 403 is final and raised immediately."""
+    host = urlparse(url).hostname or ""
+    for attempt in range(RETRIES + 1):
+        _throttle(host)
+        try:
+            kwargs = {"params": params, "headers": headers}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            resp = client().get(url, **kwargs)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise httpx.HTTPStatusError(f"{resp.status_code}", request=resp.request, response=resp)
+            resp.raise_for_status()
+            return resp
+        except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            transient = status is None or status == 429 or status >= 500
+            if not transient or attempt == RETRIES:
+                raise DataUnavailable(f"{url}: {exc}") from exc
+            time.sleep(_BACKOFF * 2 ** attempt)
+    raise AssertionError("unreachable")
+
+
+_BACKOFF = 1.0
+
+
 def get(url: str, *, params: dict | None = None, headers: dict | None = None,
         ttl: float = 60.0, as_json: bool = True) -> Any:
     """GET a URL, returning parsed JSON (or text). Results are cached for `ttl` seconds."""
@@ -57,12 +88,10 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None,
         hit = _cache.get(key)
         if hit and hit[0] > now:
             return hit[1]
-    _throttle(urlparse(url).hostname or "")
+    resp = _request(url, params=params, headers=headers)
     try:
-        resp = client().get(url, params=params, headers=headers)
-        resp.raise_for_status()
         data = resp.json() if as_json else resp.text
-    except (httpx.HTTPError, ValueError) as exc:
+    except ValueError as exc:
         raise DataUnavailable(f"{url}: {exc}") from exc
     if ttl > 0:  # ttl <= 0: one-off download (e.g. a 10 MB 13F table) - don't hold it in memory
         with _cache_lock:
@@ -72,13 +101,7 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None,
 
 def get_bytes(url: str, *, headers: dict | None = None, timeout: float = 180.0) -> bytes:
     """Uncached binary download (bulk data files), throttled like `get`."""
-    _throttle(urlparse(url).hostname or "")
-    try:
-        resp = client().get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise DataUnavailable(f"{url}: {exc}") from exc
-    return resp.content
+    return _request(url, headers=headers, timeout=timeout).content
 
 
 def clear_cache() -> None:
