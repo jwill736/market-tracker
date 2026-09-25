@@ -364,3 +364,80 @@ def build(mine: set[str], *, gather_fn=None, news_fn=None, now: datetime | None 
     merged.sort(key=lambda m: (not m.yours, not m.early, -m.strength))
     return {"generated_at": now.isoformat(timespec="seconds"), "signals": [asdict(m) for m in merged[:80]],
             "errors": errors, "pairs": sorted(pairs), "mainstream_max": MAINSTREAM_MAX}
+
+
+# ------------------------------------------------------------------ scorecard
+
+def _median(xs: list[float]) -> float | None:
+    xs = sorted(xs)
+    if not xs:
+        return None
+    mid = len(xs) // 2
+    return xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2
+
+
+def _summary(rows: list[dict]) -> dict:
+    ex = [r["excess_pct"] for r in rows]
+    return {"count": len(rows), "median_excess_pct": _median(ex),
+            "mean_excess_pct": (sum(ex) / len(ex)) if ex else None,
+            "hit_rate": (sum(1 for x in ex if x > 0) / len(ex)) if ex else None}
+
+
+def scorecard(logged: list[dict], *, horizon: int = 5, benchmark: str = "SPY", history_fn=None) -> dict:
+    """How the wire's first sightings did `horizon` closes later, against the benchmark over the
+    same days. Entry is the logged price when first seen; exit is the close `horizon` bars after
+    the sighting day (calendar days for crypto, trading days for stocks); the benchmark runs from
+    its close on the sighting day to its close on or before the exit date. Sightings too recent
+    to have an exit are counted as pending."""
+    history_fn = history_fn or market.get_history
+    if not logged:
+        return {"horizon": horizon, "benchmark": benchmark, "all": _summary([]), "early": _summary([]),
+                "by_kind": {}, "pending": 0, "rows": [], "errors": []}
+    first = min(r["day"] for r in logged)
+    span = (datetime.now(timezone.utc).date() - datetime.fromisoformat(first).date()).days + horizon + 20
+    errors: list[str] = []
+
+    def load(sym):
+        try:
+            return sym, history_fn(sym, max(span, 30))
+        except (http.DataUnavailable, KeyError, ValueError) as exc:
+            errors.append(f"{sym}: {str(exc)[:80]}")
+            return sym, []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        bars = dict(pool.map(load, {r["symbol"] for r in logged} | {benchmark}))
+    bench = bars.get(benchmark) or []
+
+    def bench_close(on_or_before: str) -> float | None:
+        c = None
+        for b in bench:
+            if b.date > on_or_before:
+                break
+            c = b.close
+        return c
+
+    done, pending = [], 0
+    for r in logged:
+        series = bars.get(r["symbol"]) or []
+        k = next((i for i, b in enumerate(series) if b.date >= r["day"]), None)
+        if k is None or k + horizon >= len(series) or not r.get("price"):
+            pending += 1
+            continue
+        exit_bar = series[k + horizon]
+        b0, b1 = bench_close(r["day"]), bench_close(exit_bar.date)
+        if not b0 or not b1:
+            pending += 1
+            continue
+        ret = (exit_bar.close / r["price"] - 1) * 100
+        bret = (b1 / b0 - 1) * 100
+        done.append({"day": r["day"], "symbol": r["symbol"], "kinds": r["kinds"], "early": bool(r.get("early")),
+                     "entry": r["price"], "exit": exit_bar.close, "exit_day": exit_bar.date,
+                     "return_pct": round(ret, 2), "benchmark_pct": round(bret, 2), "excess_pct": round(ret - bret, 2)})
+    by_kind: dict[str, list[dict]] = {}
+    for d in done:
+        for k in str(d["kinds"]).split(","):
+            if k:
+                by_kind.setdefault(k.strip(), []).append(d)
+    return {"horizon": horizon, "benchmark": benchmark, "all": _summary(done),
+            "early": _summary([d for d in done if d["early"]]),
+            "by_kind": {k: _summary(v) for k, v in sorted(by_kind.items())}, "pending": pending,
+            "rows": sorted(done, key=lambda d: d["day"], reverse=True), "errors": errors}

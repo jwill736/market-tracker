@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from market_tracker import api, early, radar, sentinel
@@ -142,3 +143,36 @@ def test_gather_skips_a_source_that_hangs():
     release.set()
     assert time.monotonic() - t0 < 3 and "AMD" in {s.symbol for s in sigs}
     assert "GlobeNewswire: slow to answer, skipped this round" in errors
+
+
+def test_scorecard_scores_against_spy_over_the_same_days():
+    from market_tracker.providers import market as mk
+    days = [f"2026-09-{d:02d}" for d in (1, 2, 3, 4, 7, 8, 9, 10)]          # trading days
+    closes = {"AAA": [10, 10, 11, 11, 12, 12, 12, 13], "BBB": [20, 20, 19, 18, 18, 17, 17, 17],
+              "SPY": [100, 100, 101, 101, 102, 102, 103, 103]}
+
+    def hist(sym, n):
+        return [mk.PriceBar(d, float(c)) for d, c in zip(days, closes[sym])]
+    logged = [{"day": "2026-09-01", "symbol": "AAA", "kinds": "wire,social", "early": 1, "price": 10.0},
+              {"day": "2026-09-02", "symbol": "BBB", "kinds": "social", "early": 0, "price": 20.0},
+              {"day": "2026-09-09", "symbol": "AAA", "kinds": "wire", "early": 1, "price": 12.0}]
+    s = early.scorecard(logged, horizon=5, history_fn=hist)
+    # AAA 1 Sep -> 5 closes later (8 Sep, 12): +20%; SPY 100 -> 102: +2%; excess +18
+    # BBB 2 Sep -> 9 Sep (17): -15%; SPY 100 -> 103: +3%; excess -18
+    by = {(r["symbol"], r["day"]): r for r in s["rows"]}
+    assert by[("AAA", "2026-09-01")]["excess_pct"] == pytest.approx(18.0)
+    assert by[("BBB", "2026-09-02")]["excess_pct"] == pytest.approx(-18.0)
+    assert s["pending"] == 1 and s["all"]["count"] == 2 and s["all"]["hit_rate"] == 0.5
+    assert s["early"]["count"] == 1 and s["early"]["median_excess_pct"] == pytest.approx(18.0)
+    assert s["by_kind"]["social"]["count"] == 2 and s["by_kind"]["wire"]["count"] == 1
+
+
+def test_scorecard_endpoint(monkeypatch):
+    from market_tracker import db
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    monkeypatch.delenv("REQUIRE_LOGIN", raising=False)
+    monkeypatch.setattr(early, "scorecard", lambda logged, horizon: {"horizon": horizon, "n": len(logged)})
+    with db.connect() as conn:
+        db.log_early(conn, "2026-09-01", "ZZZ", "wire", 50, True, 5.0, "x")
+    r = TestClient(api.app).get("/api/early/scorecard", params={"horizon": 20}).json()
+    assert r["horizon"] == 20 and r["n"] >= 1

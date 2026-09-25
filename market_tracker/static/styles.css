@@ -358,6 +358,10 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .tt-confirm { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--mid); }
 
 /* ---------------------------------------------------------------- early wire */
+.ew-proof { display: grid; gap: 8px; padding: 12px 0 14px; border-bottom: 1px solid var(--grid); margin-bottom: 10px; }
+.ew-proof-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+#ew-proof-body { display: grid; gap: 4px; }
+.ew-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
 .ew-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .ew-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .ew-item { padding: 12px 4px; border-top: 1px solid var(--grid); display: grid; gap: 4px; cursor: pointer; min-width: 0; }

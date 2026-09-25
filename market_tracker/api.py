@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, coinbase_sync, db, people, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, coinbase_sync, db, dilution, early, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -485,6 +485,18 @@ async def early_wire(limit: int = Query(80, ge=1, le=200), refresh: bool = False
         sentinel.early_cache.clear()
     data = await asyncio.to_thread(sentinel.build_early, set(held + watched))
     return dict(data, signals=data["signals"][:limit])
+
+
+scorecard_cache = pulse.Cache(1800)
+
+
+@app.get("/api/early/scorecard")
+async def early_scorecard(horizon: int = Query(5, ge=1, le=60)):
+    """The wire's logged first sightings `horizon` closes later, against SPY over the same days."""
+    with db.connect() as conn:
+        logged = db.early_history(conn, limit=5000)
+    return await asyncio.to_thread(scorecard_cache.get, f"h{horizon}:{len(logged)}",
+                                   lambda: early.scorecard(logged, horizon=horizon))
 
 
 @app.get("/api/people")

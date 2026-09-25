@@ -1626,8 +1626,34 @@ async function loadEarly(force = false) {
     earlyState.data = await api("/api/early" + (force ? "?refresh=true" : ""));
     earlyState.loadedAt = Date.now();
     renderEarly();
+    loadProof();
   } catch (err) { $("#ew-meta").textContent = err.message; }
 }
+const proofState = { horizon: 5 };
+async function loadProof() {
+  const body = $("#ew-proof-body");
+  try {
+    const d = await api(`/api/early/scorecard?horizon=${proofState.horizon}`);
+    const a = d.all, e = d.early;
+    if (!a.count) {
+      body.innerHTML = `No sighting is ${d.horizon} closes old yet${d.pending ? ` (${d.pending} waiting)` : ""}. The first scores appear ${d.horizon} trading days after the wire starts logging.`;
+      return;
+    }
+    const line = (s) => `median <b class="${s.median_excess_pct >= 0 ? "up" : "down"}">${fmtPct(s.median_excess_pct, 2)}</b> vs SPY · beat SPY ${Math.round(s.hit_rate * 100)}% of the time · ${s.count} scored`;
+    const kinds = Object.entries(d.by_kind).map(([k, s]) => `<span class="chip">${esc(k)}: ${fmtPct(s.median_excess_pct, 1)} (${s.count})</span>`).join(" ");
+    const verdict = a.count < 150 ? `Too few to judge: ${a.count} of the 150 needed before this number means anything.`
+      : a.median_excess_pct > 0 && a.hit_rate > 0.55 ? "The wire is beating the market so far on this horizon." : "No edge on this horizon yet.";
+    body.innerHTML = `<div>All sightings, ${d.horizon} closes later: ${line(a)}</div>` +
+      (e.count ? `<div>Marked early: ${line(e)}</div>` : "") +
+      (kinds ? `<div class="ew-kinds">${kinds}</div>` : "") +
+      `<div class="muted">${verdict}${d.pending ? ` ${d.pending} more waiting for their exit close.` : ""}</div>`;
+  } catch (err) { body.textContent = err.message; }
+}
+document.querySelectorAll("#ew-horizon button").forEach((b) => b.addEventListener("click", () => {
+  proofState.horizon = Number(b.dataset.h);
+  document.querySelectorAll("#ew-horizon button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadProof();
+}));
 function renderEarly() {
   const d = earlyState.data;
   $("#ew-meta").innerHTML = `Updated <span data-ago="${esc(d.generated_at)}"></span> · every 2 minutes${d.errors.length ? ` · ${d.errors.length} source${d.errors.length > 1 ? "s" : ""} down` : ""}`;
