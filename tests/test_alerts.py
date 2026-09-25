@@ -43,9 +43,13 @@ def test_buys_from_submission_keeps_only_open_market_purchases():
     assert alerts.buys_from_submission("<SEC-DOCUMENT>no xml</SEC-DOCUMENT>", "x", "2026-09-24") == []
 
 
-def _buy(insider, trade, filed, value=50_000, cik="0000777777"):
-    return alerts.Buy(filed=filed, accession=f"a-{insider}-{trade}", issuer_cik=cik, issuer_name="ACME SMALLCAP CORP",
-                      symbol="ACME", insider=insider, role="Director", trade_date=trade, shares=1000,
+def NOT_FUND(cik):
+    return False
+
+
+def _buy(insider, trade, filed, value=50_000, cik="0000777777", symbol="ACME", accession=None):
+    return alerts.Buy(filed=filed, accession=accession or f"a-{insider}-{trade}", issuer_cik=cik,
+                      issuer_name="ACME SMALLCAP CORP", symbol=symbol, insider=insider, role="Director", trade_date=trade, shares=1000,
                       price=value / 1000, value=value)
 
 
@@ -69,11 +73,11 @@ def test_find_clusters_rules():
 
 
 def test_new_clusters_suppresses_repeats_for_30_days():
-    buys = [_buy(n, f"2026-09-1{i}", "2026-09-14") for i, n in enumerate("ABC")]
+    buys = [_buy(n, f"2026-09-1{i}", "2026-09-20") for i, n in enumerate("ABC")]
     c = alerts.find_clusters(buys, date(2026, 9, 24))
-    assert alerts.new_clusters(c, {}, date(2026, 9, 24)) == c
-    assert alerts.new_clusters(c, {"0000777777": "2026-09-20"}, date(2026, 9, 24)) == []
-    assert alerts.new_clusters(c, {"0000777777": "2026-08-01"}, date(2026, 9, 24)) == c
+    assert alerts.new_clusters(c, {}, date(2026, 9, 24), NOT_FUND) == c
+    assert alerts.new_clusters(c, {"0000777777": "2026-09-20"}, date(2026, 9, 24), NOT_FUND) == []
+    assert alerts.new_clusters(c, {"0000777777": "2026-08-01"}, date(2026, 9, 24), NOT_FUND) == c
 
 
 def test_storage_roundtrip_dedupes_and_prunes(tmp_path):
@@ -117,8 +121,53 @@ def test_same_day_clusters_carry_a_warning():
 
 def test_single_day_clusters_are_listed_but_not_alerted():
     one_day = alerts.find_clusters([_buy(n, "2026-09-18", "2026-09-19") for n in "ABC"], date(2026, 9, 24))
-    assert len(one_day) == 1 and alerts.new_clusters(one_day, {}, date(2026, 9, 24)) == []
+    assert len(one_day) == 1 and alerts.new_clusters(one_day, {}, date(2026, 9, 24), NOT_FUND) == []
     # A later buy by another insider makes it a multi-day cluster, which does alert.
     grown = alerts.find_clusters([_buy(n, "2026-09-18", "2026-09-19") for n in "ABC"]
                                  + [_buy("D", "2026-09-22", "2026-09-23")], date(2026, 9, 24))
-    assert len(alerts.new_clusters(grown, {}, date(2026, 9, 24))) == 1
+    assert len(alerts.new_clusters(grown, {}, date(2026, 9, 24), NOT_FUND)) == 1
+
+
+def _spread(filed="2026-09-23", **kw):
+    return alerts.find_clusters([_buy(n, f"2026-09-1{i}", filed, **kw) for i, n in enumerate("ABC")],
+                                date(2026, 9, 24))[0]
+
+
+def test_old_clusters_are_listed_but_not_alerted():
+    # The newest filing is 10 days old: the buying isn't news any more.
+    old = _spread(filed="2026-09-14")
+    assert alerts.skip_reason(old, {}, date(2026, 9, 24), NOT_FUND) == "OLD"
+    # A fresh filing (another insider buying) makes the same cluster alert.
+    grown = alerts.find_clusters(old.buys + [_buy("D", "2026-09-22", "2026-09-23")], date(2026, 9, 24))
+    assert alerts.skip_reason(grown[0], {}, date(2026, 9, 24), NOT_FUND) is None
+
+
+def test_funds_and_untradable_issuers_are_skipped():
+    assert alerts.skip_reason(_spread(symbol="NONE"), {}, date(2026, 9, 24), NOT_FUND) == "NOTK"
+    assert alerts.skip_reason(_spread(symbol=""), {}, date(2026, 9, 24), NOT_FUND) == "NOTK"
+    assert alerts.skip_reason(_spread(), {}, date(2026, 9, 24), lambda cik: True) == "FUND"
+    assert alerts.skip_reason(_spread(), {}, date(2026, 9, 24), NOT_FUND) is None
+
+
+def test_fund_lookup_uses_sec_industry_code(monkeypatch):
+    codes = {"0000040417": {"sic": "6726"}, "0000777777": {"sic": "3990"}, "0000999999": {"sic": ""}}
+    monkeypatch.setattr(alerts.sec, "_sec_get", lambda url, ttl: codes[url.split("CIK")[1][:10]])
+    assert alerts.issuer_is_fund("40417") and alerts.issuer_is_fund("0000999999")
+    assert not alerts.issuer_is_fund("0000777777")
+
+    def down(url, ttl):
+        raise alerts.http.DataUnavailable("503")
+    monkeypatch.setattr(alerts.sec, "_sec_get", down)
+    assert not alerts.issuer_is_fund("0000040417")  # fail open: better a stray alert than a missed one
+
+
+def test_a_trade_filed_twice_counts_once(tmp_path):
+    # Seen in the backfill: the same 100,000-share purchase under two consecutive accessions.
+    dup = [_buy("A", "2026-09-08", "2026-09-09", accession="acc-1263"),
+           _buy("A", "2026-09-08", "2026-09-09", accession="acc-1264"),
+           _buy("B", "2026-09-10", "2026-09-11"), _buy("C", "2026-09-12", "2026-09-14")]
+    c = alerts.find_clusters(dup, date(2026, 9, 24))[0]
+    assert len(c.buys) == 3 and c.total_value == 150_000
+    path = str(tmp_path / "buys.csv")
+    alerts.save_buys(dup, path, date(2026, 9, 24))
+    assert len(alerts.load_buys(path)) == 3

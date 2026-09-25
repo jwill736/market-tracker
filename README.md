@@ -124,6 +124,18 @@ market_tracker/
 | `tests.yml` | every PR and push to `main` | `pytest` on Python 3.11 and 3.12 (required to merge) |
 | `live-smoke.yml` | every PR, daily, on demand | calls every real data source and reports PASS/FAIL per source in the job summary. Not required to merge, so an upstream outage can't block you |
 | `journal.yml` | weekdays after the US close, on demand | records the 15-symbol universe and commits `signal_journal.csv` to the `journal-data` branch; the job summary shows the track record |
+| `score-backtest.yml` | on demand | rebuilds the score month by month from 2016 using only data public at each date, and reports how well each component ranked later returns |
+| `insider-alerts.yml` | daily at 10:30 UTC, on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
+
+**When an insider cluster opens an issue.** At least 3 officers or directors (10% holders alone don't count) buy
+on the open market, at least $10k each and $100k in total, within 30 days, and all of the following hold:
+- the buys span at least 2 trading days, because same-day batches are usually compensation programs;
+- the newest filing is at most 7 days old, so a backfill or a late run doesn't raise old news;
+- the issuer has a ticker and isn't a closed-end fund or BDC (SEC industry code 6722/6726, or none);
+- the company wasn't alerted in the last 30 days.
+
+A trade filed twice counts once. The job summary lists every active cluster with the reason it did or didn't alert
+(`NEW`, `SEEN`, `1DAY`, `OLD`, `NOTK`, `FUND`).
 
 Add a repository **secret** `SEC_USER_AGENT` (Settings → Secrets and variables → Actions → New repository secret)
 set to `market-tracker your@email.com`. The SEC returns 403 to requests without a contact email. Use a secret, not a

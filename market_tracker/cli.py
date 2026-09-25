@@ -266,12 +266,14 @@ def cmd_alerts(args) -> int:
         day += timedelta(days=1)
     clusters = alerts.find_clusters(buys, today)
     alerted = alerts.load_alerted(alerted_path)
-    fresh = alerts.new_clusters(clusters, alerted, today)
-    print(f"{len(clusters)} active clusters, {len(fresh)} new alerts "
-          f"(1DAY = all buys on one day: listed, not alerted)")
+    reasons = {c.issuer_cik: alerts.skip_reason(c, alerted, today) for c in clusters}
+    fresh = [c for c in clusters if reasons[c.issuer_cik] is None]
+    print(f"{len(clusters)} active clusters, {len(fresh)} new alerts. Not alerted: SEEN = alerted in the last "
+          f"{alerts.REALERT_AFTER_DAYS} days, 1DAY = all buys on one day, OLD = newest filing over "
+          f"{alerts.ALERT_MAX_AGE_DAYS} days old, NOTK = no ticker, FUND = closed-end fund or BDC")
     for c in clusters:
         roles = sorted({b.role for b in c.buys})
-        tag = "NEW " if c in fresh else "1DAY" if c.trade_days < alerts.CLUSTER_MIN_TRADE_DAYS else "    "
+        tag = f"{reasons[c.issuer_cik] or 'NEW':<4}"
         print(f"  {tag} {c.symbol or '-':<6} {c.issuer_name[:40]:<40} "
               f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade} "
               f"({c.trade_days} trading day{'s' if c.trade_days != 1 else ''}; roles: {'; '.join(roles)[:120]})")
