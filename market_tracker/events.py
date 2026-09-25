@@ -183,7 +183,7 @@ def macro(today: date, days: int = 14, get=None) -> tuple[list[dict], list[str]]
             return parse_econ(get(ECON.format(day=day), headers=HEADERS, ttl=6 * 3600), day)
         except (http.DataUnavailable, KeyError, TypeError):
             return []
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         for rows in pool.map(one, range(days)):
             out += rows
     seen: set[tuple] = set()

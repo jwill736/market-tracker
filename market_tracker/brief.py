@@ -129,7 +129,7 @@ def gather(today: date | None = None, now: datetime | None = None) -> dict:
     from . import cryptoradar, holdplan, sentinel
     now = now or datetime.now(timezone.utc)
     today = today or now.astimezone(ET).date()
-    plan = holdplan.gather(today)
+    plan = holdplan.cached()
     syms = [h["symbol"] for h in plan["holdings"]]
 
     def q(sym):

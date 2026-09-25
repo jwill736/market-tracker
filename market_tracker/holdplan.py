@@ -233,6 +233,37 @@ def theses_from(raw: dict[str, dict]) -> dict[str, Thesis]:
     return {s: Thesis(**{k: v for k, v in d.items() if k in keys}) for s, d in raw.items()}
 
 
+_cache: dict = {}
+CACHE_SECONDS = 300
+
+
+def state_key() -> tuple:
+    """Changes whenever anything the plan depends on in your own data changes."""
+    import json
+    from . import db
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        return (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
+                db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(settings(conn).items()),
+                date.today().isoformat())
+
+
+def cached(refresh: bool = False) -> dict:
+    """gather(), kept for 5 minutes unless your data changes; shared by the tab and the brief."""
+    import time
+    key = state_key()
+    hit = _cache.get("plan")
+    if not refresh and hit and hit[0] == key and time.monotonic() - hit[1] < CACHE_SECONDS:
+        return hit[2]
+    plan = gather()
+    _cache["plan"] = (key, time.monotonic(), plan)
+    return plan
+
+
+def clear_cache() -> None:
+    _cache.clear()
+
+
 def gather(today: date | None = None) -> dict:
     """The hold plan from the ledger, your theses and settings, the radar for your companies and
     upcoming earnings. Used by the Hold tab and the morning brief."""
@@ -250,9 +281,10 @@ def gather(today: date | None = None) -> dict:
     radar_by: dict[str, list[dict]] = {}
     radar_errors: list[str] = []
     try:
-        mine, radar_errors = sentinel.radar_cache.get(tuple(held + watch), lambda: sentinel.sentinel.mine(held + watch))
-        for a in mine:
-            radar_by.setdefault(a.symbol, []).append(a.to_dict())
+        if held + watch:
+            mine, radar_errors = sentinel.radar_cache.get(tuple(held + watch), lambda: sentinel.sentinel.mine(held + watch))
+            for a in mine:
+                radar_by.setdefault(a.symbol, []).append(a.to_dict())
     except (http.DataUnavailable, ValueError) as exc:
         radar_errors = [str(exc)]
     try:
