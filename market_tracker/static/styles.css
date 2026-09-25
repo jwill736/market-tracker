@@ -211,3 +211,52 @@ tr.clickable:hover td { background: var(--mid); }
   .clip { max-width: 28ch; }
   #movers-table th:nth-child(4), #movers-table td:nth-child(4), #movers-table th:nth-child(5), #movers-table td:nth-child(5) { display: none; }
 }
+
+/* ---------------------------------------------------------------- live status strip */
+.statusbar { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: center; padding: 6px 16px; font-size: 13px;
+  border-bottom: 1px solid var(--border); background: var(--surface); font-variant-numeric: tabular-nums; }
+.statusbar b { font-weight: 600; }
+.sb-item { display: inline-flex; gap: 6px; align-items: baseline; min-width: 0; }
+#sb-session[data-session="regular"] { color: var(--good); }
+#sb-session[data-session="pre"], #sb-session[data-session="post"] { color: var(--warn-ink); }
+
+/* ---------------------------------------------------------------- strategy plan */
+.plan-form { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 10px 0 14px; }
+.plan-form input { width: 160px; }
+.plan-list { display: grid; gap: 12px; margin-top: 16px; }
+.plan-list > .card { margin-bottom: 0; }
+.plan-card { border-left: 4px solid var(--axis); }
+.plan-card.act-sell { border-left-color: var(--bad); }
+.plan-card.act-trim { border-left-color: var(--s2); }
+.plan-card.act-add, .plan-card.act-buy { border-left-color: var(--good); }
+.pc-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.act, .act-chip { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 6px;
+  background: var(--mid); color: var(--ink-2); }
+.act-sell .act, .act-chip.act-sell { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.act-trim .act, .act-chip.act-trim { background: var(--warn-bg); color: var(--warn-ink); }
+.act-add .act, .act-buy .act, .act-chip.act-add, .act-chip.act-buy { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+button.linkish { background: none; border: 0; padding: 0; color: var(--ink); font: 400 26px/1 "Instrument Serif", Georgia, serif; cursor: pointer; }
+button.linkish:hover { color: var(--accent); }
+.pc-price { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pc-w { flex-basis: 100%; }
+.pc-order { margin: 8px 0 4px; font-size: 15px; font-variant-numeric: tabular-nums; }
+.pc-why { margin: 4px 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.pc-tax { margin: 6px 0; padding: 6px 10px; border-radius: 8px; background: var(--mid); }
+.pc-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.button-secondary { display: inline-block; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--accent); color: var(--accent);
+  text-decoration: none; font-size: 14px; }
+.button-secondary:hover { background: var(--band); }
+.ticket { margin-top: 10px; padding: 12px; border: 1px dashed var(--axis); border-radius: 10px; }
+.ticket-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; }
+.ticket-grid label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.ticket-grid output { font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ticket-grid input { width: 100%; box-sizing: border-box; }
+.hold-list { display: grid; }
+.hold-row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+.hold-row:first-child { border-top: 0; }
+.hold-row:hover b { color: var(--accent); }
+details.card summary { cursor: pointer; }
+@media (max-width: 720px) {
+  #plan-tiles, #pf-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #plan-tiles .tile .value, #pf-tiles .tile .value { font-size: 24px; }
+}

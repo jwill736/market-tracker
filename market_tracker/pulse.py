@@ -373,6 +373,8 @@ class Cache:
 
 pulse_cache = Cache(180)
 sellwatch_cache = Cache(600)
+analysis_cache = Cache(600)      # per symbol, shared by the sell watch and the strategy plan
+dilution_cache = Cache(3600)     # per CIK
 
 
 def cik_for_symbol(symbol: str) -> str | None:

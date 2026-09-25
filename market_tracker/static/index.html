@@ -23,6 +23,7 @@
   </a>
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="pulse" aria-selected="true">Pulse</button>
+    <button role="tab" data-tab="plan" aria-selected="false">Plan</button>
     <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
     <button role="tab" data-tab="analyze">Analyze</button>
     <button role="tab" data-tab="smart">Smart money</button>
@@ -36,6 +37,12 @@
   <a class="signout" id="signout" href="/logout" hidden>Sign out</a>
 </header>
 <div class="tape" id="tape" aria-label="Live prices: your holdings and watchlist"></div>
+<div class="statusbar" aria-live="off">
+  <span class="sb-item" id="sb-book" hidden><span class="muted">Your portfolio</span> <b data-book="value">—</b>
+    <span data-book="today"></span></span>
+  <span class="sb-item"><span class="live" id="live-dot-global" title="Live stream status">●</span> <span id="sb-session">—</span></span>
+  <span class="sb-item muted" id="sb-tick" title="Time since the last price update"></span>
+</div>
 
 <main>
   <!-- Pulse -->
@@ -63,6 +70,32 @@
       <p class="muted small" id="sleeper-rule"></p>
       <div id="sleeper-list" class="sleepers"></div>
     </div>
+  </section>
+
+  <!-- Strategy plan -->
+  <section id="tab-plan" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Strategy plan</h2><span class="chip-warn">Rules, not advice</span></div>
+      <p class="muted small">What to sell, trim, hold, add and buy, sized to each position's volatility, with the reasons and
+        the tax effect. Built from rules anyone can check (listed at the bottom). They are <b>not proven</b>: every plan is logged
+        below so you can see whether its calls were right before trusting it with real money.</p>
+      <form id="plan-form" class="plan-form">
+        <label for="plan-cash">Cash available to invest</label>
+        <input id="plan-cash" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+        <button>Rebuild plan</button>
+        <span class="muted small" id="plan-meta"></span>
+      </form>
+      <div class="grid three" id="plan-tiles"></div>
+    </div>
+    <div id="plan-actions" class="plan-list"></div>
+    <div class="card">
+      <h2>How the plan's past calls are doing</h2>
+      <p class="muted small">Each day's first recommendations, with the price then and the price now (live). A sell or trim was
+        right if the price has fallen since; a buy or add, if it has risen. Days prove nothing: judge after three months.</p>
+      <p id="plan-score" class="small"></p>
+      <div class="scroll"><table class="data" id="plan-history"></table></div>
+    </div>
+    <details class="card"><summary><b>The rules</b></summary><ul id="plan-rules" class="small"></ul></details>
   </section>
 
   <!-- Dashboard -->

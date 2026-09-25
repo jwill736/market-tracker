@@ -167,6 +167,14 @@ def _():
     return ", ".join(f"{k}: {len(v)}" for k, v in got.items()) + f"; top gainer {top.symbol} {top.change_pct:+.1f}%"
 
 
+@check("Yahoo live quote with extended hours (AAPL)")
+def _():
+    q = market.get_live_quote("AAPL")
+    assert q.price > 0 and q.session in ("pre", "regular", "post", "closed"), q
+    chg = f"{q.change_pct:+.2f}%" if q.change_pct is not None else "no change"
+    return f"${q.price:,.2f} {chg} · session {q.session} · as of {q.as_of}"
+
+
 @check("Watcher purchases for sleepers (journal-data branch)")
 def _():
     buys = pulse.load_watcher_buys()

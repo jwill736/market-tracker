@@ -27,7 +27,9 @@ from .providers import market
 
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 FINNHUB_WS = "wss://ws.finnhub.io?token={key}"
-POLL_SECONDS = 8.0
+POLL_SECONDS = 5.0
+POLL_PER_SYMBOL = 0.25  # the poll slows down as more symbols are watched (40 symbols: every 10 s)
+POLL_CONCURRENCY = 6
 MIN_GAP = 0.25          # seconds between pushes of the same symbol (BTC ticks dozens of times a second)
 QUEUE_SIZE = 500
 
@@ -39,6 +41,7 @@ class Tick:
     change_pct: float | None
     ts: str
     source: str
+    session: str = ""       # pre / regular / post / closed for stocks, 24h for crypto
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -138,7 +141,7 @@ def parse_coinbase(msg: dict) -> Tick | None:
     price = float(msg["price"])
     open24 = float(msg.get("open_24h") or 0)
     return Tick(symbol=msg["product_id"], price=price, change_pct=(price / open24 - 1) * 100 if open24 else None,
-                ts=msg.get("time") or _now_iso(), source="coinbase")
+                ts=msg.get("time") or _now_iso(), source="coinbase", session="24h")
 
 
 def parse_finnhub(msg: dict, hub: PriceHub) -> list[Tick]:
@@ -225,7 +228,7 @@ async def _ensure_prev_close(hub: PriceHub, symbol: str) -> None:
         return
     if q.previous_close:
         hub.prev_close[symbol] = q.previous_close
-    hub.publish(Tick(symbol, q.price, q.change_pct, q.as_of, q.source))
+    hub.publish(Tick(symbol, q.price, q.change_pct, q.as_of, q.source, q.session))
 
 
 async def run_forever(hub: PriceHub, session: Callable[[PriceHub], Awaitable[None]],
@@ -248,18 +251,26 @@ async def run_forever(hub: PriceHub, session: Callable[[PriceHub], Awaitable[Non
         await sleep(delay)
 
 
-async def poll_stocks(hub: PriceHub, interval: float = POLL_SECONDS, quote_fn=market.get_quote, sleep=asyncio.sleep) -> None:
-    """Without a streaming key: fetch each watched stock's quote every few seconds."""
-    while True:
-        for sym in sorted(hub.stocks()):
+async def poll_stocks(hub: PriceHub, interval: float = POLL_SECONDS, quote_fn=market.get_live_quote,
+                      sleep=asyncio.sleep) -> None:
+    """Without a streaming key: fetch every watched stock's latest trade, pre-market and
+    after-hours included, a few at a time, every few seconds."""
+    gate = asyncio.Semaphore(POLL_CONCURRENCY)
+
+    async def one(sym: str) -> None:
+        async with gate:
             try:
                 q = await asyncio.to_thread(quote_fn, sym)
             except http.DataUnavailable:
-                continue
-            if q.previous_close:
-                hub.prev_close[sym] = q.previous_close
-            hub.publish(Tick(sym, q.price, q.change_pct, _now_iso(), q.source))
-        await sleep(interval)
+                return
+        if q.previous_close:
+            hub.prev_close[sym] = q.previous_close
+        hub.publish(Tick(sym, q.price, q.change_pct, q.as_of or _now_iso(), q.source, getattr(q, "session", "")))
+
+    while True:
+        syms = sorted(hub.stocks())
+        await asyncio.gather(*(one(s) for s in syms))
+        await sleep(max(interval, len(syms) * POLL_PER_SYMBOL))
 
 
 # ------------------------------------------------------------------ intraday chart data
