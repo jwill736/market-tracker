@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, events, coinbase_sync, db, dilution, early, holdplan, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -463,6 +463,82 @@ async def events_view(refresh: bool = False):
     return await asyncio.to_thread(events_cache.get, held, lambda: events.build(positions, date.today()))
 
 
+crypto_cache = pulse.Cache(300)
+pickers_cache = pulse.Cache(1800)
+
+
+@app.get("/api/cryptoradar")
+async def crypto_radar(refresh: bool = False):
+    """Hacks, Coinbase incidents, supply overhang and depegs for the coins you hold or watch."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    syms = tuple(s for s in held + watched if market.asset_class(s) == "crypto")
+    if refresh:
+        crypto_cache.store.clear()
+    return await asyncio.to_thread(crypto_cache.get, syms, lambda: cryptoradar.build(list(syms)))
+
+
+def _picker_names(conn) -> list[str]:
+    return sorted(w[3:] for w, g in db.follows(conn, include_pickers=True).items() if g == "picker" and w.startswith("st:"))
+
+
+def _picker_view(user: str) -> dict:
+    errors = []
+    profile = {}
+    try:
+        profile, calls = pickers.fetch_calls(user)
+        with db.connect() as conn:
+            db.save_picker_calls(conn, calls)
+    except (http.DataUnavailable, KeyError, TypeError) as exc:
+        errors.append(str(exc)[:120])
+    with db.connect() as conn:
+        stored = db.picker_calls(conn, user)
+    return {"username": user, "profile": {k: profile.get(k) for k in ("name", "followers", "official", "join_date", "ideas")},
+            **pickers.score(stored, quote_fn=market.get_quote), "errors": errors}
+
+
+@app.get("/api/pickers")
+async def pickers_view(refresh: bool = False):
+    """Stock pickers you follow, graded on their tagged calls against SPY, plus suggestions."""
+    with db.connect() as conn:
+        names = _picker_names(conn)
+    if refresh:
+        pickers_cache.store.clear()
+    graded = await asyncio.gather(*[asyncio.to_thread(pickers_cache.get, n, lambda n=n: _picker_view(n)) for n in names])
+    try:
+        sugg = await asyncio.to_thread(pickers_cache.get, "__suggested", pickers.suggested)
+    except (http.DataUnavailable, KeyError, TypeError):
+        sugg = []
+    return {"following": sorted(graded, key=lambda g: -(g["median_excess_pct"] if g["median_excess_pct"] is not None else -1e9)),
+            "suggested": [u for u in sugg if u["username"].lower() not in names], "horizon": pickers.HORIZON}
+
+
+class PickerIn(BaseModel):
+    username: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_]+$")
+
+
+@app.post("/api/pickers/follow")
+async def follow_picker(body: PickerIn):
+    user = body.username.lower()
+    try:
+        profile, _ = await asyncio.to_thread(pickers.fetch_calls, user, None, 1)
+    except http.DataUnavailable as exc:
+        raise HTTPException(404, f"Couldn't find {body.username} on StockTwits: {exc}")
+    if not profile:
+        raise HTTPException(404, f"Couldn't find {body.username} on StockTwits")
+    with db.connect() as conn:
+        db.follow(conn, "st:" + user, "picker")
+        names = _picker_names(conn)
+    pickers_cache.store.pop(user, None)
+    return {"following": names}
+
+
+@app.delete("/api/pickers/follow")
+async def unfollow_picker(username: str):
+    with db.connect() as conn:
+        db.unfollow(conn, "st:" + username.lower())
+        return {"following": _picker_names(conn)}
+
+
 @app.get("/api/holdplan")
 async def hold_plan(refresh: bool = False):
     """Buy-and-hold plan: Hold by default; Sell?/Trim/Review only when your tripwire, a serious
@@ -770,7 +846,8 @@ def backup():
     with db.connect() as conn:
         return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
                 "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
-                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn)}
+                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn, include_pickers=True),
+                "theses": db.theses(conn)}
 
 
 class RestoreIn(BaseModel):
@@ -809,6 +886,11 @@ def restore(body: RestoreIn):
             db.set_topic(conn, name, terms)
         for who, grp in (d.get("follows") or {}).items():
             db.follow(conn, who, grp)
+        have = db.theses(conn)
+        for sym, t in (d.get("theses") or {}).items():
+            if sym not in have:
+                db.save_thesis(conn, sym, {k: v for k, v in t.items() if k not in ("symbol", "updated")})
+    holdplan_cache.store.clear()
     return {"transactions_added": added}
 
 
