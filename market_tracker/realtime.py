@@ -102,15 +102,22 @@ def fetch_feed(form: str, start: int) -> str:
 
 
 def new_entries(form: str, seen: set[str], since: datetime,
-                feed_fn: Callable[[str, int], str] = fetch_feed, max_pages: int = MAX_PAGES) -> list[FeedEntry]:
+                feed_fn: Callable[[str, int], str] = fetch_feed, max_pages: int = MAX_PAGES,
+                gaps: list[str] | None = None) -> list[FeedEntry]:
     """Entries updated at or after `since` whose accession hasn't been handled, newest first.
-    Pages until an entry older than `since` shows up (the feed is newest-first)."""
+    Pages until an entry older than `since` shows up (the feed is newest-first). If the last
+    page is still newer than `since`, filings between `since` and that page were never read:
+    the query goes into `gaps` so the run says so instead of missing them silently."""
     out = []
+    reached = False
+    oldest = ""
     for page in range(max_pages):
         entries = parse_feed(feed_fn(form, page * 100))
         if not entries:
+            reached = True           # the feed ended: nothing older exists to miss
             break
         older = False
+        oldest = entries[-1].updated
         for e in entries:
             if _when(e.updated) < since:
                 older = True
@@ -118,7 +125,10 @@ def new_entries(form: str, seen: set[str], since: datetime,
             if e.accession not in seen:
                 out.append(e)
         if older or len(entries) < 100:
+            reached = True
             break
+    if not reached and oldest and gaps is not None:
+        gaps.append(f"{form}: read {max_pages * 100} entries back to {oldest[:16]}, not back to {since.isoformat()[:16]}")
     return out
 
 
@@ -257,6 +267,7 @@ class PollResult:
     tracked_stakes: list[Stake] = field(default_factory=list)  # the ones that alert
     dilution: list[FeedEntry] = field(default_factory=list)     # offering filings by recently alerted companies
     failures: int = 0
+    gaps: list[str] = field(default_factory=list)              # feed windows too long to read in full
 
 
 def submission_text(entry: FeedEntry) -> str:
@@ -275,12 +286,13 @@ def poll(state: WatchState, buys: list[alerts.Buy], alerted: dict[str, str], *, 
     since = (_when(state.last_poll) - OVERLAP) if state.last_poll else now - FIRST_RUN_LOOKBACK
     seen = set(state.seen)
     entries: list[FeedEntry] = []
+    gaps: list[str] = []
     for form in FEED_QUERIES:
         try:
-            entries += new_entries(form, seen, since, feed_fn)
+            entries += new_entries(form, seen, since, feed_fn, gaps=gaps)
         except (http.DataUnavailable, ET.ParseError) as exc:
             log(f"feed {form!r}: {exc}")
-    res = PollResult()
+    res = PollResult(gaps=gaps)
     today = now.date()
     for acc, group in by_accession(entries).items():
         form = group[0].form
@@ -374,6 +386,8 @@ def summary_lines(res: PollResult) -> list[str]:
              f"{len(res.clusters)} cluster alerts, {len(res.big)} large-buy alerts, "
              f"{len(res.tracked_stakes)} tracked-investor stakes, {len(res.dilution)} offering filings by alerted companies"
              + (f", {res.failures} fetch failures" if res.failures else "")]
+    for g in res.gaps:
+        lines.append(f"  GAP     {g} (missed filings reach the daily insider scan, not real-time alerts)")
     for c in res.clusters:
         lines.append(f"  CLUSTER {c.symbol or '-'} {c.issuer_name}: {len(c.insiders)} insiders, {_money(c.total_value)}")
     for b in res.big:

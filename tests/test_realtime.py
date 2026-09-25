@@ -130,3 +130,27 @@ def test_notify_posts_to_topic_and_never_raises(monkeypatch):
     def boom(request):
         raise httpx.ConnectError("down")
     assert not notify.send(notify.Message("t", "b"), httpx.Client(transport=httpx.MockTransport(boom)))
+
+
+def _full_page(start, newest):
+    from datetime import timedelta
+    rows = []
+    for i in range(100):
+        t = (newest - timedelta(seconds=start + i)).strftime("%Y-%m-%dT%H:%M:%S-00:00")
+        rows.append(f'<entry><title>4 - Co {start + i} (000{start + i:07d}) (Issuer)</title>'
+                    f'<link href="https://www.sec.gov/Archives/edgar/data/1/000{start + i:07d}-26-{start + i:06d}-index.htm"/>'
+                    f'<summary>Filed</summary><updated>{t}</updated>'
+                    f'<category term="4" label="form type"/><id>urn:tag:sec.gov,2008:accession-number=000{start + i:07d}-26-{start + i:06d}</id></entry>')
+    return '<feed xmlns="http://www.w3.org/2005/Atom">' + "".join(rows) + "</feed>"
+
+
+def test_a_window_longer_than_the_feed_is_reported_as_a_gap():
+    since = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)       # six hours before NOW
+    gaps = []
+    got = realtime.new_entries("4", set(), since, lambda f, s: _full_page(s, NOW), max_pages=2, gaps=gaps)
+    assert len(got) == 200 and len(gaps) == 1 and gaps[0].startswith("4: read 200 entries back to 2026-09-24T18:06")
+    gaps = []
+    realtime.new_entries("4", set(), datetime(2026, 9, 24, 18, 0, tzinfo=timezone.utc), _feed, gaps=gaps)
+    assert gaps == []                                               # the cursor was reached
+    res = realtime.PollResult(gaps=["4: read 500 entries back to x, not back to y"])
+    assert any(line.startswith("  GAP") for line in realtime.summary_lines(res))
