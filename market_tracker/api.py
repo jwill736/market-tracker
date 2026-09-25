@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -544,6 +544,28 @@ class ThesisIn(BaseModel):
     max_loss_pct: float | None = Field(None, ge=0, le=100)
     review_on: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     target_weight: float | None = Field(None, gt=0, le=1)
+    rev_growth_min: float | None = Field(None, ge=-100, le=500)
+    rev_growth_quarters: int | None = Field(None, ge=1, le=8)
+    op_margin_min: float | None = Field(None, ge=-100, le=100)
+    dilution_max: float | None = Field(None, ge=0, le=100)
+    fcf_positive: bool = False
+
+
+@app.get("/api/fundamentals/{symbol}")
+async def fundamentals_view(symbol: str):
+    """Quarterly revenue growth, margins, EPS, free cash flow and share count from the company's
+    SEC filings, with the checks that would raise it in the hold plan."""
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        raw = db.theses(conn)
+    try:
+        got, errors = await asyncio.to_thread(fundamentals.build, [sym], holdplan.theses_from(raw))
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+    if sym not in got:
+        return {"symbol": sym, "quarters": [], "checks": [], "line": "",
+                "note": errors[0] if errors else "No company financials: funds, crypto and non-US listings don't file them with the SEC."}
+    return {"symbol": sym, **got[sym]}
 
 
 @app.get("/api/thesis")

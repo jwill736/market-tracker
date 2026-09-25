@@ -1787,6 +1787,7 @@ function holdRow(h) {
       <span class="pc-price" data-live="${s}" data-lf="price">${fmtMoney(h.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
       <span class="muted small pc-w"><b data-live="${s}" data-lf="value" data-qty="${h.quantity}">${fmtMoney(h.value, 0)}</b> · ${(h.weight * 100).toFixed(1)}% of portfolio${h.cost_pct != null ? ` · <span class="${cls(h.cost_pct)}">${fmtPct(h.cost_pct, 0)}</span> from cost` : ""}</span></div>
     ${trig.length ? `<ul class="pc-why">${trig.map((x) => `<li class="t-${esc(x.level)}">${esc(x.text)}</li>`).join("")}</ul>` : `<p class="muted small">Nothing says otherwise: holding is the plan.</p>`}
+    ${h.fundamentals ? `<p class="muted small">${esc(h.fundamentals.line)}</p>` : ""}
     ${e ? `<p class="small">Reports ${esc(e.date)}${e.estimated ? " (estimated)" : ""}${e.move_pct != null ? `: options price about ±${e.move_pct.toFixed(1)}%, <b>±${fmtMoney(e.move_dollars, 0)}</b> on yours` : ""}</p>` : ""}
     <div class="hp-thesis small">${t && (t.thesis || t.wrong_if) ? `<b>Why you own it:</b> ${esc(t.thesis || "—")}${t.wrong_if ? ` · <b>Wrong if:</b> ${esc(t.wrong_if)}` : ""}` : `<span class="muted">No reason written down yet.</span>`}
       <button type="button" class="linkish" data-thesis="${s}">${t ? "Edit" : "Write it down"}</button></div>
@@ -1850,8 +1851,15 @@ async function openThesis(sym) {
   $("#th-thesis").value = t.thesis || ""; $("#th-wrong").value = t.wrong_if || "";
   $("#th-below").value = t.price_below ?? ""; $("#th-above").value = t.price_above ?? ""; $("#th-loss").value = t.max_loss_pct ?? "";
   $("#th-target").value = t.target_weight != null ? +(t.target_weight * 100).toFixed(2) : ""; $("#th-review").value = t.review_on || "";
+  $("#th-rev").value = t.rev_growth_min ?? ""; $("#th-revq").value = t.rev_growth_quarters ?? "";
+  $("#th-om").value = t.op_margin_min ?? ""; $("#th-dil").value = t.dilution_max ?? ""; $("#th-fcf").checked = !!t.fcf_positive;
   $("#th-delete").hidden = !t.symbol;
+  $("#th-fund").textContent = "";
   $("#thesis-modal").hidden = false; $("#th-thesis").focus();
+  api("/api/fundamentals/" + encodeURIComponent(sym)).then((f) => {
+    if (thesisSym !== sym) return;
+    $("#th-fund").textContent = f.line || f.note || "";
+  }).catch(() => {});
 }
 const closeThesis = () => { $("#thesis-modal").hidden = true; };
 $("#th-close").addEventListener("click", closeThesis);
@@ -1863,7 +1871,9 @@ $("#th-form").addEventListener("submit", async (e) => {
   const target = numOrNull($("#th-target").value);
   const body = { thesis: $("#th-thesis").value.trim(), wrong_if: $("#th-wrong").value.trim(), price_below: numOrNull($("#th-below").value),
     price_above: numOrNull($("#th-above").value), max_loss_pct: numOrNull($("#th-loss").value), review_on: $("#th-review").value || null,
-    target_weight: target ? target / 100 : null };
+    target_weight: target ? target / 100 : null, rev_growth_min: numOrNull($("#th-rev").value),
+    rev_growth_quarters: numOrNull($("#th-revq").value), op_margin_min: numOrNull($("#th-om").value),
+    dilution_max: numOrNull($("#th-dil").value), fcf_positive: $("#th-fcf").checked };
   try { await api("/api/thesis/" + encodeURIComponent(thesisSym), { method: "POST", body: JSON.stringify(body) }); closeThesis(); loadHold(true); }
   catch (err) { $("#th-msg").textContent = err.message; }
 });

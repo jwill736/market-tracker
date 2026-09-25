@@ -576,6 +576,16 @@
         <label>Target share of my portfolio %<input type="number" id="th-target" min="0" max="100" step="0.5"></label>
         <label>Remind me to review on<input type="date" id="th-review"></label>
       </div>
+      <p class="muted small">From the company's quarterly filings (stocks only). Blank = the automatic checks: revenue shrinking
+        2 quarters running, share count up over 10% in a year, free cash flow turning negative.</p>
+      <p class="small" id="th-fund"></p>
+      <div class="th-grid">
+        <label>Revenue growth under %<input type="number" id="th-rev" min="-100" max="500" step="any"></label>
+        <label>…for this many quarters running<input type="number" id="th-revq" min="1" max="8" step="1" placeholder="2"></label>
+        <label>Operating margin under %<input type="number" id="th-om" min="-100" max="100" step="any"></label>
+        <label>Share count up more than % a year<input type="number" id="th-dil" min="0" max="100" step="any"></label>
+        <label class="check"><input type="checkbox" id="th-fcf"> Free cash flow must stay positive</label>
+      </div>
       <div class="pc-buttons"><button type="submit">Save</button><button type="button" class="button-secondary" id="th-delete">Remove</button>
         <span class="muted small" id="th-msg"></span></div>
     </form>

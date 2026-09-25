@@ -7,12 +7,15 @@ A holding is only raised for a decision when one of these fires:
 
 1. Your own tripwire. When you record a holding's thesis you can set the lines that would
    prove you wrong: a price floor, a loss from your cost, a take-profit price, a review date.
-2. A serious filing: the SEC radar's "Act today" (delisting, bankruptcy) or "Serious"
+2. The business itself, from its quarterly filings: revenue shrinking two quarters running,
+   heavy dilution, free cash flow turning negative, or your own rule ("growth under 10% for
+   2 quarters") - see fundamentals.py.
+3. A serious filing: the SEC radar's "Act today" (delisting, bankruptcy) or "Serious"
    (going-concern doubt, restatement, auditor change, late report) for the company.
-3. Concentration: one position grown past your cap or past the target weight you gave it.
+4. Concentration: one position grown past your cap or past the target weight you gave it.
    The cap is 20% (settable), loosened for small portfolios to 1.5x an equal share, so three
    holdings can each be up to 50%. Trimming back is the one sale buy-and-hold research supports.
-4. Taxes: a loss worth harvesting (with a replacement so you stay invested), or a sale that
+5. Taxes: a loss worth harvesting (with a replacement so you stay invested), or a sale that
    would be cheaper if it waited until the shares turn long-term.
 
 Freed money goes to a reinvest queue: holdings below the target you set for them, watchlist
@@ -42,6 +45,12 @@ class Thesis:
     max_loss_pct: float | None = None
     review_on: str | None = None
     target_weight: float | None = None   # fraction, e.g. 0.10
+    # Fundamentals rules (from the company's filings; see fundamentals.py). None = automatic.
+    rev_growth_min: float | None = None      # percent, e.g. 10 = "growth under 10%..."
+    rev_growth_quarters: int | None = None   # "...for this many quarters running" (default 2)
+    op_margin_min: float | None = None       # percent
+    dilution_max: float | None = None        # percent a year
+    fcf_positive: bool = False
     updated: str = ""
 
 
@@ -67,6 +76,7 @@ class HoldRow:
     wait_saves: float = 0.0
     thesis: dict | None = None
     earnings: dict | None = None
+    fundamentals: dict | None = None     # {line, latest quarter}
 
 
 def effective_cap(cap: float, holdings: int) -> float:
@@ -85,7 +95,7 @@ def _verdict(triggers: list[Trigger]) -> str:
 
 
 def check_holding(pos: dict, base: float, thesis: Thesis | None, radar: list[dict], today: date,
-                  cap: float = CAP) -> HoldRow:
+                  cap: float = CAP, fund: dict | None = None) -> HoldRow:
     """pos: a valued position (symbol, quantity, price, market_value, unrealized_pct)."""
     sym, price = pos["symbol"], pos.get("price")
     value = pos.get("market_value") or 0.0
@@ -116,6 +126,9 @@ def check_holding(pos: dict, base: float, thesis: Thesis | None, radar: list[dic
         lvl = "sell" if a["level"] >= 3 else "review"
         trig.append(Trigger("filing", lvl, f"{a.get('headline') or a.get('label')} ({(a.get('filed') or a.get('when') or '')[:10]})"))
 
+    for c in (fund or {}).get("checks", []):
+        trig.append(Trigger("fundamentals", c["level"], c["text"]))
+
     limit = cap
     if thesis and thesis.target_weight:
         limit = min(cap, thesis.target_weight * 1.25)
@@ -126,7 +139,8 @@ def check_holding(pos: dict, base: float, thesis: Thesis | None, radar: list[dic
                                             f"brings it back to {target:.0%}"))
     verdict = _verdict(trig)
     return HoldRow(sym, verdict, pos["quantity"], price, round(value, 2), round(w, 4), cost_pct, trig, trim_value,
-                   thesis=asdict(thesis) if thesis else None)
+                   thesis=asdict(thesis) if thesis else None,
+                   fundamentals={"line": fund["line"], "latest": fund["quarters"][0]} if fund and fund.get("quarters") else None)
 
 
 def add_tax_notes(rows: list[HoldRow], tax: dict) -> None:
@@ -197,13 +211,15 @@ def reinvest_queue(rows: list[HoldRow], theses: dict[str, Thesis], watch: list[s
 
 def build(positions: list[dict], transactions: list[dict], theses: dict[str, Thesis], radar_by_symbol: dict[str, list[dict]],
           today: date, *, cash: float = 0.0, cap: float = CAP, watch: list[str] | None = None,
-          st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE, earnings: dict[str, dict] | None = None) -> dict:
+          st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE, earnings: dict[str, dict] | None = None,
+          fundamentals: dict[str, dict] | None = None) -> dict:
     positions = [p for p in positions if p.get("quantity")]
     cap = effective_cap(cap, len(positions))
     base = sum(p.get("market_value") or 0 for p in positions) + max(cash, 0.0)
     prices = {p["symbol"]: p["price"] for p in positions if p.get("price")}
     tax = taxes.summary(transactions, prices, today, st_rate, lt_rate)
-    rows = [check_holding(p, base, theses.get(p["symbol"]), radar_by_symbol.get(p["symbol"], []), today, cap)
+    rows = [check_holding(p, base, theses.get(p["symbol"]), radar_by_symbol.get(p["symbol"], []), today, cap,
+                          (fundamentals or {}).get(p["symbol"]))
             for p in positions]
     add_tax_notes(rows, tax)
     for r in rows:
@@ -267,7 +283,7 @@ def clear_cache() -> None:
 def gather(today: date | None = None) -> dict:
     """The hold plan from the ledger, your theses and settings, the radar for your companies and
     upcoming earnings. Used by the Hold tab and the morning brief."""
-    from . import db, events, http, sentinel, service
+    from . import db, events, fundamentals, http, sentinel, service
     today = today or date.today()
     with db.connect() as conn:
         txs = db.list_transactions(conn)
@@ -291,9 +307,15 @@ def gather(today: date | None = None) -> dict:
         cal = events.build(positions, today)
     except (http.DataUnavailable, ValueError, KeyError) as exc:
         cal = {"earnings": [], "macro": [], "errors": [str(exc)]}
-    plan = build(positions, txs, theses_from(raw), radar_by, today, cash=cash, cap=cfg["cap"], watch=watch,
-                 st_rate=cfg["st_rate"], lt_rate=cfg["lt_rate"], earnings={e["symbol"]: e for e in cal["earnings"]})
+    theses = theses_from(raw)
+    try:
+        fund, fund_errors = fundamentals.build(held, theses)
+    except (http.DataUnavailable, ValueError, KeyError) as exc:
+        fund, fund_errors = {}, [f"Financials: {exc}"]
+    plan = build(positions, txs, theses, radar_by, today, cash=cash, cap=cfg["cap"], watch=watch,
+                 st_rate=cfg["st_rate"], lt_rate=cfg["lt_rate"], earnings={e["symbol"]: e for e in cal["earnings"]},
+                 fundamentals=fund)
     plan["events"] = cal
     plan["radar"] = {s: v for s, v in radar_by.items()}
-    plan["errors"] = radar_errors + cal.get("errors", [])
+    plan["errors"] = radar_errors + cal.get("errors", []) + fund_errors
     return plan

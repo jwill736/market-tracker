@@ -409,6 +409,8 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .th-form label { display: grid; gap: 4px; font-size: 13px; }
 .th-form textarea { width: 100%; resize: vertical; font: inherit; }
 .th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.th-grid label.check { display: flex; align-items: center; gap: 8px; flex-direction: row; }
+.th-grid label.check input { width: auto; }
 
 /* morning brief */
 .brief-card { margin-bottom: 14px; }
