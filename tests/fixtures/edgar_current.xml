@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>Latest Filings - Thu, 24 Sep 2026 14:10:00 EDT</title>
+<link rel="alternate" href="/cgi-bin/browse-edgar?action=getcurrent"/>
+<id>https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent</id>
+<updated>2026-09-24T14:10:00-04:00</updated>
+<entry>
+<title>4 - Apple Inc. (0000320193) (Issuer)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/320193/000114036126012345/0001140361-26-012345-index.htm"/>
+<summary type="html"> &lt;b&gt;Filed:&lt;/b&gt; 2026-09-24 &lt;b&gt;AccNo:&lt;/b&gt; 0001140361-26-012345 &lt;b&gt;Size:&lt;/b&gt; 5 KB</summary>
+<updated>2026-09-24T14:05:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="4"/>
+<id>urn:tag:sec.gov,2008:accession-number=0001140361-26-012345</id>
+</entry>
+<entry>
+<title>4 - DOE JANE (0001214156) (Reporting)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/1214156/000114036126012345/0001140361-26-012345-index.htm"/>
+<summary type="html"> &lt;b&gt;Filed:&lt;/b&gt; 2026-09-24 &lt;b&gt;AccNo:&lt;/b&gt; 0001140361-26-012345 &lt;b&gt;Size:&lt;/b&gt; 5 KB</summary>
+<updated>2026-09-24T14:05:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="4"/>
+<id>urn:tag:sec.gov,2008:accession-number=0001140361-26-012345</id>
+</entry>
+<entry>
+<title>424B2 - BIG BANK CORP (0000070858) (Filer)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/70858/000007085826000001/0000070858-26-000001-index.htm"/>
+<updated>2026-09-24T14:04:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="424B2"/>
+<id>urn:tag:sec.gov,2008:accession-number=0000070858-26-000001</id>
+</entry>
+<entry>
+<title>SCHEDULE 13D - ACME SMALLCAP CORP (0000777777) (Subject)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/777777/000133652826000010/0001336528-26-000010-index.htm"/>
+<updated>2026-09-24T14:02:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="SCHEDULE 13D"/>
+<id>urn:tag:sec.gov,2008:accession-number=0001336528-26-000010</id>
+</entry>
+<entry>
+<title>SCHEDULE 13D - Pershing Square Capital Management, L.P. (0001336528) (Filed by)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/1336528/000133652826000010/0001336528-26-000010-index.htm"/>
+<updated>2026-09-24T14:02:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="SCHEDULE 13D"/>
+<id>urn:tag:sec.gov,2008:accession-number=0001336528-26-000010</id>
+</entry>
+<entry>
+<title>SCHEDULE 13D - WIDGET HOLDINGS INC (0000888888) (Subject)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/888888/000099999926000002/0000999999-26-000002-index.htm"/>
+<updated>2026-09-24T14:01:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="SCHEDULE 13D"/>
+<id>urn:tag:sec.gov,2008:accession-number=0000999999-26-000002</id>
+</entry>
+<entry>
+<title>SCHEDULE 13D - SMALL VALUE PARTNERS LP (0000999999) (Filed by)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/999999/000099999926000002/0000999999-26-000002-index.htm"/>
+<updated>2026-09-24T14:01:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="SCHEDULE 13D"/>
+<id>urn:tag:sec.gov,2008:accession-number=0000999999-26-000002</id>
+</entry>
+<entry>
+<title>4 - OLDCO INC (0000555555) (Issuer)</title>
+<link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/555555/000055555526000001/0000555555-26-000001-index.htm"/>
+<updated>2026-09-24T09:00:00-04:00</updated>
+<category scheme="https://www.sec.gov/" label="form type" term="4"/>
+<id>urn:tag:sec.gov,2008:accession-number=0000555555-26-000001</id>
+</entry>
+</feed>

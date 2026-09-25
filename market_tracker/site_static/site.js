@@ -115,6 +115,20 @@ function renderClusters() {
       </tbody></table></div></details>` : "";
 }
 
+function renderMoves() {
+  const big = data.big_buys || [], stakes = data.stakes || [];
+  $("#big-buys").innerHTML = big.length ? `<ul class="move-list">${big.map((b) => `<li>
+      <span class="what">${esc(b.symbol)} <span class="muted">${esc(b.company)}</span></span>
+      <span class="amt">${money(b.value)}</span>
+      <span class="sub">${esc(b.insider)}, ${esc(b.role)} · ${b.trade_dates.map(fmtDate).join(", ")} · <a href="${esc(b.url)}" rel="noopener">filing</a></span>
+    </li>`).join("")}</ul>` : `<p class="empty">None in the last 14 days.</p>`;
+  $("#stakes").innerHTML = stakes.length ? `<ul class="move-list">${stakes.map((st) => `<li>
+      <span class="what">${esc(st.company)}</span>
+      <span class="amt">${fmtDate(st.filed)}</span>
+      <span class="sub">${esc(st.filer)}${st.tracked ? `<span class="chip tracked">${esc(st.tracked)}</span>` : ""} · ${esc(st.form)} · <a href="${esc(st.url)}" rel="noopener">filing</a></span>
+    </li>`).join("")}</ul>` : `<p class="empty">No new 13D filings seen yet. The watcher records them as they arrive.</p>`;
+}
+
 function renderRecord() {
   const t = data.track_record;
   if (!t) { $("#verdict").textContent = "No journal entries yet."; return; }
@@ -139,7 +153,7 @@ function renderBacktest() {
 function render() {
   $("#snapshot-note").textContent = `Snapshot built ${fmtTime(data.generated_at)}.`;
   $("#generated").textContent = `Data built ${fmtTime(data.generated_at)}`;
-  renderCards(); renderScores(); renderClusters(); renderRecord(); renderBacktest();
+  renderCards(); renderScores(); renderClusters(); renderMoves(); renderRecord(); renderBacktest();
 }
 
 async function load() {

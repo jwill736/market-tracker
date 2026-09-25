@@ -1,0 +1,97 @@
+name: Filing watcher
+
+# Polls EDGAR's latest-filings feed every 5 minutes for Form 4 insider purchases and Schedule
+# 13D/13G stakes, instead of waiting for the next morning's daily index (insider-alerts.yml
+# stays as the daily catch-up). GitHub runs schedules on a best-effort basis, so expect
+# alerts roughly 5-20 minutes after a filing is accepted. For faster alerts, run
+# `mt watch --loop 60` on any always-on machine.
+#
+# Secrets: SEC_USER_AGENT (contact email the SEC requires) and, for phone notifications,
+# NTFY_TOPIC (a long random ntfy.sh topic name).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * 1-5"      # weekdays, around the clock (filings arrive until 10pm ET)
+    - cron: "0 */3 * * 0,6"      # weekends are quiet
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: journal-data-branch      # shared with journal.yml and insider-alerts.yml
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Restore cursor
+        # The list of filings already handled lives in the Actions cache rather than on the
+        # data branch, so a run with nothing new commits nothing.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/watch/watch_state.json
+          key: watch-state-${{ github.run_id }}
+          restore-keys: watch-state-
+      - name: Load shared alert data
+        run: |
+          mkdir -p "$RUNNER_TEMP/watch"
+          if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
+            for f in insider_buys.csv alerted.csv stakes.csv; do
+              git show "origin/journal-data:$f" > "$RUNNER_TEMP/watch/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/watch/$f"
+            done
+          fi
+      - name: Poll EDGAR
+        run: |
+          mt watch --data-dir "$RUNNER_TEMP/watch" --state "$RUNNER_TEMP/watch/watch_state.json" \
+            --issues-dir "$RUNNER_TEMP/issues" --notify | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Open issues
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/issues/*.md)
+          [ ${#files[@]} -eq 0 ] && exit 0
+          gh label create insider-alert --color 2743D6 --description "Insider cluster buy" --force
+          gh label create stake-alert --color 9B3D8C --description "13D/13G stake by a tracked investor" --force
+          for body in "${files[@]}"; do
+            label="${body%.md}"; label="${label##*.}"
+            gh issue create --title "$(cat "${body%.md}.title")" --body-file "$body" --label "$label"
+          done
+      - name: Save alert data to journal-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse --verify -q refs/remotes/origin/journal-data >/dev/null; then
+            git checkout -B journal-data origin/journal-data
+          else
+            git checkout --orphan journal-data
+            git rm -rfq .
+          fi
+          for f in insider_buys.csv alerted.csv stakes.csv; do
+            [ -f "$RUNNER_TEMP/watch/$f" ] && cp "$RUNNER_TEMP/watch/$f" .
+          done
+          git add insider_buys.csv alerted.csv stakes.csv
+          if git diff --cached --quiet; then
+            echo "No new data"
+          else
+            git commit -qm "Filing watcher $(date -u +%FT%H:%MZ)"
+            git push origin journal-data
+          fi
+      # Saved last: if anything above failed, the next run re-reads the same filings.
+      - name: Save cursor
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/watch/watch_state.json
+          key: watch-state-${{ github.run_id }}

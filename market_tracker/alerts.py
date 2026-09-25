@@ -37,7 +37,8 @@ ALERT_MAX_AGE_DAYS = 7         # alert only if the newest filing in the cluster 
 KEEP_DAYS = 120               # rolling window of buys kept in the CSV
 # SEC industry codes for investment funds: officers buying shares of a closed-end fund or BDC
 # says nothing about an operating business (the first backfill alerted on one).
-FUND_SIC = {"6722", "6726"}
+FUND_SIC = {"6722", "6726",
+            "6770"}   # blank-check companies: a SPAC sponsor buying its own shell isn't the signal
 # Forms only investment companies file: shareholder reports, census and portfolio filings for
 # registered funds, and the registration and election forms of BDCs. Checked alongside the
 # industry code, because some funds (General American Investors, for one) carry another code.
@@ -120,9 +121,21 @@ def is_officer_or_director(role: str) -> bool:
     return any(p not in ("10% owner", "Insider") for p in parts)
 
 
+# Purchases in an offering are coded P like open-market buys but carry a different message
+# (the backfill found a venture fund and its board member buying $20M in an IPO). Filings
+# whose footnotes describe an offering are skipped.
+OFFERING = re.compile(r"initial public offering|\bIPO\b|underwritten (?:public )?offering|private placement|"
+                      r"registered direct offering|public offering price", re.I)
+
+
+def describes_offering(xml_text: str) -> bool:
+    m = re.search(r"<footnotes>(.*?)</footnotes>", xml_text, re.S | re.I)
+    return bool(m and OFFERING.search(m.group(1)))
+
+
 def buys_from_submission(submission_text: str, accession: str, filed: str) -> list[Buy]:
     xml = extract_xml(submission_text)
-    if not xml:
+    if not xml or describes_offering(xml):
         return []
     try:
         cik, name, symbol = parse_issuer(xml)
@@ -176,6 +189,17 @@ def load_buys(path: str) -> list[Buy]:
                 r[k] = float(r[k] or 0)
             out.append(Buy(**{k: r[k] for k in BUY_FIELDS}))
         return out
+
+
+def _same_trade(b: Buy) -> tuple:
+    """The key a purchase is counted under. Related owners (a venture fund and the partner
+    who sits on the board for it, say) report the same trade separately, and counted per
+    filer one purchase looks like two insiders buying. Such filers are 10% owners, so for
+    them the reporter is left out of the key. Ordinary directors who happen to buy the same
+    amount at the same price on the same day still count separately."""
+    if "10% owner" in b.role.lower():
+        return (b.issuer_cik, b.trade_date, b.shares, b.price)
+    return _trade_key(b)
 
 
 def _trade_key(b: Buy) -> tuple:
@@ -239,8 +263,8 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
     by_issuer: dict[str, list[Buy]] = {}
     seen: set[tuple] = set()
     for b in sorted(buys, key=lambda b: b.filed):
-        if start <= b.trade_date <= end and b.filed <= end and _trade_key(b) not in seen:
-            seen.add(_trade_key(b))
+        if start <= b.trade_date <= end and b.filed <= end and _same_trade(b) not in seen:
+            seen.add(_same_trade(b))
             by_issuer.setdefault(b.issuer_cik, []).append(b)
     clusters = []
     for cik, group in by_issuer.items():

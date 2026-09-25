@@ -80,3 +80,25 @@ def test_build_writes_static_files_and_data(tmp_path):
     assert len(data["clusters"]) == 1
     html = (out / "index.html").read_text()
     assert "Plumbline" in html and "site.js" in html
+
+
+def test_big_buys_and_stakes_for_the_site():
+    from market_tracker import realtime
+    today = date(2026, 9, 24)
+    big = [_buy("CEO", "2026-09-20", "2026-09-22")]
+    big[0].value = 2_500_000
+    small = [_buy("CFO", "2026-09-20", "2026-09-22")]
+    old = [_buy("OLD", "2026-08-01", "2026-08-03")]
+    old[0].value = 5_000_000
+    rows = site.big_buy_rows(big + small + old, today, lambda cik: False)
+    assert [(r["insider"], r["value"]) for r in rows] == [("CEO", 2_500_000)]
+    assert site.big_buy_rows(big, today, lambda cik: True) == []
+
+    def stake(acc, form, filed, tracked=""):
+        return realtime.Stake(filed=filed, accession=acc, form=form, subject_cik="0000777777",
+                              subject_name="ACME", filer_cik="1", filer_name="FILER", tracked=tracked, url="")
+    stakes = [stake("a", "SCHEDULE 13D", "2026-09-20"), stake("b", "SCHEDULE 13G", "2026-09-21"),
+              stake("c", "SCHEDULE 13G", "2026-09-22", tracked="Bill Ackman"), stake("d", "SCHEDULE 13D", "2026-07-01")]
+    out = site.stake_rows(stakes, today)
+    assert [r["filed"] for r in out] == ["2026-09-22", "2026-09-20"]  # untracked 13G and old filings left out
+    assert out[0]["tracked"] == "Bill Ackman" and out[1]["url"].startswith("https://www.sec.gov/Archives/edgar/data/777777/")

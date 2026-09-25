@@ -91,13 +91,38 @@ works. Two traps it guards against:
 move costs no more than 2% of the portfolio. A 25%-volatility stock can be 20% of the portfolio. A 100%-volatility token
 should be about 7%.
 
+## Real-time filing alerts
+
+`mt watch` reads the SEC's latest-filings feed, which lists a filing minutes after the SEC accepts it. The daily
+index that `mt alerts` uses only appears the next morning. Every run it:
+- stores new open-market purchases by officers and directors, so an **insider cluster** alerts as soon as the
+  filing that completes it appears (same rules as above);
+- flags a **large purchase**: one officer or director buying $1M or more in one filing (a notification only,
+  since a single buy is weaker evidence than a cluster);
+- records every new **Schedule 13D** (a holder crossing 5% who may push for change) and alerts on any 13D/13G
+  filed by one of the tracked investors.
+
+Purchases in an IPO, underwritten offering or private placement are skipped: they are coded like open-market
+buys but aren't the signal. The same trade reported by a fund and its board member counts once.
+
+**How fast.** In GitHub Actions the watcher runs every 5 minutes, but GitHub runs schedules on a best-effort
+basis, so expect alerts 5–20 minutes after the filing. For about a minute, run `mt watch --loop 60` on any
+always-on machine (it shares the same data folder as `mt alerts`).
+
+**Phone notifications** (free, no account):
+1. Install the ntfy app (iOS or Android) and subscribe to a topic with a long random name, for example
+   `plumbline-` followed by 20 random letters. Anyone who knows the name can read it, so don't use a guessable one.
+2. Add it as a repository secret named `NTFY_TOPIC`.
+New clusters, large buys and tracked-investor stakes then arrive as push notifications. Without the secret,
+alerts still open issues.
+
 ## Public site
 
 `https://jwill736.github.io/market-tracker/` is a read-only Plumbline page that anyone can open. It shows:
 - crypto prices streaming live from Coinbase in your browser;
 - stock quotes as of the latest snapshot;
 - today's scores and what drives them;
-- recent insider cluster buys;
+- recent insider cluster buys, large single purchases, and new 13D stakes;
 - the live track record and the backtest.
 
 It never publishes your portfolio, deep dives or keys; those stay in the local app (`mt serve`). One-time setup:
@@ -138,14 +163,15 @@ market_tracker/
 | `live-smoke.yml` | every PR, daily, on demand | calls every real data source and reports PASS/FAIL per source in the job summary. Not required to merge, so an upstream outage can't block you |
 | `journal.yml` | weekdays after the US close, on demand | records the 15-symbol universe and commits `signal_journal.csv` to the `journal-data` branch; the job summary shows the track record |
 | `score-backtest.yml` | on demand | rebuilds the score month by month from 2016 using only data public at each date, and reports how well each component ranked later returns |
-| `insider-alerts.yml` | daily at 10:30 UTC, on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
+| `insider-alerts.yml` | daily at 10:30 UTC (catch-up), on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
+| `watch.yml` | every 5 min on weekdays, every 3 h at weekends | reads EDGAR's latest-filings feed for Form 4 purchases and Schedule 13D/13G stakes; opens `insider-alert` / `stake-alert` issues and pushes phone notifications (below) |
 | `site.yml` | every 30 min in US market hours, every 6 h otherwise, after journal and alert runs | builds the public site (`mt site`) and deploys it to GitHub Pages |
 
 **When an insider cluster opens an issue.** At least 3 officers or directors (10% holders alone don't count) buy
 on the open market, at least $10k each and $100k in total, within 30 days, and all of the following hold:
 - the buys span at least 2 trading days, because same-day batches are usually compensation programs;
 - the newest filing is at most 7 days old, so a backfill or a late run doesn't raise old news;
-- the issuer has a ticker and isn't a closed-end fund or BDC (an investment-company industry code, none at all, or fund-only filings such as N-CSR or N-2);
+- the issuer has a ticker and isn't a closed-end fund or BDC (an investment-company or blank-check industry code, none at all, or fund-only filings such as N-CSR or N-2);
 - the company wasn't alerted in the last 30 days.
 
 A trade filed twice counts once. The job summary lists every active cluster with the reason it did or didn't alert

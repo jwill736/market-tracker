@@ -284,6 +284,9 @@ def cmd_alerts(args) -> int:
                 fh.write(alerts.issue_title(c))
             with open(os.path.join(args.issues_dir, f"{i:03d}.md"), "w") as fh:
                 fh.write(alerts.issue_body(c))
+    if args.notify and not args.dry_run:
+        for c in fresh:
+            _notify_cluster(c)
     if not args.dry_run:
         for c in fresh:
             alerted[c.issuer_cik] = today.isoformat()
@@ -292,6 +295,74 @@ def cmd_alerts(args) -> int:
         with open(state_path, "w") as fh:
             json.dump({"last_scanned": last_scanned}, fh)
     return 0
+
+
+def _notify_cluster(c) -> None:
+    from . import alerts, notify
+
+    latest = max(c.buys, key=lambda b: b.filed)
+    notify.send(notify.Message(
+        title=f"Insider cluster: {c.symbol or c.issuer_name} - {len(c.insiders)} insiders, {alerts._money(c.total_value)}",
+        body=f"{c.issuer_name}: {len(c.insiders)} officers/directors bought on the open market, "
+             f"{c.first_trade} to {c.last_trade}. An alert issue has been opened.",
+        url=f"{alerts.ARCHIVES}edgar/data/{int(latest.issuer_cik)}/{latest.accession.replace('-', '')}/",
+        priority=4, tags=("chart_with_upwards_trend",)))
+
+
+def cmd_watch(args) -> int:
+    import os
+    import time
+    from datetime import date as _date, datetime, timezone
+
+    from . import alerts, notify, realtime
+
+    os.makedirs(args.data_dir, exist_ok=True)
+    buys_path = os.path.join(args.data_dir, "insider_buys.csv")
+    alerted_path = os.path.join(args.data_dir, "alerted.csv")
+    stakes_path = os.path.join(args.data_dir, "stakes.csv")
+    if args.notify and not notify.configured():
+        print("NTFY_TOPIC is not set: alerts will be written but not pushed to a phone", file=sys.stderr)
+    issue_no = 0
+    while True:
+        started = time.monotonic()
+        state = realtime.WatchState.load(args.state)
+        buys = alerts.load_buys(buys_path)
+        alerted = alerts.load_alerted(alerted_path)
+        stakes = realtime.load_stakes(stakes_path)
+        res = realtime.poll(state, buys, alerted, now=datetime.now(timezone.utc),
+                            log=lambda m: print(m, file=sys.stderr, flush=True))
+        print("\n".join(realtime.summary_lines(res)), flush=True)
+        if args.issues_dir:
+            os.makedirs(args.issues_dir, exist_ok=True)
+            # The file name carries the issue label: insider-alert or stake-alert.
+            items = [("insider-alert", alerts.issue_title(c), alerts.issue_body(c)) for c in res.clusters]
+            items += [("stake-alert", realtime.stake_title(s), realtime.stake_body(s)) for s in res.tracked_stakes]
+            for label, title, body in items:
+                stem = os.path.join(args.issues_dir, f"{issue_no:03d}.{label}")
+                with open(stem + ".title", "w") as fh:
+                    fh.write(title)
+                with open(stem + ".md", "w") as fh:
+                    fh.write(body)
+                issue_no += 1
+        if args.notify:
+            for c in res.clusters:
+                _notify_cluster(c)
+            for b in res.big:
+                title, body, url = realtime.big_buy_message(b)
+                notify.send(notify.Message(title=title, body=body, url=url, priority=3, tags=("moneybag",)))
+            for s in res.tracked_stakes:
+                notify.send(notify.Message(title=realtime.stake_title(s), body=f"{s.filer_name} filed {s.form} on "
+                                           f"{s.subject_name}.", url=s.url, priority=4, tags=("rotating_light",)))
+        if not args.dry_run:
+            today = _date.today()
+            keep = [s for s in res.stakes if s.tracked or realtime.is_initial_13d(s.form)]
+            alerts.save_buys(buys, buys_path, today)
+            alerts.save_alerted(alerted, alerted_path)
+            realtime.save_stakes(stakes + keep, stakes_path, today)
+            state.save(args.state)
+        if not args.loop:
+            return 0
+        realtime.sleep_until_next(args.loop, started)
 
 
 def cmd_site(args) -> int:
@@ -379,7 +450,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--days", type=int, help="Scan the last N calendar days instead of resuming")
     s.add_argument("--issues-dir", help="Write one title/body pair per new cluster here")
     s.add_argument("--dry-run", action="store_true", help="Don't save state (for testing)")
+    s.add_argument("--notify", action="store_true", help="Push new alerts to ntfy (needs NTFY_TOPIC)")
     s.set_defaults(func=cmd_alerts)
+
+    s = sub.add_parser("watch", help="Poll EDGAR's latest filings for insider buys and 13D/13G stakes")
+    s.add_argument("--data-dir", default="alerts_data", help="Shared with `mt alerts`: buys, alert history, stakes")
+    s.add_argument("--state", default="alerts_data/watch_state.json", help="Cursor of filings already handled")
+    s.add_argument("--issues-dir", help="Write one title/body pair per alert here")
+    s.add_argument("--notify", action="store_true", help="Push alerts to ntfy (needs NTFY_TOPIC)")
+    s.add_argument("--dry-run", action="store_true", help="Don't save anything")
+    s.add_argument("--loop", type=float, default=0, metavar="SECONDS",
+                   help="Keep polling every SECONDS (e.g. 60) instead of running once")
+    s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("site", help="Build the static public site (GitHub Pages) into a folder")
     s.add_argument("--out", default="_site")
