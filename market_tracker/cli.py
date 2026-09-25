@@ -503,7 +503,20 @@ def cmd_serve(args) -> int:
     import threading
     import uvicorn
     import webbrowser
+    from . import bgservice
     url = f"http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}"
+    if bgservice.answering(args.port):
+        print(f"Plumbline is already running at {url} (the background service). Opening it.")
+        print("To load a new version into it: mt service update")
+        if args.open:
+            webbrowser.open(url)
+        return 0
+    if args.log:
+        fh = open(args.log, "a", buffering=1, encoding="utf-8")
+        sys.stdout = sys.stderr = fh
+    if args.pidfile:
+        with open(args.pidfile, "w") as pf:
+            pf.write(str(os.getpid()))
     print(f"Plumbline is running at {url}  (Ctrl+C to stop)")
     if args.open:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
@@ -511,70 +524,10 @@ def cmd_serve(args) -> int:
     return 0
 
 
-SERVICE_LABEL = "com.plumbline.app"
-
-
 def cmd_service(args) -> int:
     """Keep the dashboard running whenever you're logged in (macOS, Linux or Windows)."""
-    import platform
-    import shutil
-    import subprocess
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    mt = shutil.which("mt") or os.path.join(os.path.dirname(sys.executable), "mt")
-    system = platform.system()
-    if system == "Darwin":
-        plist = os.path.expanduser(f"~/Library/LaunchAgents/{SERVICE_LABEL}.plist")
-        if args.action == "install":
-            os.makedirs(os.path.dirname(plist), exist_ok=True)
-            with open(plist, "w") as fh:
-                fh.write(f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>{SERVICE_LABEL}</string>
-  <key>ProgramArguments</key><array><string>{mt}</string><string>serve</string><string>--port</string><string>{args.port}</string></array>
-  <key>WorkingDirectory</key><string>{root}</string>
-  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>{root}/plumbline.log</string><key>StandardErrorPath</key><string>{root}/plumbline.log</string>
-</dict></plist>
-""")
-            subprocess.run(["launchctl", "unload", plist], capture_output=True)
-            subprocess.run(["launchctl", "load", plist], check=True)
-        elif args.action == "uninstall":
-            subprocess.run(["launchctl", "unload", plist], capture_output=True)
-            if os.path.exists(plist):
-                os.remove(plist)
-        else:
-            print(subprocess.run(["launchctl", "list", SERVICE_LABEL], capture_output=True, text=True).stdout or "not installed")
-    elif system == "Linux":
-        unit = os.path.expanduser("~/.config/systemd/user/plumbline.service")
-        if args.action == "install":
-            os.makedirs(os.path.dirname(unit), exist_ok=True)
-            with open(unit, "w") as fh:
-                fh.write(f"[Unit]\nDescription=Plumbline\n\n[Service]\nWorkingDirectory={root}\n"
-                         f"ExecStart={mt} serve --port {args.port}\nRestart=always\n\n[Install]\nWantedBy=default.target\n")
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-            subprocess.run(["systemctl", "--user", "enable", "--now", "plumbline"], check=True)
-        elif args.action == "uninstall":
-            subprocess.run(["systemctl", "--user", "disable", "--now", "plumbline"], capture_output=True)
-            if os.path.exists(unit):
-                os.remove(unit)
-        else:
-            print(subprocess.run(["systemctl", "--user", "status", "plumbline", "--no-pager"], capture_output=True, text=True).stdout)
-    elif system == "Windows":
-        if args.action == "install":
-            cmd = f'cmd /c cd /d "{root}" && "{mt}" serve --port {args.port}'
-            subprocess.run(["schtasks", "/Create", "/F", "/SC", "ONLOGON", "/TN", "Plumbline", "/TR", cmd], check=True)
-            subprocess.run(["schtasks", "/Run", "/TN", "Plumbline"], check=True)
-        elif args.action == "uninstall":
-            subprocess.run(["schtasks", "/Delete", "/F", "/TN", "Plumbline"], capture_output=True)
-        else:
-            print(subprocess.run(["schtasks", "/Query", "/TN", "Plumbline"], capture_output=True, text=True).stdout or "not installed")
-    else:
-        print(f"Not supported on {system}")
-        return 1
-    if args.action == "install":
-        print(f"Plumbline now starts when you log in: http://localhost:{args.port} (logs: plumbline.log).")
-    return 0
+    from . import bgservice
+    return getattr(bgservice, args.action)(args.port)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -683,10 +636,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--open", action="store_true", help="Open the dashboard in your browser")
+    s.add_argument("--log", help="Write output to this file (the background service uses plumbline.log)")
+    s.add_argument("--pidfile", help="Write the process id here (lets `mt service restart` stop it)")
     s.set_defaults(func=cmd_serve)
 
     s = sub.add_parser("service", help="Run the dashboard in the background whenever you're logged in")
-    s.add_argument("action", choices=["install", "uninstall", "status"])
+    s.add_argument("action", choices=["install", "uninstall", "status", "restart", "update"])
     s.add_argument("--port", type=int, default=8000)
     s.set_defaults(func=cmd_service)
 
