@@ -26,6 +26,16 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Track record** | Logs each day's scores to a CSV, then measures them against what prices did 1, 3 and 6 months later. Reports the IC (rank correlation) with its error band, average return by label, and a per-component IC. A scheduled GitHub Actions job records 15 symbols every weekday | computed locally + GitHub Actions |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
+## Run it in your browser (no install)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/jwill736/market-tracker?quickstart=1)
+
+A Codespace is this app running on GitHub's machines, opened from your browser. It asks for `SEC_USER_AGENT` (your
+email; the SEC requires a contact) and optionally `NTFY_TOPIC`, installs everything, starts the dashboard and opens it
+in a new tab. The address is private to your GitHub login. It uses GitHub's free monthly Codespaces allowance
+(about 60 hours a month on the smallest machine); it stops after 30 idle minutes and keeps your imported data until
+you delete it. Restart it from github.com/codespaces. The background watch (radar, news) runs while it's open.
+
 ## Run it on your computer (5 minutes)
 
 Everything runs locally with live data: nothing to deploy, and your portfolio never leaves your machine.

@@ -1,0 +1,19 @@
+{
+  // Plumbline in a GitHub Codespace: Code → Codespaces → Create codespace on main.
+  // The dashboard starts by itself and opens in a new tab; the forwarded port is private to
+  // your GitHub login, so no APP_PASSWORD is needed. Stop the codespace when you're done
+  // (it also stops itself after 30 idle minutes); your data stays until you delete it.
+  "name": "Plumbline",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "hostRequirements": { "cpus": 2 },
+  "secrets": {
+    "SEC_USER_AGENT": { "description": "A name and your email, e.g. 'plumbline you@example.com' (the SEC requires a contact)." },
+    "NTFY_TOPIC": { "description": "Optional: your ntfy topic for phone alerts while the app runs." },
+    "FINNHUB_API_KEY": { "description": "Optional: free Finnhub key for tick-by-tick US stock prices." }
+  },
+  "postCreateCommand": "pip install -q -e '.[dev]' && ([ -f .env ] || cp .env.example .env)",
+  "postAttachCommand": "mt serve --host 0.0.0.0 --port 8000",
+  "forwardPorts": [8000],
+  "portsAttributes": { "8000": { "label": "Plumbline", "onAutoForward": "openBrowser" } },
+  "customizations": { "codespaces": { "openFiles": ["README.md"] } }
+}
