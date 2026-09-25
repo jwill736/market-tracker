@@ -155,11 +155,12 @@ def test_fund_lookup_uses_sec_industry_code(monkeypatch):
     codes = {"0000040417": {"sic": "6726", "filings": filings("N-CSR")},
              "0000777777": {"sic": "3990", "filings": filings("10-K", "4", "8-K")},
              "0000999999": {"sic": ""},
+             "0000999998": {"sic": "6770", "filings": filings("10-K", "4")},   # a SPAC
              # A closed-end fund filed under an operating-company industry code.
              "0000040418": {"sic": "6211", "filings": filings("N-CEN", "NPORT-P", "4")}}
     monkeypatch.setattr(alerts.sec, "_sec_get", lambda url, ttl: codes[url.split("CIK")[1][:10]])
     assert alerts.issuer_is_fund("40417") and alerts.issuer_is_fund("0000999999")
-    assert alerts.issuer_is_fund("40418")
+    assert alerts.issuer_is_fund("40418") and alerts.issuer_is_fund("999998")
     assert not alerts.issuer_is_fund("0000777777")
 
     def down(url, ttl):
@@ -178,3 +179,27 @@ def test_a_trade_filed_twice_counts_once(tmp_path):
     path = str(tmp_path / "buys.csv")
     alerts.save_buys(dup, path, date(2026, 9, 24))
     assert len(alerts.load_buys(path)) == 3
+
+
+def test_joint_filers_count_as_one_insider():
+    # Seen in the backfill: a venture fund and its partner on the board reported the same purchases.
+    same = [_buy(n, "2026-09-21", "2026-09-23", accession=f"acc-{n}") for n in ("FUND LLC", "PARTNER")]
+    for x in same:
+        x.role = "Director, 10% owner"
+    b = [_buy("B", "2026-09-10", "2026-09-11")]
+    # Three filers, but FUND LLC and PARTNER reported one purchase: two buyers, no cluster.
+    assert alerts.find_clusters(same + b, date(2026, 9, 24)) == []
+    c = alerts.find_clusters(same + b + [_buy("C", "2026-09-12", "2026-09-14")], date(2026, 9, 24))[0]
+    assert len(c.insiders) == 3 and c.total_value == 150_000
+    # Ordinary directors buying the same amount at the same price on the same day still count.
+    directors = [_buy(n, "2026-09-21", "2026-09-23", accession=f"acc-{n}") for n in "XYZ"]
+    assert len(alerts.find_clusters(directors, date(2026, 9, 24))[0].insiders) == 3
+
+
+def test_offering_purchases_are_skipped():
+    xml = fixture_text("form4.xml")
+    offered = xml.replace("</ownershipDocument>",
+                          "<footnotes><footnote id=\"F1\">Shares purchased in the issuer's initial public offering "
+                          "at the public offering price.</footnote></footnotes></ownershipDocument>")
+    assert alerts.describes_offering(offered) and not alerts.describes_offering(xml)
+    assert alerts.buys_from_submission("<XML>\n" + offered + "\n</XML>", "a", "2026-09-24") == []

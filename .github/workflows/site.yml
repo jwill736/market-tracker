@@ -42,7 +42,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/data"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
-            for f in signal_journal.csv insider_buys.csv alerted.csv; do
+            for f in signal_journal.csv insider_buys.csv alerted.csv stakes.csv; do
               git show "origin/journal-data:$f" > "$RUNNER_TEMP/data/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/data/$f"
             done
           fi

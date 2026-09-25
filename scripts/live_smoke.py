@@ -114,6 +114,18 @@ def _():
     return f"{n['count']} headlines"
 
 
+@check("EDGAR latest-filings feed (filing watcher)")
+def _():
+    from market_tracker import realtime
+    entries = realtime.parse_feed(realtime.fetch_feed("4", 0))
+    forms = {e.form for e in entries}
+    # The feed can be nearly empty overnight or at weekends; the point is that it parses.
+    assert all(e.accession and e.cik and e.role for e in entries), entries[:3]
+    stakes = realtime.parse_feed(realtime.fetch_feed("SCHEDULE 13D", 0))
+    return (f"{len(entries)} entries ({sum(e.form == '4' for e in entries)} Form 4, forms: {', '.join(sorted(forms)[:6])}); "
+            f"{len(stakes)} Schedule 13D entries")
+
+
 @check("SEC fund filter (insider alerts)")
 def _():
     from market_tracker import alerts

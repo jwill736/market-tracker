@@ -22,7 +22,7 @@
       <span class="brand-name">Plumbline</span>
     </a>
     <nav aria-label="Sections">
-      <a href="#live">Live</a><a href="#scores">Scores</a><a href="#insiders">Insiders</a><a href="#record">Track record</a>
+      <a href="#live">Live</a><a href="#scores">Scores</a><a href="#insiders">Insiders</a><a href="#moves">Big moves</a><a href="#record">Track record</a>
     </nav>
     <div class="status" id="status" aria-live="polite">
       <span class="dot" id="live-dot"></span><span id="live-text">Connecting…</span>
@@ -64,6 +64,17 @@
     </div>
     <div class="clusters" id="clusters"></div>
     <div class="rest" id="clusters-rest"></div>
+  </section>
+
+  <section id="moves" aria-labelledby="moves-h">
+    <div class="section-head">
+      <h2 id="moves-h">Big money moves</h2>
+      <p class="muted">Filings picked up within minutes by the filing watcher. A single large purchase is weaker evidence than a cluster; a 13D means an investor owns more than 5% and may push for change. Tracked investors are marked.</p>
+    </div>
+    <div class="moves">
+      <div class="panel pad"><h3>Large insider buys <span class="muted small">$1M+ in one filing, last 14 days</span></h3><div id="big-buys"></div></div>
+      <div class="panel pad"><h3>New 13D stakes <span class="muted small">last 30 days</span></h3><div id="stakes"></div></div>
+    </div>
   </section>
 
   <section id="record" aria-labelledby="rec-h">

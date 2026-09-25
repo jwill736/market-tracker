@@ -21,7 +21,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: journal-data-branch   # shared with journal.yml: both push to journal-data
+  group: journal-data-branch   # shared with journal.yml and watch.yml: all push to journal-data
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 300
     env:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}     # optional: push new alerts to a phone
       GH_TOKEN: ${{ github.token }}
       DRY_RUN: ${{ github.event_name == 'pull_request' }}
     steps:
@@ -55,6 +56,7 @@ jobs:
           args=(--data-dir "$RUNNER_TEMP/alerts" --issues-dir "$RUNNER_TEMP/issues")
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run --days 4); fi
           if [ "$BACKFILL" != "0" ]; then args+=(--days "$BACKFILL"); fi
+          if [ "$DRY_RUN" != "true" ]; then args+=(--notify); fi
           mt alerts "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Open issues for new clusters
         if: env.DRY_RUN != 'true'
