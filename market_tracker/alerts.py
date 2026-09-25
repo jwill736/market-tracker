@@ -33,7 +33,16 @@ CLUSTER_MIN_INSIDERS = 3
 CLUSTER_MIN_TOTAL = 100_000
 CLUSTER_MIN_TRADE_DAYS = 2     # same-day batches are usually programs, not independent decisions
 REALERT_AFTER_DAYS = 30
+ALERT_MAX_AGE_DAYS = 7         # alert only if the newest filing in the cluster is this fresh
 KEEP_DAYS = 120               # rolling window of buys kept in the CSV
+# SEC industry codes for investment funds: officers buying shares of a closed-end fund or BDC
+# says nothing about an operating business (the first backfill alerted on one).
+FUND_SIC = {"6722", "6726"}
+# Forms only investment companies file: shareholder reports, census and portfolio filings for
+# registered funds, and the registration and election forms of BDCs. Checked alongside the
+# industry code, because some funds (General American Investors, for one) carry another code.
+FUND_FORMS = {"N-CSR", "N-CSRS", "N-CEN", "NPORT-P", "N-PX", "N-2", "N-2/A", "N-54A", "N-54C", "N-23C-2"}
+NO_TICKER = {"", "NONE", "N/A", "NA"}
 
 
 @dataclass
@@ -169,9 +178,16 @@ def load_buys(path: str) -> list[Buy]:
         return out
 
 
+def _trade_key(b: Buy) -> tuple:
+    """One trade, however many times it was filed. The accession number is left out on
+    purpose: the backfill found a purchase filed twice under consecutive accessions, which
+    counted the same $1.2M twice."""
+    return (b.issuer_cik, b.insider, b.trade_date, b.shares, b.price)
+
+
 def save_buys(buys: list[Buy], path: str, today: date) -> None:
     cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
-    unique = {(b.accession, b.insider, b.trade_date, b.shares, b.price): b for b in buys if b.filed >= cutoff}
+    unique = {_trade_key(b): b for b in buys if b.filed >= cutoff}
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=BUY_FIELDS)
         w.writeheader()
@@ -221,8 +237,10 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
     start = (as_of - timedelta(days=window_days)).isoformat()
     end = as_of.isoformat()
     by_issuer: dict[str, list[Buy]] = {}
-    for b in buys:
-        if start <= b.trade_date <= end and b.filed <= end:
+    seen: set[tuple] = set()
+    for b in sorted(buys, key=lambda b: b.filed):
+        if start <= b.trade_date <= end and b.filed <= end and _trade_key(b) not in seen:
+            seen.add(_trade_key(b))
             by_issuer.setdefault(b.issuer_cik, []).append(b)
     clusters = []
     for cik, group in by_issuer.items():
@@ -240,17 +258,52 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
     return clusters
 
 
-def new_clusters(clusters: list[Cluster], alerted: dict[str, str], as_of: date) -> list[Cluster]:
-    """Clusters worth an alert: buys on at least CLUSTER_MIN_TRADE_DAYS different days, and
-    not alerted within the last REALERT_AFTER_DAYS (one alert per episode).
+def issuer_is_fund(cik: str) -> bool:
+    """True for closed-end funds and BDCs: an investment-company industry code, no industry code
+    at all (almost always a fund or private vehicle), or any fund-only form among the issuer's
+    recent filings. A lookup failure
+    counts as 'not a fund': a stray fund alert costs less than a missed company."""
+    try:
+        data = sec._sec_get(sec.SUBMISSIONS.format(cik=cik.zfill(10)), ttl=86400)
+    except http.DataUnavailable:
+        return False
+    sic = str(data.get("sic") or "").strip()
+    forms = set(data.get("filings", {}).get("recent", {}).get("form", []))
+    return sic in FUND_SIC or not sic or bool(forms & FUND_FORMS)
 
-    The day rule comes from the first live dry run: 21 directors and officers of a Brazilian
-    bank bought $27M on a single day, the pattern of a compensation program in which
-    executives must invest part of their bonus in company shares. Such same-day batches stay
-    visible in the scan summary; if another insider buys on a later day, the cluster alerts."""
-    cutoff = (as_of - timedelta(days=REALERT_AFTER_DAYS)).isoformat()
-    return [c for c in clusters
-            if c.trade_days >= CLUSTER_MIN_TRADE_DAYS and alerted.get(c.issuer_cik, "") < cutoff]
+
+def skip_reason(c: Cluster, alerted: dict[str, str], as_of: date,
+                is_fund: Callable[[str], bool] = issuer_is_fund) -> str | None:
+    """Why a cluster doesn't alert, or None if it should. Cheap checks run first so the SEC
+    lookup for funds only happens for clusters that pass everything else.
+
+    - SEEN: alerted within REALERT_AFTER_DAYS (one alert per episode).
+    - 1DAY: every buy on one day. The first live dry run found 21 directors and officers of a
+      Brazilian bank buying $27M on a single day, the pattern of a compensation program in
+      which executives must invest part of their bonus in company shares. If another insider
+      buys on a later day, the cluster alerts.
+    - OLD: the newest filing is more than ALERT_MAX_AGE_DAYS old, so it isn't news. The first
+      30-day backfill opened 20 issues at once, some for buying that ended weeks earlier. If
+      insiders buy again, the fresh filing makes the cluster alert.
+    - NOTK: no trading symbol, so there is nothing to buy.
+    - FUND: a closed-end fund or BDC."""
+    if alerted.get(c.issuer_cik, "") >= (as_of - timedelta(days=REALERT_AFTER_DAYS)).isoformat():
+        return "SEEN"
+    if c.trade_days < CLUSTER_MIN_TRADE_DAYS:
+        return "1DAY"
+    if c.last_filed < (as_of - timedelta(days=ALERT_MAX_AGE_DAYS)).isoformat():
+        return "OLD"
+    if c.symbol.strip().upper() in NO_TICKER:
+        return "NOTK"
+    if is_fund(c.issuer_cik):
+        return "FUND"
+    return None
+
+
+def new_clusters(clusters: list[Cluster], alerted: dict[str, str], as_of: date,
+                 is_fund: Callable[[str], bool] = issuer_is_fund) -> list[Cluster]:
+    """Clusters worth an alert: those with no skip_reason."""
+    return [c for c in clusters if skip_reason(c, alerted, as_of, is_fund) is None]
 
 
 # ------------------------------------------------------------------ issue text

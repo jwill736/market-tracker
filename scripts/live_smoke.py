@@ -114,6 +114,19 @@ def _():
     return f"{n['count']} headlines"
 
 
+@check("SEC fund filter (insider alerts)")
+def _():
+    from market_tracker import alerts
+    from market_tracker.providers import sec
+    if not alerts.issuer_is_fund("40417"):
+        d = sec._sec_get(sec.SUBMISSIONS.format(cik="0000040417"), ttl=0)
+        forms = sorted(set(d.get("filings", {}).get("recent", {}).get("form", [])))
+        raise AssertionError(f"General American Investors should read as a fund (sic={d.get('sic')!r}, "
+                             f"entityType={d.get('entityType')!r}, forms={forms[:25]})")
+    assert not alerts.issuer_is_fund("320193"), "Apple should not read as a fund"
+    return "General American Investors = fund, Apple = operating company"
+
+
 @check("Yahoo market-news fallback feeds")
 def _():
     counts = {sym: len(news._yahoo(sym)) for sym in news.MARKET_FALLBACK_SYMBOLS}

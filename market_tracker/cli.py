@@ -266,12 +266,14 @@ def cmd_alerts(args) -> int:
         day += timedelta(days=1)
     clusters = alerts.find_clusters(buys, today)
     alerted = alerts.load_alerted(alerted_path)
-    fresh = alerts.new_clusters(clusters, alerted, today)
-    print(f"{len(clusters)} active clusters, {len(fresh)} new alerts "
-          f"(1DAY = all buys on one day: listed, not alerted)")
+    reasons = {c.issuer_cik: alerts.skip_reason(c, alerted, today) for c in clusters}
+    fresh = [c for c in clusters if reasons[c.issuer_cik] is None]
+    print(f"{len(clusters)} active clusters, {len(fresh)} new alerts. Not alerted: SEEN = alerted in the last "
+          f"{alerts.REALERT_AFTER_DAYS} days, 1DAY = all buys on one day, OLD = newest filing over "
+          f"{alerts.ALERT_MAX_AGE_DAYS} days old, NOTK = no ticker, FUND = closed-end fund or BDC")
     for c in clusters:
         roles = sorted({b.role for b in c.buys})
-        tag = "NEW " if c in fresh else "1DAY" if c.trade_days < alerts.CLUSTER_MIN_TRADE_DAYS else "    "
+        tag = f"{reasons[c.issuer_cik] or 'NEW':<4}"
         print(f"  {tag} {c.symbol or '-':<6} {c.issuer_name[:40]:<40} "
               f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade} "
               f"({c.trade_days} trading day{'s' if c.trade_days != 1 else ''}; roles: {'; '.join(roles)[:120]})")
@@ -289,6 +291,20 @@ def cmd_alerts(args) -> int:
         alerts.save_alerted(alerted, alerted_path)
         with open(state_path, "w") as fh:
             json.dump({"last_scanned": last_scanned}, fh)
+    return 0
+
+
+def cmd_site(args) -> int:
+    from . import site
+
+    data = site.build(args.out, args.journal, args.alerts_dir)
+    quoted = sum(1 for r in data["universe"] if "price" in r)
+    scored = sum(1 for r in data["universe"] if r.get("score") is not None)
+    print(f"Built {args.out}: {quoted}/{len(data['universe'])} quotes, {scored} scores, "
+          f"{len(data['clusters'])} insider clusters")
+    for r in data["universe"]:
+        if "quote_error" in r:
+            print(f"  quote failed: {r['symbol']}: {r['quote_error']}", file=sys.stderr)
     return 0
 
 
@@ -364,6 +380,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--issues-dir", help="Write one title/body pair per new cluster here")
     s.add_argument("--dry-run", action="store_true", help="Don't save state (for testing)")
     s.set_defaults(func=cmd_alerts)
+
+    s = sub.add_parser("site", help="Build the static public site (GitHub Pages) into a folder")
+    s.add_argument("--out", default="_site")
+    s.add_argument("--journal", help="signal_journal.csv to publish scores and the track record from")
+    s.add_argument("--alerts-dir", help="Folder holding insider_buys.csv and alerted.csv")
+    s.set_defaults(func=cmd_site)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")
