@@ -42,6 +42,7 @@ class Tick:
     ts: str
     source: str
     session: str = ""       # pre / regular / post / closed for stocks, 24h for crypto
+    regular: float | None = None   # last regular-session price, so pages can split Today and After-hours
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -265,7 +266,8 @@ async def poll_stocks(hub: PriceHub, interval: float = POLL_SECONDS, quote_fn=ma
                 return
         if q.previous_close:
             hub.prev_close[sym] = q.previous_close
-        hub.publish(Tick(sym, q.price, q.change_pct, q.as_of or _now_iso(), q.source, getattr(q, "session", "")))
+        hub.publish(Tick(sym, q.price, q.change_pct, q.as_of or _now_iso(), q.source, getattr(q, "session", ""),
+                         getattr(q, "regular_price", None)))
 
     while True:
         syms = sorted(hub.stocks())
@@ -276,17 +278,19 @@ async def poll_stocks(hub: PriceHub, interval: float = POLL_SECONDS, quote_fn=ma
 # ------------------------------------------------------------------ intraday chart data
 
 def intraday(symbol: str, range_: str = "1d") -> dict:
-    """Price points for the chart: 1-minute bars today, 5-minute for 5 days, daily closes for a
-    month or a year. The reference is where the change is measured from."""
+    """Price points for the line chart. 1d: 1-minute bars today, pre-market and after-hours
+    included (crypto: 5-minute, 24 hours); 5d: 5-minute bars; 1m / 3m / 1y / 5y: daily closes.
+    The reference is where the change is measured from."""
     sym = market.normalize_symbol(symbol)
-    if range_ in ("1m", "1y"):
-        bars = market.get_history(sym, 400)
-        keep = bars[-(22 if range_ == "1m" else 252):] if market.asset_class(sym) != "crypto" \
-            else bars[-(30 if range_ == "1m" else 365):]
+    if range_ in ("1m", "3m", "1y", "5y"):
+        n = {"1m": 22, "3m": 64, "1y": 252, "5y": 1260}[range_]
+        if market.asset_class(sym) == "crypto":
+            n = {"1m": 30, "3m": 92, "1y": 365, "5y": 1825}[range_]
+        bars = market.get_history(sym, max(n + 5, 400) if range_ != "5y" else n + 5)[-n:]
         pts = [{"t": int(datetime.fromisoformat(b.date[:10]).replace(tzinfo=timezone.utc).timestamp()), "p": b.close}
-               for b in keep]
-        return {"symbol": sym, "points": pts, "reference": pts[0]["p"] if pts else None,
-                "reference_label": "1 month ago" if range_ == "1m" else "1 year ago"}
+               for b in bars]
+        label = {"1m": "1 month ago", "3m": "3 months ago", "1y": "1 year ago", "5y": "5 years ago"}[range_]
+        return {"symbol": sym, "points": pts, "reference": pts[0]["p"] if pts else None, "reference_label": label}
     if market.asset_class(sym) == "crypto":
         granularity, span = (300, 86400) if range_ == "1d" else (900, 5 * 86400)
         end = int(time.time())
@@ -298,14 +302,23 @@ def intraday(symbol: str, range_: str = "1d") -> dict:
         base = pts[0][1] if pts else None
         return {"symbol": sym, "points": [{"t": t, "p": p} for t, p in pts], "reference": base,
                 "reference_label": "24h ago" if range_ == "1d" else "5 days ago"}
-    result = market._yahoo_chart(sym, range_, "1m" if range_ == "1d" else "5m", ttl=30)
+    data = http.get(market.YAHOO_CHART.format(symbol=sym),
+                    params={"range": range_, "interval": "1m" if range_ == "1d" else "5m", "includePrePost": "true"},
+                    ttl=30)
+    try:
+        result = data["chart"]["result"][0]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise http.DataUnavailable(f"no chart data for {sym}") from exc
     stamps = result.get("timestamp") or []
     closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
     pts = [{"t": int(t), "p": float(c)} for t, c in zip(stamps, closes) if c is not None]
     meta = result.get("meta", {})
     ref = meta.get("chartPreviousClose") or meta.get("previousClose")
+    periods = meta.get("currentTradingPeriod") or {}
+    regular = periods.get("regular") or {}
     return {"symbol": sym, "points": pts, "reference": float(ref) if ref else None,
-            "reference_label": "previous close" if range_ == "1d" else "5 days ago"}
+            "reference_label": "previous close" if range_ == "1d" else "5 days ago",
+            "regular_start": regular.get("start"), "regular_end": regular.get("end")}
 
 
 hub = PriceHub()

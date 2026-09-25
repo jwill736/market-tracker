@@ -163,3 +163,13 @@ def set_topic(conn, name: str, terms: str) -> None:
 
 def delete_topic(conn, name: str) -> None:
     conn.execute("DELETE FROM topics WHERE name = ?", (name,))
+
+
+def get_meta(conn, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_meta(conn, key: str, value: str) -> None:
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                 (key, value))

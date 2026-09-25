@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, db, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, db, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -153,7 +153,7 @@ async def stream_live(request: Request, symbols: str, snapshot_only: bool = Fals
         if q and q.get("previous_close"):
             hub.prev_close.setdefault(sym, q["previous_close"])
         return q and {"symbol": sym, "price": q["price"], "change_pct": q["change_pct"], "ts": q["as_of"],
-                      "source": q["source"], "session": q.get("session", "")}
+                      "source": q["source"], "session": q.get("session", ""), "regular": q.get("regular_price")}
 
     async def gen():
         try:
@@ -176,11 +176,60 @@ async def stream_live(request: Request, symbols: str, snapshot_only: bool = Fals
 
 
 @app.get("/api/intraday/{symbol}")
-def intraday(symbol: str, range_: Literal["1d", "5d", "1m", "1y"] = Query("1d", alias="range")):
+def intraday(symbol: str, range_: Literal["1d", "5d", "1m", "3m", "1y", "5y"] = Query("1d", alias="range")):
     try:
         return livefeed.intraday(symbol, range_)
     except http.DataUnavailable as exc:
         raise _unavailable(exc)
+
+
+@app.get("/api/candles/{symbol}")
+def candle_chart(symbol: str, range_: Literal["1d", "1w", "1m", "3m", "1y", "5y"] = Query("1d", alias="range")):
+    """OHLC candles with volume for the advanced chart."""
+    try:
+        return charts.candles(symbol, range_)
+    except http.DataUnavailable as exc:
+        raise _unavailable(exc)
+
+
+history_cache = pulse.Cache(60)
+
+
+@app.get("/api/portfolio/history")
+async def portfolio_history(range_: Literal["1d", "1w", "1m", "3m", "1y", "all"] = Query("1d", alias="range")):
+    """Your portfolio's value over the range, and the gain net of money added or withdrawn."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        cash = float(db.get_meta(conn, "cash", "0") or 0)
+    key = (range_, len(txs), max((t["id"] for t in txs), default=0))
+    data = await asyncio.to_thread(history_cache.get, key, lambda: charts.portfolio_history(txs, range_))
+    return dict(data, cash=cash)
+
+
+@app.get("/api/sparklines")
+async def sparkline_data(symbols: str):
+    syms = [market.normalize_symbol(s) for s in symbols.split(",") if s.strip()][:40]
+    return await asyncio.to_thread(sparkline_cache.get, tuple(sorted(syms)), lambda: charts.sparklines(syms))
+
+
+sparkline_cache = pulse.Cache(120)
+
+
+class CashIn(BaseModel):
+    cash: float = Field(ge=0, le=1e10)
+
+
+@app.get("/api/cash")
+def get_cash():
+    with db.connect() as conn:
+        return {"cash": float(db.get_meta(conn, "cash", "0") or 0)}
+
+
+@app.post("/api/cash")
+def set_cash(body: CashIn):
+    with db.connect() as conn:
+        db.set_meta(conn, "cash", str(body.cash))
+    return {"cash": body.cash}
 
 
 @app.get("/api/holdings")

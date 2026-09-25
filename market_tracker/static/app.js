@@ -46,6 +46,9 @@ function selectTab(name) {
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
+  if (name === "home") loadHome();
+  if (name === "early") loadEarly();
+  if (name === "people") loadPeople();
   if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") loadRadar();
@@ -583,12 +586,75 @@ async function openSymbol(raw) {
 async function loadChart() {
   const { sym, range } = symState;
   $("#sym-chart").innerHTML = `<p class="muted small">Loading chart…</p>`;
+  if (symState.candles) {
+    try {
+      const d = await api(`/api/candles/${encodeURIComponent(sym)}?range=${range === "5d" ? "1w" : range}`);
+      if (sym !== symState.sym || range !== symState.range) return;
+      symState.ohlc = d.candles; symState.reference = d.reference; symState.refLabel = d.reference_label;
+      drawCandles();
+    } catch (err) { $("#sym-chart").innerHTML = `<p class="muted small">Candles unavailable: ${esc(err.message)}</p>`; }
+    return;
+  }
   try {
     const d = await api(`/api/intraday/${encodeURIComponent(sym)}?range=${range}`);
     if (sym !== symState.sym || range !== symState.range) return;
     Object.assign(symState, { points: d.points, reference: d.reference, refLabel: d.reference_label });
     drawChart(true);
   } catch (err) { $("#sym-chart").innerHTML = `<p class="muted small">Chart unavailable: ${esc(err.message)}</p>`; }
+}
+$("#sym-candles").addEventListener("click", () => {
+  symState.candles = !symState.candles;
+  $("#sym-candles").setAttribute("aria-pressed", String(symState.candles));
+  try { localStorage.setItem("plumbline.candles", symState.candles ? "1" : ""); } catch { /* storage blocked */ }
+  loadChart();
+});
+try { symState.candles = localStorage.getItem("plumbline.candles") === "1"; $("#sym-candles").setAttribute("aria-pressed", String(symState.candles)); } catch { /* storage blocked */ }
+
+function drawCandles() {
+  const el = $("#sym-chart"), cs = symState.ohlc || [];
+  if (cs.length < 2) { el.innerHTML = `<p class="muted small">Not enough data for candles in this range.</p>`; return; }
+  // Keep the forming candle live.
+  const t = Live.prices[symState.sym];
+  if (t && symState.range === "1d") {
+    const last = cs[cs.length - 1];
+    last.c = t.price; last.h = Math.max(last.h, t.price); last.l = Math.min(last.l, t.price);
+  }
+  const W = el.clientWidth || 700, H = Math.max(260, Math.min(380, W * 0.5)), volH = Math.round(H * 0.2), pad = { t: 10, r: 56, b: 20, l: 6 };
+  const priceH = H - pad.t - pad.b - volH - 6;
+  const lo = Math.min(...cs.map((c) => c.l)), hi = Math.max(...cs.map((c) => c.h)), span = hi - lo || hi * 0.01 || 1;
+  const vmax = Math.max(...cs.map((c) => c.v)) || 1;
+  const n = cs.length, step = (W - pad.l - pad.r) / n, bw = Math.max(1, Math.min(12, step * 0.7));
+  const X = (i) => pad.l + step * (i + 0.5), Y = (p) => pad.t + (hi - p) / span * priceH;
+  const vy0 = H - pad.b;
+  let body = "";
+  cs.forEach((c, i) => {
+    const up = c.c >= c.o, col = up ? "var(--gain)" : "var(--loss)", x = X(i);
+    body += `<line x1="${x}" x2="${x}" y1="${Y(c.h)}" y2="${Y(c.l)}" stroke="${col}" stroke-width="1"/>`;
+    const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
+    body += `<rect x="${x - bw / 2}" y="${y1}" width="${bw}" height="${Math.max(1, y2 - y1)}" fill="${up ? "var(--surface)" : col}" stroke="${col}" stroke-width="1"/>`;
+    const vh = c.v / vmax * volH;
+    body += `<rect x="${x - bw / 2}" y="${vy0 - vh}" width="${bw}" height="${vh}" fill="${col}" opacity=".35"/>`;
+  });
+  const ticks = niceTicks(lo, hi, 4).map((v) => `<text x="${W - pad.r + 6}" y="${Y(v) + 4}" font-size="11" fill="var(--muted)">${fmtAxis(v)}</text><line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/>`).join("");
+  const last = cs[n - 1];
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true">${ticks}${body}
+    <line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(last.c)}" y2="${Y(last.c)}" stroke="var(--accent)" stroke-dasharray="3 3"/>
+    <rect x="${W - pad.r + 2}" y="${Y(last.c) - 9}" width="${pad.r - 4}" height="18" rx="3" fill="var(--accent)"/>
+    <text x="${W - pad.r + 6}" y="${Y(last.c) + 4}" font-size="11" fill="var(--on-accent)">${fmtAxis(last.c)}</text>
+    <g class="cross" visibility="hidden"><line y1="${pad.t}" y2="${H - pad.b}" stroke="var(--axis)"/></g></svg>`;
+  const svg = el.querySelector("svg"), cross = svg.querySelector(".cross");
+  const daily = !["1d", "5d"].includes(symState.range);
+  svg.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (W / r.width);
+    const i = Math.max(0, Math.min(n - 1, Math.floor((x - pad.l) / step)));
+    const c = cs[i];
+    cross.setAttribute("visibility", "visible");
+    cross.querySelector("line").setAttribute("x1", X(i)); cross.querySelector("line").setAttribute("x2", X(i));
+    const when = new Date(c.t * 1000);
+    showTip(e, `<b>${esc(daily ? when.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : when.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</b><br>
+      O ${fmtMoney(c.o)} H ${fmtMoney(c.h)}<br>L ${fmtMoney(c.l)} C <span class="${cls(c.c - c.o)}">${fmtMoney(c.c)}</span><br>Vol ${Math.round(c.v).toLocaleString()}`);
+  });
+  svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
 }
 document.querySelectorAll("#tab-symbol .range button").forEach((b) => b.addEventListener("click", () => {
   symState.range = b.dataset.range;
@@ -598,19 +664,33 @@ document.querySelectorAll("#tab-symbol .range button").forEach((b) => b.addEvent
 
 function paintSymbol(t, prev) {
   const el = $("#sym-price");
-  el.textContent = fmtMoney(t.price);
-  flash(el, t, prev);
+  if (!symState.hovering) { el.textContent = fmtMoney(t.price); flash(el, t, prev); }
   // The day's change for the 1D view (vs previous close; crypto: 24h); for longer ranges, vs the range start.
   let chg = t.change_pct, label = isCryptoSym(t.symbol) ? "past 24 hours" : "today";
   if (symState.range !== "1d" && symState.reference) { chg = (t.price / symState.reference - 1) * 100; label = "since " + symState.refLabel; }
   const abs = symState.range !== "1d" && symState.reference ? t.price - symState.reference
     : chg != null ? t.price - t.price / (1 + chg / 100) : null;
-  const c = $("#sym-change");
-  c.textContent = `${abs != null ? (abs >= 0 ? "+" : "-") + fmtMoney(Math.abs(abs), 2) + " " : ""}(${fmtPct(chg, 2)}) ${label}`;
-  c.className = "sym-change " + cls(chg);
+  const c = $("#sym-change"), x = $("#sym-ext");
+  const extSession = !isCryptoSym(t.symbol) && ["pre", "post", "closed"].includes(t.session) && t.regular && t.change_pct != null;
+  if (symState.range === "1d" && extSession) {
+    // Robinhood-style: the regular session's change, then the move since the close.
+    const prevClose = t.price / (1 + t.change_pct / 100);
+    const today = t.regular - prevClose, ext = t.price - t.regular;
+    const line = (v, base, word) => `${v >= 0 ? "▲" : "▼"} ${fmtMoney(Math.abs(v), 2)} (${fmtPct(Math.abs(base ? v / base * 100 : 0), 2).replace("+", "")}) ${word}`;
+    c.textContent = line(today, prevClose, t.session === "pre" ? "Previous session" : "Today");
+    c.className = "sym-change " + cls(today);
+    x.hidden = false;
+    x.textContent = line(ext, t.regular, t.session === "pre" ? "Pre-market" : "After-hours");
+    x.className = "sym-change sym-ext " + cls(ext);
+  } else {
+    x.hidden = true;
+    c.textContent = `${abs != null ? (abs >= 0 ? "▲ " : "▼ ") + fmtMoney(Math.abs(abs), 2) + " " : ""}(${fmtPct(chg, 2)}) ${label}`;
+    c.className = "sym-change " + cls(chg);
+  }
   const sess = { pre: "Pre-market", post: "After hours", closed: "Market closed · last trade" }[t.session] || "";
   $("#sym-src").textContent = `${sess ? sess + " · " : ""}${t.source} · ${new Date(t.ts).toLocaleTimeString()}`;
-  if (symState.range === "1d" && symState.points.length) {
+  if (symState.candles && symState.range === "1d") { drawChart(false); }
+  else if (symState.range === "1d" && symState.points.length) {
     const now = Math.floor(Date.now() / 1000), last = symState.points[symState.points.length - 1];
     if (now - last.t < 60) last.p = t.price; else symState.points.push({ t: now, p: t.price });
     drawChart(false);
@@ -622,6 +702,7 @@ function drawChart(force) {
   const now = performance.now();
   if (!force && now - symState.lastDraw < 500) return;   // at most twice a second
   symState.lastDraw = now;
+  if (symState.candles) return drawCandles();
   const el = $("#sym-chart"), pts = symState.points;
   if (pts.length < 2) { el.innerHTML = `<p class="muted small">Not enough data for this range yet (markets closed?).</p>`; return; }
   const W = el.clientWidth || 700, H = Math.max(220, Math.min(340, W * 0.45)), pad = { t: 12, r: 8, b: 22, l: 8 };
@@ -632,7 +713,7 @@ function drawChart(force) {
   const X = (t) => pad.l + (t - t0) / (t1 - t0 || 1) * (W - pad.l - pad.r);
   const Y = (p) => pad.t + (hi - p) / span * (H - pad.t - pad.b);
   const up = pts[pts.length - 1].p >= ref;
-  const color = up ? "var(--good)" : "var(--bad)";
+  const color = up ? "var(--gain)" : "var(--loss)";
   const d = pts.map((x, i) => `${i ? "L" : "M"}${X(x.t).toFixed(1)},${Y(x.p).toFixed(1)}`).join("");
   const fmtT = (t) => { const dt = new Date(t * 1000); return symState.range === "1d" ? dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : dt.toLocaleDateString([], { month: "short", day: "numeric" }); };
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true">
@@ -653,9 +734,14 @@ function drawChart(force) {
     cross.setAttribute("visibility", "visible");
     cross.querySelector("line").setAttribute("x1", X(best.t)); cross.querySelector("line").setAttribute("x2", X(best.t));
     cross.querySelector("circle").setAttribute("cx", X(best.t)); cross.querySelector("circle").setAttribute("cy", Y(best.p));
+    $("#sym-price").textContent = fmtMoney(best.p);
+    symState.hovering = true;
     showTip(e, `<b>${fmtMoney(best.p)}</b> <span class="${cls(best.p - ref)}">${fmtPct((best.p / ref - 1) * 100, 2)}</span><br>${esc(fmtT(best.t))}`);
   });
-  svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  svg.addEventListener("pointerleave", () => {
+    cross.setAttribute("visibility", "hidden"); hideTip(); symState.hovering = false;
+    if (Live.prices[symState.sym]) $("#sym-price").textContent = fmtMoney(Live.prices[symState.sym].price);
+  });
 }
 
 function renderPosition() {
@@ -839,6 +925,7 @@ function paintBound(t, prev, root = document) {
     switch (el.dataset.lf) {
       case "price": el.textContent = fmtMoney(t.price); flash(el, t, prev); break;
       case "chg": el.textContent = fmtPct(t.change_pct, 2); setSign(el, t.change_pct); break;
+      case "pill": el.textContent = fmtMoney(t.price); el.classList.toggle("down", (t.change_pct ?? 0) < 0); el.classList.toggle("up", (t.change_pct ?? 0) >= 0); flash(el, t, prev); break;
       case "value": el.textContent = fmtMoney(qty * t.price, 2); flash(el, t, prev); break;
       case "pnl": { const v = qty * t.price - cost; el.textContent = (v >= 0 ? "+" : "") + fmtMoney(v, 2); setSign(el, v); break; }
       case "pnlpct": { const v = cost ? (qty * t.price / cost - 1) * 100 : null; el.textContent = fmtPct(v, 2); setSign(el, v); break; }
@@ -952,6 +1039,8 @@ setInterval(() => {
   if (tab === "mynews" && now - mnState.loadedAt > 300000) loadMyNews();
   if (tab === "reading" && now - rdState.loadedAt > 600000) loadReading();
   if (tab === "radar" && now - rrState.loadedAt > 120000) loadRadar();
+  if (tab === "home" && now - homeState.loadedAt > (homeState.range === "1d" ? 60000 : 600000)) loadHome(true);
+  if (tab === "early" && typeof earlyState !== "undefined" && now - earlyState.loadedAt > 120000) loadEarly();
 }, 15000);
 
 // ---------------------------------------------------------------- strategy plan
@@ -1242,8 +1331,244 @@ function paintMarketRadar() {
 $("#rr-level").addEventListener("change", () => rrState.data && paintMarketRadar());
 $("#rr-listed").addEventListener("change", () => rrState.data && paintMarketRadar());
 
+// ---------------------------------------------------------------- home (Robinhood-style)
+const homeState = { range: "1d", data: null, loadedAt: 0, hover: false, sparks: {}, sparksAt: 0 };
+const RANGE_WORDS = { "1d": "Today", "1w": "Past week", "1m": "Past month", "3m": "Past 3 months", "1y": "Past year", all: "All time" };
+async function loadHome(quiet = false) {
+  const hasHoldings = holdingsList.length > 0;
+  $("#home-empty").hidden = hasHoldings;
+  if (!quiet) $("#home-chart").innerHTML = hasHoldings ? `<p class="muted small">Loading…</p>` : "";
+  loadCash();
+  renderHomeLists();
+  loadHomeFeeds();
+  if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
+  try {
+    const d = await api("/api/portfolio/history?range=" + homeState.range);
+    homeState.data = d; homeState.loadedAt = Date.now();
+    drawHome();
+  } catch (err) { $("#home-chart").innerHTML = `<p class="muted small">${esc(err.message)}</p>`; }
+}
+async function loadCash() {
+  try { const { cash } = await api("/api/cash"); $("#bp-btn").textContent = fmtMoney(cash, 2); $("#bp-input").value = cash || ""; } catch { /* offline */ }
+}
+$("#bp-btn").addEventListener("click", () => { $("#bp-form").hidden = !$("#bp-form").hidden; if (!$("#bp-form").hidden) $("#bp-input").focus(); });
+$("#bp-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("/api/cash", { method: "POST", body: JSON.stringify({ cash: Math.max(0, +$("#bp-input").value || 0) }) }); $("#bp-form").hidden = true; loadCash(); }
+  catch (err) { alert(err.message); }
+});
+$("#home-import").addEventListener("click", () => selectTab("portfolio"));
+document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.goto)));
+document.querySelectorAll("#home-ranges button").forEach((b) => b.addEventListener("click", () => {
+  homeState.range = b.dataset.range;
+  document.querySelectorAll("#home-ranges button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadHome();
+}));
+function homeSeries() {
+  const d = homeState.data;
+  if (!d) return [];
+  const pts = d.points.slice();
+  // The 1D line ends at the live value.
+  if (homeState.range === "1d" && Book.pos.length) {
+    const v = Book.totals().value, now = Math.floor(Date.now() / 1000);
+    if (v) { if (pts.length && now - pts[pts.length - 1].t < 300) pts[pts.length - 1] = { t: pts[pts.length - 1].t, v }; else pts.push({ t: now, v }); }
+  }
+  return pts;
+}
+function paintHomeHeader(value, at) {
+  const d = homeState.data;
+  if (!d) return;
+  const range = homeState.range;
+  let gain, pct;
+  if (range === "1d") { const base = d.reference || d.start; gain = value - base; pct = base ? gain / base * 100 : null; }
+  else { const flow = range === "all" ? (d.net_deposits || 0) : (d.net_deposits || 0); const start = range === "all" ? 0 : d.start;
+    gain = value - start - flow; const basis = start + Math.max(flow, 0); pct = basis ? gain / basis * 100 : null; }
+  $("#home-value").textContent = fmtMoney(value, 2);
+  const up = gain >= 0;
+  $("#home-gain").innerHTML = `<span class="${up ? "gain" : "loss"}">${up ? "▲" : "▼"} ${fmtMoney(Math.abs(gain), 2)} (${fmtPct(Math.abs(pct ?? 0), 2).replace("+", "")})</span> <span class="muted">${at ? esc(at) : RANGE_WORDS[range]}</span>`;
+  document.documentElement.style.setProperty("--trend", up ? "var(--gain)" : "var(--loss)");
+}
+function drawHome() {
+  const el = $("#home-chart"), pts = homeSeries(), d = homeState.data;
+  if (!d || pts.length < 2) { el.innerHTML = `<p class="muted small">Not enough history for this range yet.</p>`; if (d) paintHomeHeader(Book.totals().value || d.end || 0); return; }
+  const W = el.clientWidth || 700, H = Math.max(200, Math.min(300, W * 0.42)), pad = { t: 10, r: 4, b: 8, l: 4 };
+  const ref = homeState.range === "1d" ? (d.reference || pts[0].v) : pts[0].v;
+  const vs = pts.map((p) => p.v).concat([ref]);
+  const lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo || hi * 0.01 || 1;
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
+  const X = (t) => pad.l + (t - t0) / (t1 - t0 || 1) * (W - pad.l - pad.r);
+  const Y = (v) => pad.t + (hi - v) / span * (H - pad.t - pad.b);
+  const last = pts[pts.length - 1];
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true">
+    ${homeState.range === "1d" ? `<line x1="0" x2="${W}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(--axis)" stroke-dasharray="1 5" stroke-linecap="round" stroke-width="2"/>` : ""}
+    <path d="${line}" fill="none" stroke="var(--trend)" stroke-width="2.2" stroke-linejoin="round"/>
+    <circle class="pulse-dot" cx="${X(last.t)}" cy="${Y(last.v)}" r="4" fill="var(--trend)"/>
+    <g class="cross" visibility="hidden"><line y1="0" y2="${H}" stroke="var(--axis)"/><circle r="4.5" fill="var(--trend)" stroke="var(--surface)" stroke-width="2"/></g>
+  </svg>`;
+  if (!homeState.hover) paintHomeHeader(homeState.range === "1d" ? (Book.totals().value || last.v) : last.v);
+  const svg = el.querySelector("svg"), cross = svg.querySelector(".cross");
+  const fmtT = (t) => { const dt = new Date(t * 1000); return homeState.range === "1d" || homeState.range === "1w" ? dt.toLocaleString([], { weekday: homeState.range === "1w" ? "short" : undefined, hour: "numeric", minute: "2-digit" }) : dt.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }); };
+  svg.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (W / r.width);
+    const t = t0 + (x - pad.l) / (W - pad.l - pad.r) * (t1 - t0);
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    homeState.hover = true;
+    cross.setAttribute("visibility", "visible");
+    cross.querySelector("line").setAttribute("x1", X(best.t)); cross.querySelector("line").setAttribute("x2", X(best.t));
+    cross.querySelector("circle").setAttribute("cx", X(best.t)); cross.querySelector("circle").setAttribute("cy", Y(best.v));
+    paintHomeHeader(best.v, fmtT(best.t));
+  });
+  svg.addEventListener("pointerleave", () => { homeState.hover = false; cross.setAttribute("visibility", "hidden"); drawHome(); });
+}
+let homeTimer = null;
+Live.onTick((t) => {
+  if (currentTab() !== "home" || !Book.has(t.symbol) || homeState.hover) return;
+  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = null; if (homeState.range === "1d") drawHome(); else if (homeState.data) paintHomeHeader(Book.totals().value || homeState.data.end); }, 700);
+});
+
+function sparkSvg(sym, w = 72, h = 28) {
+  const s = homeState.sparks[sym];
+  if (!s || !s.p || s.p.length < 2) return `<svg width="${w}" height="${h}" aria-hidden="true"></svg>`;
+  const ps = s.p, ref = s.reference ?? ps[0], lo = Math.min(...ps, ref), hi = Math.max(...ps, ref), span = hi - lo || 1;
+  const X = (i) => i / (ps.length - 1) * (w - 2) + 1, Y = (v) => 2 + (hi - v) / span * (h - 4);
+  const up = ps[ps.length - 1] >= ref;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><line x1="0" x2="${w}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(--axis)" stroke-dasharray="1 3"/><path d="${ps.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join("")}" fill="none" stroke="${up ? "var(--gain)" : "var(--loss)"}" stroke-width="1.5"/></svg>`;
+}
+function rhRow(sym, sub) {
+  const s = esc(sym);
+  return `<button type="button" class="rh-row" data-open="${s}">
+    <span class="rh-sym"><b>${esc(sym.replace(/-USD$/, ""))}</b><span class="muted small">${sub}</span></span>
+    <span class="rh-spark" data-spark="${s}">${sparkSvg(sym)}</span>
+    <span class="rh-pill" data-live="${s}" data-lf="pill">${Live.prices[sym] ? fmtMoney(Live.prices[sym].price) : "—"}</span></button>`;
+}
+function renderHomeLists() {
+  const stocks = holdingsList.filter((h) => !isCryptoSym(h.symbol)), crypto = holdingsList.filter((h) => isCryptoSym(h.symbol));
+  const shares = (h) => `${h.quantity.toLocaleString(undefined, { maximumFractionDigits: isCryptoSym(h.symbol) ? 6 : 4 })} ${isCryptoSym(h.symbol) ? "" : "shares"}${(h.accounts || []).length ? " · " + h.accounts.join(", ") : ""}`;
+  $("#home-stocks").innerHTML = stocks.map((h) => rhRow(h.symbol, esc(shares(h)))).join("") || `<p class="muted small">No stocks yet.</p>`;
+  $("#home-crypto").innerHTML = crypto.map((h) => rhRow(h.symbol, esc(shares(h)))).join("") || `<p class="muted small">No coins yet.</p>`;
+  const held = new Set(holdingsList.map((h) => h.symbol));
+  $("#home-watch").innerHTML = watchlist.filter((w) => !held.has(w)).map((w) => rhRow(w, "")).join("") || `<p class="muted small">Add symbols from any page with Watch.</p>`;
+  document.querySelectorAll("#tab-home .rh-row").forEach((b) => b.addEventListener("click", () => openSymbol(b.dataset.open)));
+  bindLive("home", $("#tab-home"));
+  const syms = [...new Set([...holdingsList.map((h) => h.symbol), ...watchlist])];
+  if (syms.length && Date.now() - homeState.sparksAt > 120000) {
+    homeState.sparksAt = Date.now();
+    api("/api/sparklines?symbols=" + encodeURIComponent(syms.join(","))).then((sp) => {
+      homeState.sparks = sp;
+      document.querySelectorAll("#tab-home [data-spark]").forEach((el) => { el.innerHTML = sparkSvg(el.dataset.spark); });
+    }).catch(() => {});
+  }
+}
+async function loadHomeFeeds() {
+  try {
+    const n = await api("/api/mynews");
+    $("#home-news").innerHTML = (n.feed || []).slice(0, 6).map((a) => `<li><div><span class="tag">${esc(a.symbol.replace(/-USD$/, ""))}</span>
+      <a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></div>
+      <div class="muted small">${esc(a.source)} · <span data-ago="${esc(a.published)}"></span></div></li>`).join("") || `<li class="muted">No news for your holdings yet.</li>`;
+  } catch { $("#home-news").innerHTML = `<li class="muted">News unavailable.</li>`; }
+  try {
+    const e = await api("/api/early?limit=6");
+    $("#home-early").innerHTML = (e.signals || []).slice(0, 6).map(earlyItem).join("") || `<li class="muted">Nothing early right now.</li>`;
+    document.querySelectorAll("#home-early [data-open]").forEach((el) => el.addEventListener("click", (ev) => { if (!ev.target.closest("a")) openSymbol(el.dataset.open); }));
+  } catch { $("#home-early").innerHTML = `<li class="muted">Early wire unavailable.</li>`; }
+  paintAgo();
+}
+
+// ---------------------------------------------------------------- trade ticket (any symbol)
+const tradeState = { sym: null, side: "buy", type: "market", unit: "shares" };
+const brokerFor = (sym, accounts) => {
+  const acct = (accounts || [])[0] || (isCryptoSym(sym) ? "Coinbase" : "Robinhood");
+  const base = sym.replace(/-USD$/, "");
+  const url = acct === "Coinbase" ? `https://www.coinbase.com/price/${encodeURIComponent(base.toLowerCase())}`
+    : isCryptoSym(sym) ? `https://robinhood.com/crypto/${encodeURIComponent(base)}` : `https://robinhood.com/stocks/${encodeURIComponent(sym)}`;
+  return { acct, url };
+};
+function openTradeTicket(sym, side = "buy") {
+  Object.assign(tradeState, { sym, side, type: "market", unit: "shares" });
+  const held = holdingsList.find((h) => h.symbol === sym);
+  const { acct, url } = brokerFor(sym, held && held.accounts);
+  $("#trade-title").textContent = `Trade ${sym.replace(/-USD$/, "")}`;
+  $("#trade-body").innerHTML = `
+    <div class="seg" id="tt-side"><button type="button" data-v="buy">Buy</button><button type="button" data-v="sell">Sell</button></div>
+    <div class="tt-grid">
+      <label>Order type<select id="tt-type"><option value="market">Market</option><option value="limit">Limit</option></select></label>
+      <label>Amount in<select id="tt-unit"><option value="shares">${isCryptoSym(sym) ? "Coins" : "Shares"}</option><option value="dollars">Dollars</option></select></label>
+      <label><span id="tt-qty-label">${isCryptoSym(sym) ? "Coins" : "Shares"}</span><input id="tt-qty" type="number" min="0" step="any" inputmode="decimal" value="${held && side === "sell" ? held.quantity : ""}"></label>
+      <label id="tt-limit-wrap" hidden>Limit price<input id="tt-limit" type="number" min="0" step="any" inputmode="decimal"></label>
+      <label>Market price<output id="tt-price" data-live="${esc(sym)}" data-lf="price">${Live.prices[sym] ? fmtMoney(Live.prices[sym].price) : "—"}</output></label>
+      <label>Estimated <span id="tt-est-word">cost</span><output id="tt-est">—</output></label>
+      <label>Record in<select id="tt-acct">${["Robinhood", "Coinbase", "Stash", "Other"].map((a) => `<option ${a === acct ? "selected" : ""}>${a}</option>`).join("")}</select></label>
+      <label>You own<output>${held ? held.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 }) : "0"}</output></label>
+    </div>
+    <p class="muted small" id="tt-note"></p>
+    <div class="pc-buttons">
+      <button type="button" id="tt-copy">Copy order</button>
+      <a class="button-secondary" id="tt-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in ${esc(acct === "Coinbase" ? "Coinbase" : "Robinhood")} ↗</a>
+      <button type="button" class="secondary" id="tt-record">It filled: record it</button>
+    </div>
+    <div class="tt-confirm" id="tt-confirm" hidden></div>
+    <p class="muted small" id="tt-status"></p>`;
+  const $$ = (id) => $("#" + id);
+  const paintSide = () => {
+    document.querySelectorAll("#tt-side button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === tradeState.side)));
+    $$("tt-est-word").textContent = tradeState.side === "buy" ? "cost" : "credit";
+    $("#trade-modal").dataset.side = tradeState.side;
+  };
+  const price = () => tradeState.type === "limit" && +$$("tt-limit").value > 0 ? +$$("tt-limit").value : (Live.prices[sym]?.price || 0);
+  const shares = () => tradeState.unit === "dollars" ? (price() ? (+$$("tt-qty").value || 0) / price() : 0) : (+$$("tt-qty").value || 0);
+  const update = () => {
+    const p = price(), q = shares();
+    $$("tt-est").textContent = p && q ? fmtMoney(q * p, 2) + (tradeState.unit === "dollars" ? ` · ${q.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${isCryptoSym(sym) ? "coins" : "shares"}` : "") : "—";
+    const t = Live.prices[sym];
+    const ext = t && !isCryptoSym(sym) && ["pre", "post", "closed"].includes(t.session);
+    $$("tt-note").textContent = ext && tradeState.type === "market" ? "The market is closed: a market order waits for the open. Use a limit order to trade in extended hours."
+      : tradeState.type === "limit" ? "A limit order fills only at your price or better." : "A market order fills at the next available price.";
+  };
+  tradeState.update = update;
+  document.querySelectorAll("#tt-side button").forEach((b) => b.addEventListener("click", () => { tradeState.side = b.dataset.v; paintSide(); update(); }));
+  $$("tt-type").addEventListener("change", (e) => {
+    tradeState.type = e.target.value; $$("tt-limit-wrap").hidden = tradeState.type !== "limit";
+    if (tradeState.type === "limit" && !$$("tt-limit").value && Live.prices[sym]) $$("tt-limit").value = (+Live.prices[sym].price.toFixed(Live.prices[sym].price < 1 ? 4 : 2));
+    update();
+  });
+  $$("tt-unit").addEventListener("change", (e) => { tradeState.unit = e.target.value; $$("tt-qty-label").textContent = tradeState.unit === "dollars" ? "Dollars" : (isCryptoSym(sym) ? "Coins" : "Shares"); update(); });
+  ["tt-qty", "tt-limit"].forEach((id) => $$(id).addEventListener("input", update));
+  $$("tt-copy").addEventListener("click", async () => {
+    const q = shares(), txt = `${tradeState.side.toUpperCase()} ${+q.toFixed(6)} ${sym} ${tradeState.type === "limit" ? "LIMIT " + price() : "MARKET"}`;
+    try { await navigator.clipboard.writeText(txt); $$("tt-status").textContent = "Copied: " + txt; } catch { $$("tt-status").textContent = txt; }
+  });
+  $$("tt-record").addEventListener("click", () => {
+    const q = shares(), p = price();
+    if (!(q > 0 && p > 0)) { $$("tt-status").textContent = "Enter an amount first."; return; }
+    const box = $$("tt-confirm");
+    box.hidden = false;
+    box.innerHTML = `<p>Record <b>${tradeState.side} ${q.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${esc(sym)}</b> at <b>${fmtMoney(p)}</b> in ${esc($$("tt-acct").value)}, dated today? Only once it has filled.</p>
+      <div class="pc-buttons"><button type="button" id="tt-yes">Record it</button><button type="button" class="secondary" id="tt-no">Not yet</button></div>`;
+    $$("tt-no").addEventListener("click", () => { box.hidden = true; });
+    $$("tt-yes").addEventListener("click", async () => {
+      try {
+        await api("/api/transactions", { method: "POST", body: JSON.stringify({ symbol: sym, side: tradeState.side, quantity: +q.toFixed(8), price: p, fees: 0, date: localDate(), account: $$("tt-acct").value }) });
+        box.hidden = true; $$("tt-status").textContent = "Recorded.";
+        await loadHoldings(); renderPosition();
+      } catch (err) { $$("tt-status").textContent = err.message; }
+    });
+  });
+  paintSide(); update();
+  $("#trade-modal").hidden = false;
+  bindLive("trade", $("#trade-modal"));
+  $$("tt-qty").focus();
+}
+function closeTrade() { $("#trade-modal").hidden = true; Live.drop("trade"); tradeState.update = null; }
+$("#trade-close").addEventListener("click", closeTrade);
+$("#trade-modal").addEventListener("click", (e) => { if (e.target.id === "trade-modal") closeTrade(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#trade-modal").hidden) closeTrade(); });
+Live.onTick((t) => { if (tradeState.update && t.symbol === tradeState.sym) tradeState.update(); });
+$("#sym-trade").addEventListener("click", () => symState.sym && openTradeTicket(symState.sym, "buy"));
+
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
-loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadPulse(); });
+loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadHome(); });
 loadHeadsup();
 if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
