@@ -46,6 +46,10 @@ function selectTab(name) {
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
+  if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
+  if (name === "reading") loadReading();
+  if (name === "radar") loadRadar();
+  if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
   if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
   if (name !== "plan" && typeof Live !== "undefined") Live.drop("plan");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
@@ -359,7 +363,7 @@ async function loadPortfolio() {
       tile("Realized P&L", fmtMoney(p.realized_pnl, 0), ""),
     ].join("");
     $("#pf-table").innerHTML = p.positions.length ? `<thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Today</th><th class="num">Value</th><th class="num">P&L</th><th class="num">Weight</th></tr></thead><tbody>` +
-      p.positions.map((x) => { const s = esc(x.symbol), q = x.quantity, c = x.cost_basis; return `<tr class="clickable" data-open="${s}"><td><b>${s}</b></td><td class="num">${q.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td class="num">${fmtMoney(x.avg_cost)}</td>
+      p.positions.map((x) => { const s = esc(x.symbol), q = x.quantity, c = x.cost_basis; return `<tr class="clickable" data-open="${s}"><td><b>${s}</b>${(holdingsList.find((h) => h.symbol === x.symbol)?.accounts || []).length ? `<div class="muted small">${esc(holdingsList.find((h) => h.symbol === x.symbol).accounts.join(" · "))}</div>` : ""}</td><td class="num">${q.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td class="num">${fmtMoney(x.avg_cost)}</td>
         <td class="num" data-live="${s}" data-lf="price">${fmtMoney(x.price)}</td><td class="num ${cls(x.day_change_pct)}" data-live="${s}" data-lf="chg">${fmtPct(x.day_change_pct, 2)}</td>
         <td class="num" data-live="${s}" data-lf="value" data-qty="${q}">${fmtMoney(x.market_value)}</td>
         <td class="num"><span class="${cls(x.unrealized_pnl)}" data-live="${s}" data-lf="pnl" data-qty="${q}" data-cost="${c}">${fmtMoney(x.unrealized_pnl, 0)}</span> <span class="small ${cls(x.unrealized_pct)}" data-live="${s}" data-lf="pnlpct" data-qty="${q}" data-cost="${c}">${fmtPct(x.unrealized_pct)}</span></td>
@@ -407,7 +411,7 @@ $("#tx-form").date.value = new Date().toISOString().slice(0, 10);
 $("#tx-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  const body = { symbol: f.get("symbol"), side: f.get("side"), quantity: +f.get("quantity"), price: +f.get("price"), fees: +(f.get("fees") || 0), date: f.get("date") };
+  const body = { symbol: f.get("symbol"), side: f.get("side"), quantity: +f.get("quantity"), price: +f.get("price"), fees: +(f.get("fees") || 0), date: f.get("date"), account: f.get("account") || "" };
   try {
     await api("/api/transactions", { method: "POST", body: JSON.stringify(body) });
     $("#tx-status").textContent = "Saved.";
@@ -708,25 +712,39 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#quick-input").focus(); }
 });
 
-// ---------------------------------------------------------------- Robinhood import
-let rhText = "";
+// ---------------------------------------------------------------- imports (Robinhood, Coinbase, Stash / other)
+let impSource = "robinhood", impText = "", impAccount = "";
+document.querySelectorAll("#imp-seg button").forEach((b) => b.addEventListener("click", () => {
+  impSource = b.dataset.src;
+  document.querySelectorAll("#imp-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  document.querySelectorAll(".imp-help").forEach((p) => { p.hidden = p.dataset.for !== impSource; });
+  $(".imp-file").hidden = impSource === "holdings";
+  $(".imp-list").hidden = impSource !== "holdings";
+  $("#rh-result").innerHTML = "";
+}));
 $("#rh-preview").addEventListener("click", async () => {
   const file = $("#rh-file").files[0];
   if (!file) { $("#rh-result").innerHTML = `<p class="muted">Choose the CSV file first.</p>`; return; }
-  rhText = await file.text();
+  impText = await file.text();
   await runImport(false);
+});
+$("#imp-list-preview").addEventListener("click", () => {
+  impText = $("#imp-text").value; impAccount = $("#imp-account").value;
+  if (!impText.trim()) { $("#rh-result").innerHTML = `<p class="muted">Type at least one holding.</p>`; return; }
+  runImport(false);
 });
 async function runImport(commit) {
   const out = $("#rh-result");
   out.innerHTML = `<p class="muted">${commit ? "Importing…" : "Reading…"}</p>`;
   try {
-    const r = await api("/api/import/robinhood", { method: "POST", body: JSON.stringify({ csv: rhText, commit }) });
+    const r = await api("/api/import/" + impSource, { method: "POST", body: JSON.stringify({ csv: impText, commit, account: impAccount || "Stash" }) });
     const skipped = Object.entries(r.skipped).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
-    out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} trades.</b>` : `<b>${r.new} new trades</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
-      ${skipped ? `<br><span class="muted small">Skipped (not share trades): ${skipped}</span>` : ""}
+    const noun = impSource === "holdings" ? "holdings" : "trades";
+    out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} ${noun}.</b>` : `<b>${r.new} new ${noun}</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
+      ${skipped ? `<br><span class="muted small">Skipped (not trades): ${skipped}</span>` : ""}
       ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}</p>
-      <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}`).join(", ") || "none"}</p>
-      ${!commit && r.new ? `<button id="rh-commit" type="button">Import ${r.new} trades</button>` : ""}`;
+      <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })}`).join(", ") || "none"}</p>
+      ${!commit && r.new ? `<button id="rh-commit" type="button">Import ${r.new} ${noun}</button>` : ""}`;
     const btn = $("#rh-commit");
     if (btn) btn.addEventListener("click", () => runImport(true));
     if (commit) { loadPortfolio(); loadHoldings(); }
@@ -931,6 +949,9 @@ setInterval(() => {
   if (tab === "pulse" && pulseState.data && now - pulseState.loadedAt > 180000) loadPulse();
   if (tab === "dashboard" && now - newsLoadedAt > 120000) loadMarketNews();
   if (tab === "plan" && planState.data && now - planState.loadedAt > 300000) loadPlan();
+  if (tab === "mynews" && now - mnState.loadedAt > 300000) loadMyNews();
+  if (tab === "reading" && now - rdState.loadedAt > 600000) loadReading();
+  if (tab === "radar" && now - rrState.loadedAt > 120000) loadRadar();
 }, 15000);
 
 // ---------------------------------------------------------------- strategy plan
@@ -1067,7 +1088,162 @@ Live.onTick(() => { if (currentTab() === "plan" && planState.data) paintPlanScor
 let planScoreTimer = null;
 function paintPlanScoreSoon() { if (!planScoreTimer) planScoreTimer = setTimeout(() => { planScoreTimer = null; paintPlanScore(); }, 500); }
 
+// ---------------------------------------------------------------- heads-up bell
+const huState = { unread: 0, seen: new Set() };
+async function loadHeadsup(markRead = false) {
+  let h;
+  try { h = await api("/api/headsup"); } catch { return; }
+  const n = markRead ? 0 : h.unread;
+  $("#sb-bell-n").textContent = n;
+  $("#sb-bell").classList.toggle("has", n > 0);
+  // Desktop notification for anything new while the page is open (if allowed).
+  const fresh = h.items.filter((i) => !i.read && !huState.seen.has(i.key));
+  if (huState.seen.size && fresh.length && "Notification" in window && Notification.permission === "granted") {
+    fresh.slice(0, 3).forEach((i) => { try { new Notification(i.title, { body: i.body }); } catch { /* blocked */ } });
+  }
+  h.items.forEach((i) => huState.seen.add(i.key));
+  const kinds = { radar: "Filing", news: "Loud news", reading: "Pro mention", topic: "Hot topic" };
+  $("#hu-list").innerHTML = h.items.length ? h.items.slice(0, 25).map((i) => `<li class="hu lvl${i.level}${i.read ? "" : " unread"}">
+      <span class="hu-kind">${esc(kinds[i.kind] || i.kind)}</span>
+      <div><a href="${esc(safeUrl(i.url))}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a>
+      <div class="muted small">${esc(i.body)} · <span data-ago="${esc(i.at)}"></span></div></div></li>`).join("")
+    : `<li class="muted">Nothing yet. While the app runs it checks SEC filings every 2 minutes and news every 10 for everything you own or watch.</li>`;
+  $("#hu-push").innerHTML = h.push ? "Phone push: on" : `Phone push: off (set NTFY_TOPIC in .env)` +
+    ("Notification" in window && Notification.permission === "default" ? ` · <button type="button" class="ghost" id="hu-desktop">Enable desktop alerts</button>` : "");
+  const d = $("#hu-desktop");
+  if (d) d.addEventListener("click", () => Notification.requestPermission().then(() => loadHeadsup()));
+  if (markRead && h.unread) api("/api/headsup/read", { method: "POST" }).catch(() => {});
+  paintAgo();
+}
+$("#sb-bell").addEventListener("click", () => selectTab("mynews"));
+setInterval(() => { if (!document.hidden) loadHeadsup(currentTab() === "mynews"); }, 60000);
+
+// ---------------------------------------------------------------- news for your holdings
+const mnState = { data: null, loadedAt: 0, filter: "" };
+const moodTxt = (m) => `<span class="${cls(m)}">${m > 0 ? "+" : ""}${Number(m).toFixed(2)}</span>`;
+async function loadMyNews() {
+  if (!mnState.data) $("#mn-meta").textContent = "Reading the news for each holding… (up to a minute the first time)";
+  try {
+    mnState.data = await api("/api/mynews"); mnState.loadedAt = Date.now(); renderMyNews();
+  } catch (err) { $("#mn-meta").textContent = err.message; }
+}
+function renderMyNews() {
+  const d = mnState.data;
+  if (!d.symbols.length && !d.feed.length) {
+    $("#mn-grid").innerHTML = `<p class="muted">Import your Robinhood, Coinbase or Stash holdings (Portfolio tab) or add symbols to your watchlist.</p>`;
+    $("#mn-feed").innerHTML = ""; $("#mn-meta").textContent = ""; return;
+  }
+  $("#mn-meta").innerHTML = `Updated <span data-ago="${esc(d.generated_at)}"></span> · every 5 minutes${d.errors.length ? ` · ${d.errors.length} not found` : ""}`;
+  const held = new Set(d.held || []);
+  $("#mn-grid").innerHTML = d.symbols.map((x) => { const s = esc(x.symbol); return `<div class="mn-card${x.loud ? " loud" : ""}">
+      <div class="mn-head"><button type="button" class="linkish" data-open="${s}">${esc(x.symbol.replace(/-USD$/, ""))}</button>
+        <span data-live="${s}" data-lf="price">—</span><span class="small" data-live="${s}" data-lf="chg"></span>
+        ${x.loud ? `<span class="chip chip-review">Loud · ${x.heat}×</span>` : ""}${held.has(x.symbol) ? "" : `<span class="chip chip-muted">watching</span>`}</div>
+      <div class="small muted">${x.last_24h} today · ${x.daily_pace}/day usual · mood ${moodTxt(x.mood)}${x.terms.length ? " · " + esc(x.terms.join(", ")) : ""}</div>
+      <ul>${x.headlines.slice(0, 3).map((a) => `<li><a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a> <span class="muted small">${esc(a.source)} · <span data-ago="${esc(a.published)}"></span></span></li>`).join("")}</ul>
+      ${x.deep.length ? `<div class="small"><b>In depth:</b> ${x.deep.map((a) => `<a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.source)}</a>`).join(", ")}</div>` : ""}
+    </div>`; }).join("");
+  const syms = [...new Set(d.feed.map((a) => a.symbol))];
+  $("#mn-filter").innerHTML = [`<button type="button" class="chipbtn" data-f="" aria-pressed="${!mnState.filter}">All</button>`]
+    .concat(syms.map((s) => `<button type="button" class="chipbtn" data-f="${esc(s)}" aria-pressed="${mnState.filter === s}">${esc(s.replace(/-USD$/, ""))}</button>`)).join("");
+  $("#mn-filter").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { mnState.filter = b.dataset.f; renderMyNews(); }));
+  $("#mn-feed").innerHTML = d.feed.filter((a) => !mnState.filter || a.symbol === mnState.filter).slice(0, 80).map((a) => `<li>
+      <div><span class="tag">${esc(a.symbol.replace(/-USD$/, ""))}</span>${a.deep ? `<span class="tag tag-deep-coverage">In depth</span>` : ""}
+      <a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></div>
+      <div class="muted small">${esc(a.source)} · <span data-ago="${esc(a.published)}"></span> · mood ${moodTxt(a.sentiment || 0)}</div></li>`).join("")
+    || `<li class="muted">No headlines in the last 48 hours.</li>`;
+  document.querySelectorAll("#tab-mynews [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  bindLive("mynews", $("#tab-mynews"));
+  paintAgo();
+}
+
+// ---------------------------------------------------------------- reading room
+const rdState = { data: null, loadedAt: 0, kind: "" };
+async function loadReading() {
+  if (!rdState.data) $("#rd-meta").textContent = "Reading 17 feeds…";
+  try { rdState.data = await api("/api/reading"); rdState.loadedAt = Date.now(); renderReading(); }
+  catch (err) { $("#rd-meta").textContent = err.message; }
+}
+const mentionTags = (m) => (m || []).map((s) => `<span class="tag tag-in-the-news">${esc(s.replace(/-USD$/, ""))}</span>`).join("");
+function renderReading() {
+  const d = rdState.data;
+  $("#rd-meta").innerHTML = `Updated <span data-ago="${esc(d.generated_at)}"></span>`;
+  $("#rd-picks").innerHTML = d.picks.map((p) => `<li><div>${p.picked_by.length > 1 ? `<span class="tag tag-unusual-volume">Picked by both</span>` : ""}${mentionTags(p.mentions)}
+      <a href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a></div>
+      <div class="muted small">${esc(p.domain)} · ${esc(p.picked_by.join(" + "))}${p.section && p.section !== "Reads" ? " · " + esc(p.section) : ""} · <span data-ago="${esc(p.published)}"></span></div></li>`).join("")
+    || `<li class="muted">No curated links in the last few days.</li>`;
+  const multi = d.outlets.filter(([, n]) => n > 1);
+  $("#rd-outlets").textContent = multi.length ? "Most-picked outlets: " + multi.slice(0, 8).map(([dm, n]) => `${dm} ×${n}`).join(" · ") : "";
+  $("#rd-mentions").innerHTML = d.mentions.map((m) => `<li><div>${mentionTags(m.mentions)}<a href="${esc(safeUrl(m.url))}" target="_blank" rel="noopener noreferrer">${esc(m.title)}</a></div>
+      <div class="muted small">${esc(m.source_name || (m.picked_by || []).join(" + "))} · <span data-ago="${esc(m.published)}"></span></div></li>`).join("")
+    || `<li class="muted">None of your holdings is in the pro coverage right now.</li>`;
+  $("#rd-topics").innerHTML = d.topics.map((t) => `<div class="topic${t.hot ? " hot" : ""}">
+      <div class="topic-head"><b>${esc(t.name)}</b>${t.hot ? `<span class="chip chip-review">Heating up</span>` : ""}
+        <span class="muted small">${t.last_24h} today · ${t.daily_pace}/day usual</span>
+        <button type="button" class="ghost" data-del-topic="${esc(t.name)}" aria-label="Remove ${esc(t.name)}">✕</button></div>
+      <ul>${t.latest.slice(0, 3).map((i) => `<li><a href="${esc(safeUrl(i.url))}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a> <span class="muted small">${esc(i.source_name)}</span></li>`).join("")}</ul></div>`).join("");
+  $("#rd-topics").querySelectorAll("[data-del-topic]").forEach((b) => b.addEventListener("click", async () => {
+    await api("/api/topics/" + encodeURIComponent(b.dataset.delTopic), { method: "DELETE" }); rdState.data = null; loadReading();
+  }));
+  renderDesks();
+  paintAgo();
+}
+function renderDesks() {
+  const items = rdState.data.items.filter((i) => !rdState.kind || i.kind === rdState.kind).slice(0, 80);
+  $("#rd-items").innerHTML = items.map((i) => `<li><div>${mentionTags(i.mentions)}${i.topics.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}
+      <a href="${esc(safeUrl(i.url))}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a></div>
+      <div class="muted small">${esc(i.source_name)} · <span data-ago="${esc(i.published)}"></span></div></li>`).join("") || `<li class="muted">Nothing here yet.</li>`;
+  paintAgo();
+}
+document.querySelectorAll("#rd-kind button").forEach((b) => b.addEventListener("click", () => {
+  rdState.kind = b.dataset.kind;
+  document.querySelectorAll("#rd-kind button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (rdState.data) renderDesks();
+}));
+$("#topic-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api("/api/topics", { method: "POST", body: JSON.stringify({ name: f.get("name"), terms: f.get("terms") }) });
+    e.target.reset(); rdState.data = null; loadReading();
+  } catch (err) { alert(err.message); }
+});
+
+// ---------------------------------------------------------------- radar
+const rrState = { data: null, loadedAt: 0 };
+async function loadRadar() {
+  if (!rrState.data) $("#rr-meta").textContent = "Checking SEC filings for your companies…";
+  try { rrState.data = await api("/api/radar"); rrState.loadedAt = Date.now(); renderRadar(); }
+  catch (err) { $("#rr-meta").textContent = err.message; }
+}
+function radarRow(a, mine) {
+  const s = a.symbol ? esc(a.symbol) : "";
+  return `<li class="rr lvl${a.level}"><span class="rr-level">${esc(a.level_name)}</span>
+    <div><div>${s ? `<button type="button" class="linkish rr-sym" data-open="${s}">${s}</button>` : ""}<b>${esc(a.headline)}</b></div>
+    <div class="small">${esc(a.company)} · ${esc(a.form)} · ${esc(a.filed)}${a.when ? ` · <span data-ago="${esc(a.when)}"></span>` : ""} ·
+      <a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">Read the filing ↗</a></div>
+    ${mine ? `<div class="muted small">${esc(a.why)}</div>` : ""}
+    ${a.items && a.items.length > 1 ? `<div class="muted small">Items: ${a.items.map((i) => esc(i.code + " " + i.label)).join("; ")}</div>` : ""}</div></li>`;
+}
+function renderRadar() {
+  const d = rrState.data;
+  $("#rr-meta").innerHTML = `${d.watching} companies watched · feed checked <span data-ago="${esc(d.scanned_at)}"></span>, every 2 minutes${d.errors.length ? ` · ${d.errors.length} source errors` : ""}`;
+  $("#rr-mine").innerHTML = d.mine.map((a) => radarRow(a, true)).join("")
+    || `<li class="muted">${d.watching ? `No scary filings in the last 90 days for your ${d.watching} companies.` : "No stock holdings or watchlist companies yet (crypto has no SEC filings)."}</li>`;
+  paintMarketRadar();
+}
+function paintMarketRadar() {
+  const lvl = +$("#rr-level").value, listed = $("#rr-listed").checked;
+  const rows = rrState.data.market.filter((a) => a.level >= lvl && (!listed || a.symbol));
+  $("#rr-market").innerHTML = rows.slice(0, 150).map((a) => radarRow(a, false)).join("") || `<li class="muted">Nothing at this level in the last 3 days.</li>`;
+  document.querySelectorAll("#tab-radar [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  paintAgo();
+}
+$("#rr-level").addEventListener("change", () => rrState.data && paintMarketRadar());
+$("#rr-listed").addEventListener("change", () => rrState.data && paintMarketRadar());
+
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
 loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadPulse(); });
+loadHeadsup();
 if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));

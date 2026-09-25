@@ -1,4 +1,4 @@
-"""SQLite persistence for transactions, the watchlist and the strategy plan's log."""
+"""SQLite persistence: transactions, the watchlist, the strategy plan's log, heads-ups and topics."""
 
 from __future__ import annotations
 
@@ -33,6 +33,25 @@ CREATE TABLE IF NOT EXISTS plan_log (
     reason TEXT,
     UNIQUE (day, symbol, action)
 );
+CREATE TABLE IF NOT EXISTS headsup (
+    key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    level INTEGER NOT NULL DEFAULT 1,
+    symbol TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL,
+    read INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS topics (
+    name TEXT PRIMARY KEY,
+    terms TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -54,15 +73,18 @@ def _migrate(conn) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
     if "import_key" not in cols:
         conn.execute("ALTER TABLE transactions ADD COLUMN import_key TEXT")
+    if "account" not in cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS transactions_import_key ON transactions(import_key)")
 
 
 def add_transaction(conn, symbol: str, side: str, quantity: float, price: float, date: str,
-                    fees: float = 0.0, note: str | None = None, import_key: str | None = None) -> int:
+                    fees: float = 0.0, note: str | None = None, import_key: str | None = None,
+                    account: str = "") -> int:
     cur = conn.execute(
-        "INSERT INTO transactions (symbol, side, quantity, price, fees, date, note, import_key) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (symbol.upper(), side, quantity, price, fees, date, note, import_key))
+        "INSERT INTO transactions (symbol, side, quantity, price, fees, date, note, import_key, account) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (symbol.upper(), side, quantity, price, fees, date, note, import_key, account or ""))
     return cur.lastrowid
 
 
@@ -107,3 +129,37 @@ def log_plan(conn, day: str, actions: list[dict]) -> int:
 
 def plan_history(conn, limit: int = 200) -> list[dict]:
     return [dict(r) for r in conn.execute("SELECT * FROM plan_log ORDER BY day DESC, id DESC LIMIT ?", (limit,))]
+
+
+def add_headsup(conn, key: str, kind: str, level: int, title: str, body: str = "", url: str = "",
+                symbol: str = "", at: str = "") -> bool:
+    """Record a heads-up once per key. Returns True when it is new (and worth notifying)."""
+    cur = conn.execute("INSERT OR IGNORE INTO headsup (key, kind, level, symbol, title, body, url, at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (key, kind, level, symbol, title, body, url, at))
+    return cur.rowcount > 0
+
+
+def list_headsup(conn, limit: int = 60) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM headsup ORDER BY at DESC LIMIT ?", (limit,))]
+
+
+def mark_headsup_read(conn) -> None:
+    conn.execute("UPDATE headsup SET read = 1 WHERE read = 0")
+
+
+def topics(conn, defaults: dict[str, str] | None = None) -> dict[str, str]:
+    """Your topics; the defaults are added once, the first time (deleting them sticks)."""
+    if defaults and not conn.execute("SELECT 1 FROM meta WHERE key = 'topics_seeded'").fetchone():
+        for name, terms in defaults.items():
+            conn.execute("INSERT OR IGNORE INTO topics (name, terms) VALUES (?, ?)", (name, terms))
+        conn.execute("INSERT INTO meta (key, value) VALUES ('topics_seeded', '1')")
+    return {r["name"]: r["terms"] for r in conn.execute("SELECT name, terms FROM topics ORDER BY name")}
+
+
+def set_topic(conn, name: str, terms: str) -> None:
+    conn.execute("INSERT INTO topics (name, terms) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET terms = excluded.terms",
+                 (name, terms))
+
+
+def delete_topic(conn, name: str) -> None:
+    conn.execute("DELETE FROM topics WHERE name = ?", (name,))

@@ -461,8 +461,14 @@ def cmd_site(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    import threading
     import uvicorn
-    uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
+    import webbrowser
+    url = f"http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}"
+    print(f"Plumbline is running at {url}  (Ctrl+C to stop)")
+    if args.open:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False, log_level="warning")
     return 0
 
 
@@ -561,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--open", action="store_true", help="Open the dashboard in your browser")
     s.set_defaults(func=cmd_serve)
 
     args = p.parse_args(argv)

@@ -18,7 +18,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, db, dilution, http, importers, journal, livefeed, pulse, research, service, strategy
+from . import (auth, db, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+               sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -26,7 +27,9 @@ from .providers import market, news, sec
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     livefeed.hub.start()
+    sentinel.sentinel.start()
     yield
+    await sentinel.sentinel.stop()
     await livefeed.hub.stop()
 
 
@@ -189,7 +192,11 @@ def holdings():
         pos = service.pf.build_positions(txs)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return [{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "cost_basis": p.cost_basis}
+    accounts: dict[str, set[str]] = {}
+    for t in txs:
+        accounts.setdefault(t["symbol"].upper(), set()).add(t.get("account") or "")
+    return [{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "cost_basis": p.cost_basis,
+             "accounts": sorted(a for a in accounts.get(p.symbol, ()) if a)}
             for p in pos.values() if p.quantity > 0]
 
 
@@ -249,6 +256,7 @@ class TransactionIn(BaseModel):
     fees: float = Field(0.0, ge=0)
     date: str = Field(default_factory=lambda: date.today().isoformat(), pattern=r"^\d{4}-\d{2}-\d{2}$")
     note: str | None = None
+    account: str = Field("", max_length=40)
 
 
 @app.get("/api/transactions")
@@ -267,7 +275,8 @@ def add_transaction(tx: TransactionIn):
             service.pf.build_positions(candidate)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        tx_id = db.add_transaction(conn, symbol, tx.side, tx.quantity, tx.price, tx.date, tx.fees, tx.note)
+        tx_id = db.add_transaction(conn, symbol, tx.side, tx.quantity, tx.price, tx.date, tx.fees, tx.note,
+                                   account=tx.account.strip())
     return {"id": tx_id}
 
 
@@ -374,15 +383,120 @@ async def strategy_plan(cash: float = Query(0.0, ge=0, le=1e10)):
     return dict(plan, history=history)
 
 
+# ------------------------------------------------------------------ radar, news, reading, heads-ups
+
+@app.get("/api/radar")
+async def radar_view(refresh: bool = False):
+    """Scary filings: yours (90 days, from each company's filing list, the live feed and the
+    going-concern search) and the whole market's (last 3 days, from the live feed)."""
+    s = sentinel.sentinel
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    if refresh or not s.scanned_at:
+        await asyncio.to_thread(s.scan)
+    key = tuple(held + watched)
+    if refresh:
+        sentinel.radar_cache.clear()
+    mine, errors = await asyncio.to_thread(sentinel.radar_cache.get, key, lambda: s.mine(held + watched))
+    market_alerts = sorted(s.market.values(), key=radar.when_sort_key, reverse=True)
+    return {"scanned_at": s.scanned_at, "mine": [a.to_dict() for a in mine],
+            "market": [a.to_dict() for a in market_alerts], "watching": len(sentinel.symbol_ciks(held + watched)),
+            "held": held, "watched": watched, "errors": s.radar_errors + errors,
+            "levels": radar.LEVEL_NAMES}
+
+
+@app.get("/api/mynews")
+async def my_news(refresh: bool = False):
+    """Headlines for everything you own or watch, with a digest per symbol."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    syms = held + watched
+    if not syms:
+        return {"symbols": [], "feed": [], "errors": [], "generated_at": None}
+    if refresh:
+        sentinel.news_cache.clear()
+    data = await asyncio.to_thread(sentinel.news_cache.get, tuple(syms), lambda: sentinel.build_news(syms))
+    return dict(data, held=held)
+
+
+@app.get("/api/reading")
+async def reading_room(refresh: bool = False):
+    """What professionals are reading, the desks' latest, your holdings in them, and your topics."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    syms = held + watched
+    if refresh:
+        sentinel.reading_cache.clear()
+    return await asyncio.to_thread(sentinel.reading_cache.get, tuple(syms), lambda: sentinel.build_reading(syms))
+
+
+class TopicIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    terms: str = Field(min_length=1, max_length=400)
+
+
+@app.get("/api/topics")
+def list_topics():
+    with db.connect() as conn:
+        return db.topics(conn, reading.DEFAULT_TOPICS)
+
+
+@app.post("/api/topics", status_code=201)
+def save_topic(t: TopicIn):
+    with db.connect() as conn:
+        db.topics(conn, reading.DEFAULT_TOPICS)
+        db.set_topic(conn, t.name.strip(), t.terms.strip())
+        out = db.topics(conn)
+    sentinel.reading_cache.clear()
+    return out
+
+
+@app.delete("/api/topics/{name}")
+def remove_topic(name: str):
+    with db.connect() as conn:
+        db.delete_topic(conn, name)
+        out = db.topics(conn)
+    sentinel.reading_cache.clear()
+    return out
+
+
+@app.get("/api/headsup")
+def headsups():
+    with db.connect() as conn:
+        items = db.list_headsup(conn)
+    return {"items": items, "unread": sum(1 for i in items if not i["read"]),
+            "push": notify.configured(), "reading_at": sentinel.sentinel.reading_at}
+
+
+@app.post("/api/headsup/read")
+def headsup_read():
+    with db.connect() as conn:
+        db.mark_headsup_read(conn)
+    return {"ok": True}
+
+
 class ImportIn(BaseModel):
     csv: str = Field(min_length=1, max_length=5_000_000)
     commit: bool = False
+    account: str = Field("Stash", max_length=40)      # for the holdings list only
 
 
-@app.post("/api/import/robinhood")
-def import_robinhood(body: ImportIn):
-    """Preview (commit=false) or import a Robinhood account-activity CSV."""
-    res = importers.parse_robinhood(body.csv)
+IMPORT_HINTS = {
+    "robinhood": "The file probably starts after some of these shares were bought: export the full history, "
+                 "or record the earlier buys first.",
+    "coinbase": "Coins received from another wallet or exchange have no purchase in this file: add them with "
+                "Quick add (their original cost), then import again.",
+    "holdings": "",
+}
+
+
+@app.post("/api/import/{source}")
+def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: ImportIn):
+    """Preview (commit=false) or import a Robinhood or Coinbase CSV, or a quick holdings list
+    (Stash and other accounts with no export)."""
+    if source == "robinhood":
+        res = importers.parse_robinhood(body.csv)
+    elif source == "coinbase":
+        res = importers.parse_coinbase(body.csv)
+    else:
+        res = importers.parse_holdings_list(body.csv, body.account.strip() or "Other", date.today().isoformat())
     if res.errors and not res.transactions:
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
@@ -392,16 +506,17 @@ def import_robinhood(body: ImportIn):
         try:
             positions = service.pf.build_positions(existing + new)
         except ValueError as exc:
-            raise HTTPException(400, f"{exc}. The file probably starts after some of these shares were bought: "
-                                     "export the full history, or record the earlier buys first.")
+            raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
         if body.commit:
             for t in new:
                 db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
-                                   t["note"], import_key=t["import_key"])
+                                   t["note"], import_key=t["import_key"], account=t.get("account", ""))
+    touched = {t["symbol"] for t in res.transactions}
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
-                                 for p in positions.values() if p.quantity > 0], key=lambda x: x["symbol"])}
+                                 for p in positions.values() if p.quantity > 0 and p.symbol in touched],
+                                key=lambda x: x["symbol"])}
 
 
 @app.get("/api/portfolio")

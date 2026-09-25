@@ -26,13 +26,35 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Track record** | Logs each day's scores to a CSV, then measures them against what prices did 1, 3 and 6 months later. Reports the IC (rank correlation) with its error band, average return by label, and a per-component IC. A scheduled GitHub Actions job records 15 symbols every weekday | computed locally + GitHub Actions |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
-## Quick start
+## Run it on your computer (5 minutes)
+
+Everything runs locally with live data: nothing to deploy, and your portfolio never leaves your machine.
+
+1. Install **Python 3.11+** (python.org/downloads) and **Git**.
+2. Get the code: `git clone https://github.com/jwill736/market-tracker.git` (or GitHub → Code → Download ZIP).
+3. Start it:
+   - **Mac / Linux:** in the folder, run `./start.sh`
+   - **Windows:** double-click `start.bat`
+
+   The first run sets everything up (a minute or two) and creates `.env`. Open `.env` and put your email in
+   `SEC_USER_AGENT` (the SEC asks every user of its data for a contact), then start it again. Your browser opens
+   at http://localhost:8000. Every later start also pulls the latest version.
+4. **Load your accounts** in Portfolio → Import your accounts: Robinhood (account activity CSV), Coinbase
+   (transaction history CSV), Stash (type your holdings once: Stash has no export).
+5. **Phone alerts (optional):** install the ntfy app, subscribe to a long random topic name, and put the same name in
+   `NTFY_TOPIC` in `.env`. Scary filings, loud news, pro mentions of your holdings and hot topics then reach your
+   phone while the app runs. With the page open you can also allow desktop alerts (News → Heads-up).
+
+The background watch runs only while the app runs. The GitHub workflows keep running regardless: insider alerts,
+the filing watcher and the journal.
+
+Manual setup instead of the scripts:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env        # set SEC_USER_AGENT (required by SEC) and ANTHROPIC_API_KEY (for deep dives)
-mt serve                    # http://127.0.0.1:8000
+mt serve --open             # http://localhost:8000
 ```
 
 CLI equivalents:
@@ -155,6 +177,36 @@ holdings deserve a second look. Every row says why it is there; click any ticker
 
 `GET /api/pulse` (cached 3 minutes, `?refresh=true` rescans) and `GET /api/sellwatch` (cached 10
 minutes per portfolio) return the same data as JSON.
+
+## Filing radar (scary SEC filings)
+
+The **Radar** tab and the heads-up bell watch for filings that usually mean trouble, for every company you own or watch
+(last 90 days) and market-wide (last 3 days):
+
+| Level | Filings |
+|---|---|
+| Act today | Bankruptcy (8-K 1.03), past financials can't be relied on / restatement (4.02), delisting notice (3.01), debt default or acceleration (2.04), exchange delisting (Form 25-NSE, 25) |
+| Serious | Auditor change (4.01), cybersecurity incident (1.05), write-down (2.06), restructuring or layoffs (2.05), late annual or quarterly report (NT 10-K / NT 10-Q), deregistration (Form 15), going-concern doubt in a 10-K/10-Q |
+| Read it | Director or officer change (5.02: appointments too, so read it), change to shareholder rights / reverse split (3.03), material agreement ended (1.02) |
+
+EDGAR's live feed lists each 8-K's item numbers, so filings are classified without downloading them. The app
+checks it every 2 minutes while it runs. The going-concern check uses EDGAR full-text search. Crypto has no SEC
+filings.
+
+## News for your holdings, and what the pros are reading
+
+- **News tab:** every stock and coin you own (Robinhood, Coinbase, Stash) or watch: headlines from the last 7 days, today's
+  count against its usual daily pace (**loud** at 3× and 5+), headline mood, in-depth coverage, and one merged
+  headline feed you can filter by symbol. The **heads-up** list at the top collects everything the background
+  watch found.
+- **Reading tab:**
+  - *What the pros are reading*: the links Abnormal Returns (a daily list for investment professionals) and Barry
+    Ritholtz picked in the last few days. Picked by both ranks first.
+  - *From the desks*: FT (incl. Alphaville), Bloomberg, WSJ, CNBC, MarketWatch, Seeking Alpha, the Economist, Yahoo
+    Finance, Calculated Risk, the Fed, the SEC, CoinDesk, Decrypt, The Block.
+  - Every item is tagged with your holdings it names (ticker, company or coin name) and your **topics**. A topic
+    **heats up** at twice its usual daily pace (5+ stories). Five default topics are set up (rates, AI, crypto
+    policy, tariffs, recession); add your own with the words to match.
 
 ## Strategy plan (what to sell, trim, add and buy)
 

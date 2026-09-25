@@ -24,6 +24,9 @@
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="pulse" aria-selected="true">Pulse</button>
     <button role="tab" data-tab="plan" aria-selected="false">Plan</button>
+    <button role="tab" data-tab="mynews" aria-selected="false">News</button>
+    <button role="tab" data-tab="reading" aria-selected="false">Reading</button>
+    <button role="tab" data-tab="radar" aria-selected="false">Radar</button>
     <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
     <button role="tab" data-tab="analyze">Analyze</button>
     <button role="tab" data-tab="smart">Smart money</button>
@@ -42,6 +45,7 @@
     <span data-book="today"></span></span>
   <span class="sb-item"><span class="live" id="live-dot-global" title="Live stream status">●</span> <span id="sb-session">—</span></span>
   <span class="sb-item muted" id="sb-tick" title="Time since the last price update"></span>
+  <button type="button" class="sb-bell" id="sb-bell" title="Heads-up: filings, loud news, pro mentions, hot topics">Heads-up <span id="sb-bell-n">0</span></button>
 </div>
 
 <main>
@@ -96,6 +100,75 @@
       <div class="scroll"><table class="data" id="plan-history"></table></div>
     </div>
     <details class="card"><summary><b>The rules</b></summary><ul id="plan-rules" class="small"></ul></details>
+  </section>
+
+  <!-- News for your holdings -->
+  <section id="tab-mynews" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Heads-up</h2><span class="muted small" id="hu-push"></span></div>
+      <ul class="hu-list" id="hu-list"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Your holdings in the news</h2><span class="muted small" id="mn-meta"></span></div>
+      <p class="muted small">Every stock and coin you own (Robinhood, Coinbase, Stash) or watch. <b>Loud</b> = today's headlines are 3× the
+        usual daily pace (and 5+): something is happening. Mood is the average headline tone, -1 to +1.</p>
+      <div class="mn-grid" id="mn-grid"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Latest headlines</h2><div class="chips" id="mn-filter"></div></div>
+      <ul class="pulse-list" id="mn-feed"></ul>
+    </div>
+  </section>
+
+  <!-- What professionals read -->
+  <section id="tab-reading" class="tab" hidden>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><h2>What the pros are reading</h2><span class="muted small" id="rd-meta"></span></div>
+        <p class="muted small">Links picked for investment professionals by Abnormal Returns and Barry Ritholtz in the last few days.
+          Picked by both ranks first.</p>
+        <ul class="pulse-list" id="rd-picks"></ul>
+        <p class="muted small" id="rd-outlets"></p>
+      </div>
+      <div>
+        <div class="card">
+          <h2>Your holdings in pro coverage</h2>
+          <ul class="pulse-list" id="rd-mentions"></ul>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Topics</h2><span class="muted small">Hot = 2× its usual daily pace, 5+ stories</span></div>
+          <div id="rd-topics" class="topic-list"></div>
+          <form id="topic-form" class="topic-form">
+            <input name="name" placeholder="Topic, e.g. GLP-1" maxlength="40" required aria-label="Topic name">
+            <input name="terms" placeholder="Words, comma-separated: ozempic, wegovy" maxlength="400" required aria-label="Topic words">
+            <button>Add</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>From the desks</h2>
+        <div class="seg" id="rd-kind"><button data-kind="" aria-pressed="true">All</button><button data-kind="desk">Markets</button><button data-kind="policy">Fed &amp; SEC</button><button data-kind="crypto">Crypto</button></div></div>
+      <ul class="pulse-list" id="rd-items"></ul>
+    </div>
+  </section>
+
+  <!-- Scary-filing radar -->
+  <section id="tab-radar" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Radar: your companies</h2><span class="muted small" id="rr-meta"></span></div>
+      <p class="muted small">SEC filings that usually mean trouble: bankruptcy, a restatement, a delisting, a debt default (<b>act today</b>);
+        an auditor change, a late report, a cyber incident, a write-down, layoffs, a going-concern doubt (<b>serious</b>);
+        an officer change, a reverse split, a cancelled contract (<b>read it</b>). Last 90 days for everything you own or watch;
+        new ones reach you within minutes while the app runs.</p>
+      <ul class="rr-list" id="rr-mine"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Market-wide, last 3 days</h2>
+        <div class="rr-filters"><select id="rr-level" aria-label="Level"><option value="3">Act today</option><option value="2" selected>Serious and worse</option><option value="1">All</option></select>
+          <label class="small"><input type="checkbox" id="rr-listed" checked> Listed tickers only</label></div></div>
+      <ul class="rr-list" id="rr-market"></ul>
+    </div>
   </section>
 
   <!-- Dashboard -->
@@ -246,16 +319,38 @@
             <input name="fees" type="number" step="any" min="0" placeholder="Fees" value="0">
             <input name="date" type="date" required>
           </div>
+          <select name="account" aria-label="Account">
+            <option value="">Account (optional)</option><option>Robinhood</option><option>Coinbase</option><option>Stash</option><option>Other</option>
+          </select>
           <button>Save</button>
           <span id="tx-status" class="muted"></span>
         </form>
-        <h2 class="mt">Import from Robinhood</h2>
-        <p class="muted small">In the Robinhood app: Account → Reports and statements → Reports → generate an
-          <b>account activity</b> CSV for all dates, then choose it here. Buys, sells and splits are imported;
-          dividends, transfers and options are listed and skipped. Importing the same file twice adds nothing.</p>
-        <div class="row">
-          <input type="file" id="rh-file" accept=".csv,text/csv" aria-label="Robinhood CSV file">
+        <h2 class="mt">Import your accounts</h2>
+        <div class="seg" role="tablist" aria-label="Import source" id="imp-seg">
+          <button type="button" data-src="robinhood" aria-pressed="true">Robinhood</button>
+          <button type="button" data-src="coinbase">Coinbase</button>
+          <button type="button" data-src="holdings">Stash / other</button>
+        </div>
+        <p class="muted small imp-help" data-for="robinhood">In the Robinhood app: Account → Reports and statements → Reports →
+          generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells and splits are imported;
+          dividends, transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
+          Stash / other.</p>
+        <p class="muted small imp-help" data-for="coinbase" hidden>On coinbase.com: Profile → Statements (or Taxes → Documents) →
+          generate a <b>transaction history</b> CSV for all time. Buys, sells, conversions and rewards (at their value when
+          received) are imported; sends, receives and deposits are listed and skipped.</p>
+        <p class="muted small imp-help" data-for="holdings" hidden>Stash has no trade export, so type each holding once:
+          <code>SYMBOL SHARES TOTAL_COST [DATE]</code>, one per line, e.g. <code>VOO 3.214 1450.20 2024-03-01</code>.
+          Shares and cost basis are on your statement or under each investment in the app. Add the purchase date if you
+          know it, or taxes will treat every gain as short-term.</p>
+        <div class="row imp-file">
+          <input type="file" id="rh-file" accept=".csv,text/csv" aria-label="CSV file">
           <button id="rh-preview" type="button">Preview</button>
+        </div>
+        <div class="stack imp-list" hidden>
+          <label class="small muted" for="imp-account">Account name</label>
+          <input id="imp-account" value="Stash" maxlength="40">
+          <textarea id="imp-text" rows="5" placeholder="VOO 3.214 1450.20 2024-03-01&#10;AAPL 1.5 310.00&#10;BTC 0.004 260"></textarea>
+          <button id="imp-list-preview" type="button">Preview</button>
         </div>
         <div id="rh-result"></div>
         <h2 class="mt">Ledger</h2>
