@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
-               sentinel, service, strategy)
+               sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -406,6 +406,7 @@ async def _holdplan_data(refresh: bool = False) -> dict:
 
 
 _income_cache = sentinel.Cache(900)
+_income_last: dict = {}
 
 
 @app.get("/api/income")
@@ -421,7 +422,9 @@ async def income_view(refresh: bool = False):
 
     def compute():
         positions = service.portfolio_summary(txs, False)["positions"] if txs else []
-        return dividends.build(positions, txs, rows, date.today())
+        out = dividends.build(positions, txs, rows, date.today())
+        _income_last["upcoming"] = out["upcoming"]
+        return out
     try:
         return await asyncio.to_thread(_income_cache.get, key, compute)
     except ValueError as exc:
@@ -557,6 +560,47 @@ async def tax_view():
     """Realized gains this year, wash sales across accounts, the don't-buy list, the long-term
     clock and harvest candidates."""
     return (await _holdplan_data())["tax"]
+
+
+def _yearend_settings(conn) -> dict:
+    def num(k):
+        v = db.get_meta(conn, k, "")
+        return float(v) if v not in ("", None) else None
+    return {"filing": db.get_meta(conn, "tax_filing", "single") or "single", "taxable_income": num("tax_income"),
+            "carryover": num("tax_carryover") or 0.0, "zero_limit": num("tax_zero_limit")}
+
+
+@app.get("/api/taxes/yearend")
+async def tax_year_end():
+    """Before Dec 31: realized gains, the losses worth taking to offset them and what that saves,
+    and long-term gains you could take at 0% if your income is low enough."""
+    plan = await _holdplan_data()
+    with db.connect() as conn:
+        cfg = _yearend_settings(conn)
+        txs = db.list_transactions(conn)
+        drip = {r["symbol"] for r in db.income(conn) if r["kind"] == "reinvested"}
+    out = taxes.year_end(plan["tax"], txs, date.today(), st_rate=plan["rules"]["short_term_rate"], lt_rate=plan["rules"]["long_term_rate"],
+                         upcoming_dividends=_income_last.get("upcoming"), drip_symbols=drip, **cfg)
+    out["settings"] = cfg
+    out["default_zero_limit"] = taxes.ZERO_RATE_LIMIT.get(cfg["filing"], taxes.ZERO_RATE_LIMIT["single"])
+    return out
+
+
+class YearEndSettings(BaseModel):
+    filing: Literal["single", "married", "head", "separate"] = "single"
+    taxable_income: float | None = Field(None, ge=0, le=1e9)
+    carryover: float | None = Field(None, ge=0, le=1e9)
+    zero_limit: float | None = Field(None, ge=0, le=1e7)
+
+
+@app.post("/api/taxes/yearend/settings")
+async def tax_year_end_settings(body: YearEndSettings):
+    with db.connect() as conn:
+        db.set_meta(conn, "tax_filing", body.filing)
+        for k, meta in (("taxable_income", "tax_income"), ("carryover", "tax_carryover"), ("zero_limit", "tax_zero_limit")):
+            v = getattr(body, k)
+            db.set_meta(conn, meta, "" if v is None else str(v))
+        return _yearend_settings(conn)
 
 
 class ThesisIn(BaseModel):

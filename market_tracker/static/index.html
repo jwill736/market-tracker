@@ -142,6 +142,25 @@
       <div class="tax-sums" id="hp-realized"></div>
       <div id="hp-tax"></div>
     </div>
+    <div class="card">
+      <div class="card-head"><h2>Before December 31</h2><span class="muted small" id="ye-meta"></span></div>
+      <p class="muted small">Losses you take by the last trading day of the year offset this year's gains, then up to $3,000 of other income;
+        the rest carries forward. If your income is low, long-term gains can be taken at a 0% federal rate. Estimates at your rates, not tax advice.</p>
+      <details class="hp-settings"><summary class="small">Your tax situation (makes the numbers yours)</summary>
+        <form id="ye-settings" class="inline-form">
+          <label>Filing <select id="ye-filing"><option value="single">Single</option><option value="married">Married, jointly</option>
+            <option value="head">Head of household</option><option value="separate">Married, separately</option></select></label>
+          <label>Taxable income this year, before investment gains $<input type="number" id="ye-income" min="0" step="100"></label>
+          <label>Losses carried in from past years $<input type="number" id="ye-carry" min="0" step="1"></label>
+          <label>0% long-term limit $<input type="number" id="ye-zero" min="0" step="50"></label>
+          <button type="submit">Save</button><span class="muted small" id="ye-msg"></span>
+        </form>
+        <p class="muted small">Taxable income is after the standard deduction (last year's return, line 15, is a good starting guess).
+          The 0% limit defaults to the 2026 IRS figure for your filing status; it changes every year, so check it.</p>
+      </details>
+      <div class="tax-sums" id="ye-sums"></div>
+      <div id="ye-body"></div>
+    </div>
   </section>
 
   <section id="tab-income" class="tab" hidden>

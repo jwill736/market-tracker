@@ -1811,6 +1811,7 @@ function renderHold() {
     ...ev.macro.slice(0, 12).map((m) => `<li><b>${esc(m.date)}</b> ${esc(m.kind)} <span class="muted small">${esc(m.name)}${m.consensus ? ` · forecast ${esc(m.consensus)}` : ""}</span></li>`)].join("")
     || `<li class="muted">No earnings for your stocks in the next 100 days, and no big releases in two weeks.</li>`;
   renderTax(d.tax);
+  loadYearEnd();
   document.querySelectorAll("#tab-hold [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
   document.querySelectorAll("#tab-hold [data-thesis]").forEach((el) => el.addEventListener("click", () => openThesis(el.dataset.thesis)));
   bindLive("hold", $("#tab-hold"));
@@ -1834,6 +1835,38 @@ function renderTax(t) {
     <div class="muted small">${esc(h.note)}</div></li>`).join("")}</ul>`);
   $("#hp-tax").innerHTML = parts.join("") || `<p class="muted small">No wash sales, no don't-buy windows, nothing turning long-term within 90 days and no losses worth harvesting.</p>`;
 }
+async function loadYearEnd() {
+  let y;
+  try { y = await api("/api/taxes/yearend"); } catch (err) { $("#ye-meta").textContent = err.message; return; }
+  $("#ye-meta").textContent = y.days_left ? `${y.days_left} days until ${y.last_trading_day}, the last trading day` : `Last trading day was ${y.last_trading_day}`;
+  $("#ye-filing").value = y.settings.filing; $("#ye-income").value = y.settings.taxable_income ?? "";
+  $("#ye-carry").value = y.settings.carryover || ""; $("#ye-zero").value = y.settings.zero_limit ?? ""; $("#ye-zero").placeholder = y.default_zero_limit;
+  $("#ye-sums").innerHTML = `<div><span class="muted small">Tax on this year's gains now</span><b>${fmtMoney(y.tax_before, 0)}</b></div>
+    <div><span class="muted small">After the losses below</span><b>${fmtMoney(y.tax_after, 0)}</b><span class="muted small">saves ${fmtMoney(y.saves, 0)}</span></div>
+    <div><span class="muted small">Loss carried to next year</span><b>${fmtMoney(y.carry_forward, 0)}</b></div>`;
+  const parts = [];
+  if (y.harvest.length) parts.push(`<h3>Losses to take</h3><ul class="hp-lines">${y.harvest.map((h) => `<li><b>${esc(h.symbol)}</b>${h.account ? ` <span class="muted small">${esc(h.account)}</span>` : ""}
+    sell ${fmtShares(h.quantity)} for a ${fmtMoney(h.loss, 0)} ${h.long_term ? "long" : "short"}-term loss: saves about <b>${fmtMoney(h.saves, 0)}</b>; hold <b>${esc(h.replacement)}</b> for 31 days
+    ${h.warnings.map((w) => `<div class="down small">${esc(w)}</div>`).join("")}</li>`).join("")}</ul>`);
+  else parts.push(`<p class="muted small">No loss worth taking${y.tax_before > 0 ? " among your holdings" : ": there's nothing to offset yet"}.</p>`);
+  if (y.blocked.length) parts.push(`<h3>Losses you can't take cleanly yet</h3><ul class="hp-lines">${y.blocked.map((b) => `<li><b>${esc(b.symbol)}</b> ${fmtMoney(b.loss, 0)}: <span class="muted small">${esc(b.why)}</span></li>`).join("")}</ul>`);
+  const z = y.zero_bracket;
+  if (!z) parts.push(`<p class="muted small">Add your taxable income above to see whether you could take long-term gains at 0%.</p>`);
+  else if (z.room <= 0) parts.push(`<p class="muted small">No room in the 0% long-term bracket this year (limit ${fmtMoney(z.limit, 0)}).</p>`);
+  else parts.push(`<h3>Gains you could take at 0%</h3><p class="small">Up to <b>${fmtMoney(z.room, 0)}</b> of long-term gains fit under the ${fmtMoney(z.limit, 0)} limit.
+      Sell and buy straight back to raise your cost basis, tax-free:</p>
+    <ul class="hp-lines">${z.lots.map((l) => `<li><b>${esc(l.symbol)}</b> ${fmtShares(l.quantity)} sh bought ${esc(l.bought)}${l.account ? ` in ${esc(l.account)}` : ""}:
+      ${fmtMoney(l.gain, 0)} gain <span class="muted small">(about ${fmtMoney(l.future_tax_avoided, 0)} of future tax avoided)</span></li>`).join("") || `<li class="muted">No long-term lots with gains.</li>`}</ul>
+    <p class="muted small">${esc(z.note)}</p>`);
+  $("#ye-body").innerHTML = parts.join("");
+}
+$("#ye-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { filing: $("#ye-filing").value, taxable_income: numOrNull($("#ye-income").value), carryover: numOrNull($("#ye-carry").value),
+    zero_limit: numOrNull($("#ye-zero").value) };
+  try { await api("/api/taxes/yearend/settings", { method: "POST", body: JSON.stringify(body) }); $("#ye-msg").textContent = "Saved"; loadYearEnd(); }
+  catch (err) { $("#ye-msg").textContent = err.message; }
+});
 $("#hp-settings").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {

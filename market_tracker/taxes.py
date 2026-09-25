@@ -350,3 +350,118 @@ def summary(transactions: list[dict], prices: dict[str, float], today: date,
         "harvest": [asdict(h) for h in harvest_candidates(views, transactions, today, st_rate, lt_rate)],
         "lots": [asdict(v) for v in sorted(views, key=lambda v: (v.symbol, v.bought))],
     }
+
+
+# ------------------------------------------------------------------ year-end planner
+
+ORDINARY_OFFSET = 3000.0        # net capital losses deductible against other income a year ($1,500 married filing separately)
+# Taxable income up to which long-term gains are taxed at 0%, 2026 (IRS Rev. Proc. 2025-32).
+# Settable in the app, because the figures change every year: check the IRS number.
+ZERO_RATE_LIMIT = {"single": 49450.0, "married": 98900.0, "head": 66200.0, "separate": 49450.0}
+
+
+def tax_on(st: float, lt: float, st_rate: float, lt_rate: float, offset: float = ORDINARY_OFFSET) -> float:
+    """Federal tax on net short- and long-term gains after the netting rules (a net loss comes
+    out negative: up to `offset` of it reduces tax on other income at the short-term rate)."""
+    if st >= 0 and lt >= 0:
+        return st * st_rate + lt * lt_rate
+    if st < 0 <= lt:
+        rest = lt + st
+        return rest * lt_rate if rest >= 0 else -min(offset, -rest) * st_rate
+    if lt < 0 <= st:
+        rest = st + lt
+        return rest * st_rate if rest >= 0 else -min(offset, -rest) * st_rate
+    return -min(offset, -(st + lt)) * st_rate
+
+
+def _last_trading_day(year: int) -> date:
+    d = date(year, 12, 31)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def recurring_buys(transactions: list[dict], symbol: str, today: date, days: int = 120, min_buys: int = 3) -> bool:
+    """Looks like an automatic investment: several buys of this (or an identical) fund lately."""
+    since = (today - timedelta(days=days)).isoformat()
+    buys = [t for t in transactions if t["side"] == "buy" and identical(t["symbol"], symbol) and t["date"][:10] >= since
+            and t.get("price", 1) > 0]
+    return len(buys) >= min_buys
+
+
+def year_end(tax: dict, transactions: list[dict], today: date, *, st_rate: float = ST_RATE, lt_rate: float = LT_RATE,
+             carryover: float = 0.0, taxable_income: float | None = None, filing: str = "single",
+             zero_limit: float | None = None, upcoming_dividends: list[dict] | None = None,
+             drip_symbols: set[str] | None = None) -> dict:
+    """Before Dec 31: what you've realized, which losses to take to offset it (and how much that
+    saves), and, when your income is low enough, long-term gains you could take at 0%.
+
+    tax: taxes.summary(). carryover: capital losses carried in from earlier years (treated as
+    short-term, which is how most carry over). taxable_income: this year's taxable income
+    before any capital gains, to size the 0% room."""
+    offset = ORDINARY_OFFSET / 2 if filing == "separate" else ORDINARY_OFFSET
+    last = _last_trading_day(today.year)
+    st0 = tax["realized"]["short_term"] - carryover
+    lt0 = tax["realized"]["long_term"]
+    before = tax_on(st0, lt0, st_rate, lt_rate, offset)
+
+    # Pick losses, best first, while each one still lowers this year's tax.
+    picks, blocked, st, lt = [], [], st0, lt0
+    for h in sorted(tax.get("harvest", []), key=lambda h: -h["loss"]):
+        if h["blocked_by"]:
+            blocked.append({"symbol": h["symbol"], "loss": h["loss"],
+                            "why": f"bought {h['blocked_by'][0]['symbol']} on {h['blocked_by'][0]['date']}: selling before "
+                                   f"{(date.fromisoformat(h['blocked_by'][0]['date']) + timedelta(days=31)).isoformat()} washes part of it"})
+            continue
+        nst, nlt = (st, lt - h["loss"]) if h["long_term"] else (st - h["loss"], lt)
+        saves = tax_on(st, lt, st_rate, lt_rate, offset) - tax_on(nst, nlt, st_rate, lt_rate, offset)
+        if saves < 1:
+            continue
+        warn = []
+        if h["symbol"] in (drip_symbols or set()):
+            warn.append("Dividends on it are reinvested: turn reinvesting off first, or the next payment buys it back and washes the loss")
+        for d in upcoming_dividends or []:
+            if identical(d["symbol"], h["symbol"]) and d["ex_date"] <= (today + timedelta(days=45)).isoformat():
+                warn.append(f"Pays a dividend around {d['ex_date']}: if that's set to reinvest it will wash part of the loss")
+                break
+        if recurring_buys(transactions, h["symbol"], today):
+            warn.append("Looks like an automatic recurring buy: pause it for 31 days after selling")
+        picks.append({"symbol": h["symbol"], "account": h["account"], "quantity": h["quantity"], "loss": h["loss"],
+                      "long_term": h["long_term"], "saves": round(saves, 2), "replacement": h["replacement"],
+                      "warnings": warn})
+        st, lt = nst, nlt
+    after = tax_on(st, lt, st_rate, lt_rate, offset)
+    net_after = st + lt
+    carry_forward = round(max(0.0, -net_after - offset), 2)
+
+    # 0% long-term gains: sell and buy straight back (no wash-sale rule for gains) to raise
+    # the cost basis tax-free, up to the room left in the 0% bracket.
+    zero = None
+    if taxable_income is not None:
+        limit = zero_limit if zero_limit else ZERO_RATE_LIMIT.get(filing, ZERO_RATE_LIMIT["single"])
+        net = st + lt
+        # Net gains use up bracket room first; a net loss lowers income by up to the offset,
+        # and any loss beyond that would absorb new gains before they're taxed at all.
+        room = limit - taxable_income - (net if net >= 0 else -min(offset, -net)) + max(0.0, -net - offset)
+        lots = []
+        left = room
+        for v in sorted((v for v in tax.get("lots", []) if v["long_term"] and v["gain"] > 0), key=lambda v: -v["gain"] / v["quantity"]):
+            if left <= 1:
+                break
+            per_share = v["gain"] / v["quantity"]
+            qty = min(v["quantity"], left / per_share)
+            lots.append({"symbol": v["symbol"], "account": v["account"], "bought": v["bought"], "quantity": round(qty, 6),
+                         "gain": round(qty * per_share, 2), "future_tax_avoided": round(qty * per_share * lt_rate, 2)})
+            left -= qty * per_share
+        zero = {"limit": limit, "room": round(max(room, 0.0), 2), "lots": lots,
+                "note": "Selling and buying back the same day is fine for gains (the wash-sale rule only covers losses). "
+                        "Your state may still tax the gain, and the extra income can affect credits or health-plan subsidies."}
+
+    return {
+        "year": today.year, "last_trading_day": last.isoformat(), "days_left": max(0, (last - today).days),
+        "realized": {"short_term": tax["realized"]["short_term"], "long_term": tax["realized"]["long_term"], "carryover": carryover},
+        "tax_before": round(before, 2), "harvest": picks, "blocked": blocked,
+        "tax_after": round(after, 2), "saves": round(before - after, 2), "carry_forward": carry_forward,
+        "ordinary_offset": offset, "zero_bracket": zero, "filing": filing,
+        "rates": {"short_term": st_rate, "long_term": lt_rate},
+    }

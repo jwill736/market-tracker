@@ -80,6 +80,10 @@ def test_endpoints(monkeypatch):
     nm = c.get("/api/holdplan/newmoney?amount=300").json()
     assert nm["skipped"][0]["symbol"] == "NKE" and nm["buys"][0]["symbol"] == "VTI"      # NKE is flagged Sell?
     assert c.get("/api/holdplan/newmoney?amount=0").status_code == 422
+    assert c.post("/api/taxes/yearend/settings", json={"filing": "married", "taxable_income": 50000}).json()["taxable_income"] == 50000
+    ye = c.get("/api/taxes/yearend").json()
+    assert ye["harvest"][0]["symbol"] == "NKE" and ye["zero_bracket"]["limit"] == 98900
+    assert c.post("/api/taxes/yearend/settings", json={"filing": "nope"}).status_code == 422
     assert c.delete("/api/thesis/NKE").json() == {}
 
 
