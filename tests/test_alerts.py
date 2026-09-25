@@ -69,7 +69,7 @@ def test_find_clusters_rules():
 
 
 def test_new_clusters_suppresses_repeats_for_30_days():
-    buys = [_buy(n, "2026-09-10", "2026-09-11") for n in "ABC"]
+    buys = [_buy(n, f"2026-09-1{i}", "2026-09-14") for i, n in enumerate("ABC")]
     c = alerts.find_clusters(buys, date(2026, 9, 24))
     assert alerts.new_clusters(c, {}, date(2026, 9, 24)) == c
     assert alerts.new_clusters(c, {"0000777777": "2026-09-20"}, date(2026, 9, 24)) == []
@@ -113,3 +113,12 @@ def test_same_day_clusters_carry_a_warning():
     spread = alerts.find_clusters([_buy(n, f"2026-09-1{i}", "2026-09-19") for i, n in enumerate("ABC")], date(2026, 9, 24))[0]
     assert same.trade_days == 1 and "same day" in alerts.issue_body(same)
     assert spread.trade_days == 3 and "same day" not in alerts.issue_body(spread)
+
+
+def test_single_day_clusters_are_listed_but_not_alerted():
+    one_day = alerts.find_clusters([_buy(n, "2026-09-18", "2026-09-19") for n in "ABC"], date(2026, 9, 24))
+    assert len(one_day) == 1 and alerts.new_clusters(one_day, {}, date(2026, 9, 24)) == []
+    # A later buy by another insider makes it a multi-day cluster, which does alert.
+    grown = alerts.find_clusters([_buy(n, "2026-09-18", "2026-09-19") for n in "ABC"]
+                                 + [_buy("D", "2026-09-22", "2026-09-23")], date(2026, 9, 24))
+    assert len(alerts.new_clusters(grown, {}, date(2026, 9, 24))) == 1

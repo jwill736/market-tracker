@@ -31,6 +31,7 @@ MIN_BUY_VALUE = 10_000        # ignore token purchases
 CLUSTER_WINDOW_DAYS = 30
 CLUSTER_MIN_INSIDERS = 3
 CLUSTER_MIN_TOTAL = 100_000
+CLUSTER_MIN_TRADE_DAYS = 2     # same-day batches are usually programs, not independent decisions
 REALERT_AFTER_DAYS = 30
 KEEP_DAYS = 120               # rolling window of buys kept in the CSV
 
@@ -240,9 +241,16 @@ def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDO
 
 
 def new_clusters(clusters: list[Cluster], alerted: dict[str, str], as_of: date) -> list[Cluster]:
-    """Clusters not alerted within the last REALERT_AFTER_DAYS (one alert per episode)."""
+    """Clusters worth an alert: buys on at least CLUSTER_MIN_TRADE_DAYS different days, and
+    not alerted within the last REALERT_AFTER_DAYS (one alert per episode).
+
+    The day rule comes from the first live dry run: 21 directors and officers of a Brazilian
+    bank bought $27M on a single day, the pattern of a compensation program in which
+    executives must invest part of their bonus in company shares. Such same-day batches stay
+    visible in the scan summary; if another insider buys on a later day, the cluster alerts."""
     cutoff = (as_of - timedelta(days=REALERT_AFTER_DAYS)).isoformat()
-    return [c for c in clusters if alerted.get(c.issuer_cik, "") < cutoff]
+    return [c for c in clusters
+            if c.trade_days >= CLUSTER_MIN_TRADE_DAYS and alerted.get(c.issuer_cik, "") < cutoff]
 
 
 # ------------------------------------------------------------------ issue text
