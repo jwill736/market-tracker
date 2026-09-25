@@ -93,3 +93,23 @@ def test_issue_text():
     body = alerts.issue_body(c)
     assert "| 2026-09-10 | A | Director |" in body and "edgar/data/777777/" in body
     assert "mt analyze ACME" in body
+
+
+def test_only_officers_and_directors_count():
+    assert alerts.is_officer_or_director("Director")
+    assert alerts.is_officer_or_director("Chief Financial Officer, 10% owner")
+    assert not alerts.is_officer_or_director("10% owner")
+    assert not alerts.is_officer_or_director("Insider")
+    assert not alerts.is_officer_or_director("")
+    xml_owner = fixture_text("form4.xml").replace(
+        "<isOfficer>1</isOfficer><isTenPercentOwner>0</isTenPercentOwner><officerTitle>Chief Financial Officer</officerTitle>",
+        "<isOfficer>0</isOfficer><isTenPercentOwner>1</isTenPercentOwner><officerTitle></officerTitle>")
+    sub = "<XML>\n" + xml_owner + "\n</XML>"
+    assert alerts.buys_from_submission(sub, "a", "2026-09-24") == []
+
+
+def test_same_day_clusters_carry_a_warning():
+    same = alerts.find_clusters([_buy(n, "2026-09-18", "2026-09-19") for n in "ABC"], date(2026, 9, 24))[0]
+    spread = alerts.find_clusters([_buy(n, f"2026-09-1{i}", "2026-09-19") for i, n in enumerate("ABC")], date(2026, 9, 24))[0]
+    assert same.trade_days == 1 and "same day" in alerts.issue_body(same)
+    assert spread.trade_days == 3 and "same day" not in alerts.issue_body(spread)

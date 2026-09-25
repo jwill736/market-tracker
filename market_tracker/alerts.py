@@ -102,6 +102,14 @@ def parse_issuer(xml_text: str) -> tuple[str, str, str]:
             sec._text(issuer, "issuerTradingSymbol").upper())
 
 
+def is_officer_or_director(role: str) -> bool:
+    """The cluster signal is about people running the company buying with their own money.
+    Owners listed only as 10% holders are usually funds or holding entities (the first live
+    dry run flagged 21 same-day purchases by a bank's controlling group), so they don't count."""
+    parts = [p.strip() for p in role.split(",") if p.strip()]
+    return any(p not in ("10% owner", "Insider") for p in parts)
+
+
 def buys_from_submission(submission_text: str, accession: str, filed: str) -> list[Buy]:
     xml = extract_xml(submission_text)
     if not xml:
@@ -114,6 +122,8 @@ def buys_from_submission(submission_text: str, accession: str, filed: str) -> li
     out = []
     for t in trades:
         if t.code != "P" or not t.acquired or t.value < MIN_BUY_VALUE:
+            continue
+        if not is_officer_or_director(t.role):
             continue
         out.append(Buy(filed=filed, accession=accession, issuer_cik=cik, issuer_name=name, symbol=symbol,
                        insider=t.insider, role=t.role, trade_date=t.date, shares=t.shares, price=t.price,
@@ -198,6 +208,10 @@ class Cluster:
     last_filed: str
     buys: list[Buy]
 
+    @property
+    def trade_days(self) -> int:
+        return len({b.trade_date for b in self.buys})
+
 
 def find_clusters(buys: list[Buy], as_of: date, window_days: int = CLUSTER_WINDOW_DAYS,
                   min_insiders: int = CLUSTER_MIN_INSIDERS, min_total: float = CLUSTER_MIN_TOTAL) -> list[Cluster]:
@@ -243,11 +257,13 @@ def issue_title(c: Cluster) -> str:
 
 
 def issue_body(c: Cluster) -> str:
+    same_day = ("> **Check this one:** every purchase is on the same day. That can mean a coordinated "
+                "or structured transaction rather than independent decisions.\n\n" if c.trade_days == 1 else "")
     rows = "\n".join(
         f"| {b.trade_date} | {b.insider} | {b.role} | {b.shares:,.0f} | ${b.price:,.2f} | {_money(b.value)} | "
         f"[filing]({ARCHIVES}edgar/data/{int(b.issuer_cik)}/{b.accession.replace('-', '')}/) |"
         for b in c.buys)
-    return f"""**{len(c.insiders)} different insiders at {c.issuer_name}{f' ({c.symbol})' if c.symbol else ''} bought shares on the open market between {c.first_trade} and {c.last_trade}, {_money(c.total_value)} in total.**
+    return f"""{same_day}**{len(c.insiders)} different insiders at {c.issuer_name}{f' ({c.symbol})' if c.symbol else ''} bought shares on the open market between {c.first_trade} and {c.last_trade}, {_money(c.total_value)} in total.**
 
 | Trade date | Insider | Role | Shares | Price | Value | Source |
 |---|---|---|---:|---:|---:|---|

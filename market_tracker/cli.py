@@ -269,8 +269,10 @@ def cmd_alerts(args) -> int:
     fresh = alerts.new_clusters(clusters, alerted, today)
     print(f"{len(clusters)} active clusters, {len(fresh)} new")
     for c in clusters:
+        roles = sorted({b.role for b in c.buys})
         print(f"  {'NEW ' if c in fresh else '    '}{c.symbol or '-':<6} {c.issuer_name[:40]:<40} "
-              f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade}")
+              f"{len(c.insiders)} insiders  {alerts._money(c.total_value):>9}  {c.first_trade} → {c.last_trade} "
+              f"({c.trade_days} trading day{'s' if c.trade_days != 1 else ''}; roles: {'; '.join(roles)[:120]})")
     if args.issues_dir:
         os.makedirs(args.issues_dir, exist_ok=True)
         for i, c in enumerate(fresh):

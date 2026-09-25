@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       backfill_days:
-        description: Rescan this many calendar days (roughly 10-15 minutes per business day)
+        description: Rescan this many calendar days (about a minute per business day)
         default: "0"
   pull_request:
     paths:
