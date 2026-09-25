@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -396,53 +396,20 @@ events_cache = pulse.Cache(3600)
 
 
 def _hold_settings(conn) -> dict:
-    return {"cap": float(db.get_meta(conn, "hold_cap", str(holdplan.CAP))),
-            "st_rate": float(db.get_meta(conn, "tax_st_rate", str(taxes.ST_RATE))),
-            "lt_rate": float(db.get_meta(conn, "tax_lt_rate", str(taxes.LT_RATE)))}
-
-
-def _thesis_objs(raw: dict[str, dict]) -> dict[str, holdplan.Thesis]:
-    keys = {f for f in holdplan.Thesis.__dataclass_fields__}
-    return {s: holdplan.Thesis(**{k: v for k, v in d.items() if k in keys}) for s, d in raw.items()}
+    return holdplan.settings(conn)
 
 
 async def _holdplan_data(refresh: bool = False) -> dict:
     with db.connect() as conn:
         txs = db.list_transactions(conn)
-        watch = db.watchlist(conn)
-        raw = db.theses(conn)
-        cash = float(db.get_meta(conn, "cash", "0") or 0)
-        settings = _hold_settings(conn)
-    summary = {"positions": [], "total_value": 0.0}
-    if txs:
-        try:
-            summary = await asyncio.to_thread(service.portfolio_summary, txs, False)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc))
-    positions = [p for p in summary["positions"] if p.get("quantity")]
-    held = [p["symbol"] for p in positions]
-    radar_by: dict[str, list[dict]] = {}
-    try:
-        s = sentinel.sentinel
-        mine, _ = await asyncio.to_thread(sentinel.radar_cache.get, tuple(held + watch), lambda: s.mine(held + watch))
-        for a in mine:
-            radar_by.setdefault(a.symbol, []).append(a.to_dict())
-    except (http.DataUnavailable, ValueError):
-        pass
-    earnings_by = {}
-    try:
-        cal = await asyncio.to_thread(events_cache.get, tuple(held), lambda: events.build(positions, date.today()))
-        earnings_by = {e["symbol"]: e for e in cal.get("earnings", [])}
-    except (http.DataUnavailable, ValueError, KeyError):
-        pass
-    key = (tuple((p["symbol"], round(p["quantity"], 6), round(p.get("price") or 0, 2)) for p in positions), len(txs),
-           round(cash, 2), tuple(sorted((k, str(v)) for k, v in raw.items())), tuple(watch), tuple(settings.items()),
-           len(radar_by), tuple(sorted(earnings_by)))
+        key = (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
+               db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(holdplan.settings(conn).items()))
     if refresh:
         holdplan_cache.store.clear()
-    return holdplan_cache.get(key, lambda: holdplan.build(
-        positions, txs, _thesis_objs(raw), radar_by, date.today(), cash=cash, cap=settings["cap"], watch=watch,
-        st_rate=settings["st_rate"], lt_rate=settings["lt_rate"], earnings=earnings_by))
+    try:
+        return await asyncio.to_thread(holdplan_cache.get, key, holdplan.gather)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.get("/api/events")
@@ -463,7 +430,6 @@ async def events_view(refresh: bool = False):
     return await asyncio.to_thread(events_cache.get, held, lambda: events.build(positions, date.today()))
 
 
-crypto_cache = pulse.Cache(300)
 pickers_cache = pulse.Cache(1800)
 
 
@@ -473,8 +439,32 @@ async def crypto_radar(refresh: bool = False):
     held, watched = await asyncio.to_thread(sentinel.my_symbols)
     syms = tuple(s for s in held + watched if market.asset_class(s) == "crypto")
     if refresh:
-        crypto_cache.store.clear()
-    return await asyncio.to_thread(crypto_cache.get, syms, lambda: cryptoradar.build(list(syms)))
+        sentinel.crypto_cache.clear()
+    return await asyncio.to_thread(sentinel.crypto_cache.get, syms, lambda: cryptoradar.build(list(syms)))
+
+
+brief_cache = pulse.Cache(600)
+
+
+@app.get("/api/brief")
+async def morning_brief(refresh: bool = False):
+    """Today's morning brief: what needs a decision, new filings, earnings and releases, moves,
+    early-wire hits, crypto items and tax dates. The 8:30 ET copy is also pushed to your phone."""
+    if refresh:
+        brief_cache.store.clear()
+    try:
+        return await asyncio.to_thread(brief_cache.get, "brief", brief.gather)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/brief/send")
+async def send_brief_now():
+    """Push the brief to your phone now (to try the notification)."""
+    b = await asyncio.to_thread(brief_cache.get, "brief", brief.gather)
+    sent = await asyncio.to_thread(notify.send, notify.Message(title=b["title"], body=brief.push_text(b), priority=3,
+                                                              tags=("sunrise",)))
+    return {"sent": bool(sent), "title": b["title"]}
 
 
 def _picker_names(conn) -> list[str]:

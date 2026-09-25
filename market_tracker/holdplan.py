@@ -217,3 +217,51 @@ def build(positions: list[dict], transactions: list[dict], theses: dict[str, The
     return {"as_of": today.isoformat(), "base": round(base, 2), "cash": cash, "cap": cap, "counts": counts,
             "holdings": [asdict(r) for r in rows], "reinvest": queue, "freed": round(freed, 2), "tax": tax,
             "rules": {"cap": cap, "radar_days": RADAR_DAYS, "short_term_rate": st_rate, "long_term_rate": lt_rate}}
+
+
+# ------------------------------------------------------------------ from the app's own data
+
+def settings(conn) -> dict:
+    from . import db
+    return {"cap": float(db.get_meta(conn, "hold_cap", str(CAP))),
+            "st_rate": float(db.get_meta(conn, "tax_st_rate", str(taxes.ST_RATE))),
+            "lt_rate": float(db.get_meta(conn, "tax_lt_rate", str(taxes.LT_RATE)))}
+
+
+def theses_from(raw: dict[str, dict]) -> dict[str, Thesis]:
+    keys = set(Thesis.__dataclass_fields__)
+    return {s: Thesis(**{k: v for k, v in d.items() if k in keys}) for s, d in raw.items()}
+
+
+def gather(today: date | None = None) -> dict:
+    """The hold plan from the ledger, your theses and settings, the radar for your companies and
+    upcoming earnings. Used by the Hold tab and the morning brief."""
+    from . import db, events, http, sentinel, service
+    today = today or date.today()
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        watch = db.watchlist(conn)
+        raw = db.theses(conn)
+        cash = float(db.get_meta(conn, "cash", "0") or 0)
+        cfg = settings(conn)
+    positions = service.portfolio_summary(txs, False)["positions"] if txs else []
+    positions = [p for p in positions if p.get("quantity")]
+    held = [p["symbol"] for p in positions]
+    radar_by: dict[str, list[dict]] = {}
+    radar_errors: list[str] = []
+    try:
+        mine, radar_errors = sentinel.radar_cache.get(tuple(held + watch), lambda: sentinel.sentinel.mine(held + watch))
+        for a in mine:
+            radar_by.setdefault(a.symbol, []).append(a.to_dict())
+    except (http.DataUnavailable, ValueError) as exc:
+        radar_errors = [str(exc)]
+    try:
+        cal = events.build(positions, today)
+    except (http.DataUnavailable, ValueError, KeyError) as exc:
+        cal = {"earnings": [], "macro": [], "errors": [str(exc)]}
+    plan = build(positions, txs, theses_from(raw), radar_by, today, cash=cash, cap=cfg["cap"], watch=watch,
+                 st_rate=cfg["st_rate"], lt_rate=cfg["lt_rate"], earnings={e["symbol"]: e for e in cal["earnings"]})
+    plan["events"] = cal
+    plan["radar"] = {s: v for s, v in radar_by.items()}
+    plan["errors"] = radar_errors + cal.get("errors", [])
+    return plan

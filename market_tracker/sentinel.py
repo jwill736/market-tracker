@@ -173,9 +173,14 @@ class Sentinel:
                     early_data = await asyncio.to_thread(build_early, set(mine))
                     await asyncio.to_thread(early_headsups, early_data)
                     await asyncio.to_thread(people_headsups)
+                    await asyncio.to_thread(crypto_headsups, held)
                     self.reading_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 except Exception:
                     pass
+            try:
+                await asyncio.to_thread(send_brief_if_due)
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:
@@ -188,6 +193,36 @@ class Sentinel:
             self.task = None
 
 
+def send_brief_if_due(now: datetime | None = None, gather_fn=None) -> bool:
+    """The morning brief, once per weekday at 8:30 ET (saved for the app, pushed to the phone)."""
+    import json
+    from . import brief
+    now = now or datetime.now(timezone.utc)
+    with db.connect() as conn:
+        last = db.get_meta(conn, "brief_sent", "")
+    if not brief.due(now, last):
+        return False
+    b = (gather_fn or brief.gather)(now=now)
+    with db.connect() as conn:
+        db.set_meta(conn, "brief_sent", b["date"])
+        db.set_meta(conn, "brief_latest", json.dumps(b))
+    notify.send(notify.Message(title=b["title"], body=brief.push_text(b), priority=3, tags=("sunrise",)))
+    return True
+
+
+def crypto_headsups(held: list[str]) -> int:
+    from . import cryptoradar
+    coins = [s for s in held if market.asset_class(s) == "crypto"]
+    if not coins:
+        return 0
+    data = crypto_cache.get(tuple(coins), lambda: cryptoradar.build(coins))
+    n = 0
+    for a in data["alerts"]:
+        if a["level"] >= 2:
+            n += raise_headsup(f"crypto:{a['kind']}:{a['date']}:{a['text'][:60]}", "crypto", a["level"], a["text"], url=a.get("url", ""))
+    return n
+
+
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",
                   symbol: str = "") -> int:
     with db.connect() as conn:
@@ -196,7 +231,8 @@ def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", u
     if new:
         notify.send(notify.Message(title=title, body=body, url=url, priority=PUSH_PRIORITY.get(level, 3),
                                    tags=({"radar": ("rotating_light",), "news": ("newspaper",), "reading": ("books",),
-                                          "topic": ("fire",), "early": ("zap",), "people": ("eyes",)}.get(kind, ()))))
+                                          "topic": ("fire",), "early": ("zap",), "people": ("eyes",),
+                                          "crypto": ("coin",)}.get(kind, ()))))
     return int(new)
 
 
@@ -289,6 +325,7 @@ def people_headsups() -> int:
 
 
 people_cache = Cache(1800)
+crypto_cache = Cache(300)
 news_cache = Cache(300)
 reading_cache = Cache(600)
 radar_cache = Cache(300)
