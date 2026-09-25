@@ -1,0 +1,29 @@
+# Fly.io: `fly launch --copy-config --no-deploy`, then set secrets and `fly deploy` (see README).
+app = "plumbline-change-me"          # must be unique on Fly; `fly launch` offers to rename it
+primary_region = "iad"
+
+[env]
+  MT_DB_PATH = "/data/market_tracker.db"
+  REQUIRE_LOGIN = "1"
+
+[[mounts]]
+  source = "plumbline_data"          # your trades and watchlist live here, across deploys
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"         # keep the live-price connections up
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

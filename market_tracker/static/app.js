@@ -36,6 +36,7 @@ const hideTip = () => { tooltip.hidden = true; };
 
 // ---------------------------------------------------------------- tabs
 const loaded = {};
+let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(btn.dataset.tab)));
 function selectTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
@@ -43,43 +44,41 @@ function selectTab(name) {
   if (name === "portfolio") loadPortfolio();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
+  if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
 }
 
 // ---------------------------------------------------------------- dashboard
-let stream;
 async function loadWatchlist() {
   let list = await api("/api/watchlist");
   if (!list.length) {
     for (const s of ["SPY", "QQQ", "BTC-USD", "ETH-USD", "NVDA", "AAPL"]) await api("/api/watchlist/" + s, { method: "POST" });
     list = await api("/api/watchlist");
   }
+  watchlist = list;
   const tbody = $("#watch-table tbody");
   tbody.innerHTML = list.map((s) => `<tr class="clickable" data-sym="${esc(s)}"><td><b>${esc(s)}</b></td>
     <td class="num" data-f="price">…</td><td class="num" data-f="chg"></td><td class="muted small" data-f="src"></td>
-    <td class="num"><button class="ghost" data-remove="${esc(s)}" title="Remove">✕</button></td></tr>`).join("");
+    <td class="num"><button class="ghost" data-remove="${esc(s)}" title="Remove" aria-label="Remove ${esc(s)}">✕</button></td></tr>`).join("");
   tbody.querySelectorAll("tr").forEach((tr) => tr.addEventListener("click", (e) => {
     if (e.target.dataset.remove) return;
-    $("#analyze-input").value = tr.dataset.sym; selectTab("analyze"); runAnalyze();
+    openSymbol(tr.dataset.sym);
   }));
   tbody.querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
     await api("/api/watchlist/" + encodeURIComponent(b.dataset.remove), { method: "DELETE" }); loadWatchlist();
   }));
-  if (stream) stream.close();
-  if (!list.length) return;
-  stream = new EventSource("/api/stream/quotes?symbols=" + encodeURIComponent(list.join(",")));
-  stream.onopen = () => $("#live-dot").classList.add("on");
-  stream.onerror = () => $("#live-dot").classList.remove("on");
-  stream.onmessage = (e) => {
-    for (const q of JSON.parse(e.data)) {
-      const tr = tbody.querySelector(`tr[data-sym="${CSS.escape(q.symbol)}"]`);
-      if (!tr) continue;
-      tr.querySelector('[data-f="price"]').textContent = fmtMoney(q.price);
-      const chg = tr.querySelector('[data-f="chg"]');
-      chg.textContent = arrow(q.change_pct) + fmtPct(q.change_pct, 2);
-      chg.className = "num " + cls(q.change_pct);
-      tr.querySelector('[data-f="src"]').textContent = q.source + (q.asset_class === "crypto" ? " · 24h" : "");
-    }
-  };
+  for (const sym of list) if (Live.prices[sym]) paintWatchRow(Live.prices[sym]);
+  refreshTape();
+}
+function paintWatchRow(t, prev) {
+  const tr = document.querySelector(`#watch-table tr[data-sym="${CSS.escape(t.symbol)}"]`);
+  if (!tr) return;
+  const cell = tr.querySelector('[data-f="price"]');
+  cell.textContent = fmtMoney(t.price);
+  flash(cell, t, prev);
+  const chg = tr.querySelector('[data-f="chg"]');
+  chg.textContent = arrow(t.change_pct) + fmtPct(t.change_pct, 2);
+  chg.className = "num " + cls(t.change_pct);
+  tr.querySelector('[data-f="src"]').textContent = t.source + (isCryptoSym(t.symbol) ? " · 24h" : "");
 }
 $("#watch-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -354,9 +353,10 @@ async function loadPortfolio() {
       tile("Realized P&L", fmtMoney(p.realized_pnl, 0), ""),
     ].join("");
     $("#pf-table").innerHTML = p.positions.length ? `<thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">P&L</th><th class="num">Weight</th></tr></thead><tbody>` +
-      p.positions.map((x) => `<tr><td><b>${esc(x.symbol)}</b></td><td class="num">${x.quantity.toLocaleString()}</td><td class="num">${fmtMoney(x.avg_cost)}</td><td class="num">${fmtMoney(x.price)}</td>
+      p.positions.map((x) => `<tr class="clickable" data-open="${esc(x.symbol)}"><td><b>${esc(x.symbol)}</b></td><td class="num">${x.quantity.toLocaleString()}</td><td class="num">${fmtMoney(x.avg_cost)}</td><td class="num">${fmtMoney(x.price)}</td>
         <td class="num ${cls(x.unrealized_pnl)}">${fmtMoney(x.unrealized_pnl, 0)} <span class="small">${fmtPct(x.unrealized_pct)}</span></td><td class="num">${x.weight != null ? x.weight.toFixed(1) + "%" : "—"}</td></tr>`).join("") + "</tbody>"
       : "<tr><td class='muted'>No positions yet — record a trade.</td></tr>";
+    $("#pf-table").querySelectorAll("[data-open]").forEach((tr) => tr.addEventListener("click", () => openSymbol(tr.dataset.open)));
     renderAlloc(p.rebalance_hint || []);
     const r = p.risk || {};
     $("#pf-risk").innerHTML = r.annual_vol != null ? `<table class="data"><tbody>
@@ -468,3 +468,255 @@ $("#journal-record").addEventListener("click", async () => {
 // ---------------------------------------------------------------- boot
 loadWatchlist().catch((err) => { $("#watch-table tbody").innerHTML = `<tr><td class="muted">${esc(err.message)}</td></tr>`; });
 loadMarketNews();
+
+
+// ---------------------------------------------------------------- live prices
+// One EventSource for every symbol on screen (tape, watchlist, open symbol page). The server
+// keeps the upstream Coinbase/Finnhub connections; this only listens.
+const KNOWN_CRYPTO = new Set(["BTC", "ETH", "SOL", "DOGE", "ADA", "XRP", "LTC", "AVAX", "DOT", "LINK", "MATIC", "SHIB", "BCH", "XLM", "UNI", "ATOM", "ETC", "AAVE"]);
+const normSym = (s) => { const u = String(s || "").trim().toUpperCase(); return KNOWN_CRYPTO.has(u) ? u + "-USD" : u; };
+const isCryptoSym = (s) => /-(USD|USDT|USDC|EUR|GBP)$/.test(s);
+
+const Live = {
+  prices: {}, owners: new Map(), listeners: new Set(), es: null, current: "", timer: null,
+  want(owner, syms) { this.owners.set(owner, new Set(syms.map(normSym))); this.schedule(); },
+  drop(owner) { this.owners.delete(owner); this.schedule(); },
+  onTick(fn) { this.listeners.add(fn); },
+  schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.connect(), 250); },
+  connect() {
+    const all = [...new Set([...this.owners.values()].flatMap((s) => [...s]))].sort();
+    const key = all.join(",");
+    if (key === this.current && this.es && this.es.readyState !== 2) return;
+    this.current = key;
+    if (this.es) this.es.close();
+    if (!all.length) { setLiveState("off"); return; }
+    this.es = new EventSource("/api/stream/live?symbols=" + encodeURIComponent(key));
+    setLiveState("connecting");
+    this.es.addEventListener("snapshot", (e) => { JSON.parse(e.data).forEach((t) => this.apply(t)); setLiveState("on"); });
+    this.es.onmessage = (e) => { this.apply(JSON.parse(e.data)); setLiveState("on"); };
+    this.es.onerror = () => setLiveState("off");   // EventSource reconnects by itself
+  },
+  apply(t) {
+    const prev = this.prices[t.symbol];
+    this.prices[t.symbol] = t;
+    this.listeners.forEach((fn) => fn(t, prev));
+  },
+};
+function setLiveState(state) {
+  const dot = $("#live-dot");
+  if (dot) { dot.classList.toggle("on", state === "on"); dot.title = { on: "Live", off: "Reconnecting…", connecting: "Connecting…" }[state]; }
+}
+function flash(el, t, prev) {
+  if (!prev || prev.price === t.price || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.classList.remove("flash-up", "flash-down");
+  void el.offsetWidth;   // restart the animation
+  el.classList.add(t.price > prev.price ? "flash-up" : "flash-down");
+}
+
+// ---------------------------------------------------------------- ticker tape
+function refreshTape() {
+  const held = holdingsList.map((h) => h.symbol);
+  const syms = [...new Set([...held, ...watchlist])];
+  Live.want("tape", syms);
+  $("#tape").innerHTML = syms.map((s) => `<button class="tape-item${held.includes(s) ? " held" : ""}" data-sym="${esc(s)}" title="${held.includes(s) ? "You own this" : "Watchlist"}">
+      <span class="t-sym">${esc(s.replace(/-USD$/, ""))}</span><span class="t-price">—</span><span class="t-chg"></span></button>`).join("")
+    || `<span class="muted small">Add symbols to your watchlist or import your holdings to see them here.</span>`;
+  $("#tape").querySelectorAll("[data-sym]").forEach((b) => b.addEventListener("click", () => openSymbol(b.dataset.sym)));
+  syms.forEach((s) => Live.prices[s] && paintTape(Live.prices[s]));
+}
+function paintTape(t, prev) {
+  const b = document.querySelector(`#tape [data-sym="${CSS.escape(t.symbol)}"]`);
+  if (!b) return;
+  const p = b.querySelector(".t-price");
+  p.textContent = fmtMoney(t.price);
+  flash(p, t, prev);
+  const c = b.querySelector(".t-chg");
+  c.textContent = fmtPct(t.change_pct, 2);
+  c.className = "t-chg " + cls(t.change_pct);
+}
+async function loadHoldings() {
+  try { holdingsList = await api("/api/holdings"); } catch { holdingsList = []; }
+  refreshTape();
+}
+Live.onTick((t, prev) => { paintTape(t, prev); paintWatchRow(t, prev); if (t.symbol === symState.sym) paintSymbol(t, prev); });
+
+// ---------------------------------------------------------------- symbol page
+const symState = { sym: null, range: "1d", points: [], reference: null, refLabel: "", lastDraw: 0, analysis: null };
+
+async function openSymbol(raw) {
+  const sym = normSym(raw);
+  if (!sym) return;
+  Object.assign(symState, { sym, range: "1d", points: [], reference: null, analysis: null });
+  selectTab("symbol");
+  $("#sym-name").textContent = sym;
+  $("#sym-price").textContent = Live.prices[sym] ? fmtMoney(Live.prices[sym].price) : "—";
+  $("#sym-change").textContent = ""; $("#sym-src").textContent = "";
+  document.querySelectorAll("#tab-symbol .range button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === "1d")));
+  $("#sym-watch").textContent = watchlist.includes(sym) ? "Watching" : "Watch";
+  Live.want("symbol", [sym]);
+  history.replaceState(null, "", "#" + encodeURIComponent(sym));
+  if (Live.prices[sym]) paintSymbol(Live.prices[sym]);
+  renderPosition();
+  loadChart();
+  loadSymbolDetails(sym);
+}
+async function loadChart() {
+  const { sym, range } = symState;
+  $("#sym-chart").innerHTML = `<p class="muted small">Loading chart…</p>`;
+  try {
+    const d = await api(`/api/intraday/${encodeURIComponent(sym)}?range=${range}`);
+    if (sym !== symState.sym || range !== symState.range) return;
+    Object.assign(symState, { points: d.points, reference: d.reference, refLabel: d.reference_label });
+    drawChart(true);
+  } catch (err) { $("#sym-chart").innerHTML = `<p class="muted small">Chart unavailable: ${esc(err.message)}</p>`; }
+}
+document.querySelectorAll("#tab-symbol .range button").forEach((b) => b.addEventListener("click", () => {
+  symState.range = b.dataset.range;
+  document.querySelectorAll("#tab-symbol .range button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadChart();
+}));
+
+function paintSymbol(t, prev) {
+  const el = $("#sym-price");
+  el.textContent = fmtMoney(t.price);
+  flash(el, t, prev);
+  // The day's change for the 1D view (vs previous close; crypto: 24h); for longer ranges, vs the range start.
+  let chg = t.change_pct, label = isCryptoSym(t.symbol) ? "past 24 hours" : "today";
+  if (symState.range !== "1d" && symState.reference) { chg = (t.price / symState.reference - 1) * 100; label = "since " + symState.refLabel; }
+  const abs = symState.range !== "1d" && symState.reference ? t.price - symState.reference
+    : chg != null ? t.price - t.price / (1 + chg / 100) : null;
+  const c = $("#sym-change");
+  c.textContent = `${abs != null ? (abs >= 0 ? "+" : "-") + fmtMoney(Math.abs(abs), 2) + " " : ""}(${fmtPct(chg, 2)}) ${label}`;
+  c.className = "sym-change " + cls(chg);
+  $("#sym-src").textContent = `${t.source} · ${new Date(t.ts).toLocaleTimeString()}`;
+  if (symState.range === "1d" && symState.points.length) {
+    const now = Math.floor(Date.now() / 1000), last = symState.points[symState.points.length - 1];
+    if (now - last.t < 60) last.p = t.price; else symState.points.push({ t: now, p: t.price });
+    drawChart(false);
+  }
+  renderPosition();
+}
+
+function drawChart(force) {
+  const now = performance.now();
+  if (!force && now - symState.lastDraw < 500) return;   // at most twice a second
+  symState.lastDraw = now;
+  const el = $("#sym-chart"), pts = symState.points;
+  if (pts.length < 2) { el.innerHTML = `<p class="muted small">Not enough data for this range yet (markets closed?).</p>`; return; }
+  const W = el.clientWidth || 700, H = Math.max(220, Math.min(340, W * 0.45)), pad = { t: 12, r: 8, b: 22, l: 8 };
+  const ref = symState.reference ?? pts[0].p;
+  const ps = pts.map((x) => x.p).concat([ref]);
+  const lo = Math.min(...ps), hi = Math.max(...ps), span = hi - lo || hi * 0.01 || 1;
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
+  const X = (t) => pad.l + (t - t0) / (t1 - t0 || 1) * (W - pad.l - pad.r);
+  const Y = (p) => pad.t + (hi - p) / span * (H - pad.t - pad.b);
+  const up = pts[pts.length - 1].p >= ref;
+  const color = up ? "var(--good)" : "var(--bad)";
+  const d = pts.map((x, i) => `${i ? "L" : "M"}${X(x.t).toFixed(1)},${Y(x.p).toFixed(1)}`).join("");
+  const fmtT = (t) => { const dt = new Date(t * 1000); return symState.range === "1d" ? dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : dt.toLocaleDateString([], { month: "short", day: "numeric" }); };
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true">
+    <line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(ref)}" y2="${Y(ref)}" stroke="var(--axis)" stroke-dasharray="2 4"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${X(pts[pts.length - 1].t)}" cy="${Y(pts[pts.length - 1].p)}" r="3.5" fill="${color}"/>
+    <text x="${pad.l}" y="${H - 6}" font-size="11" fill="var(--muted)">${esc(fmtT(t0))}</text>
+    <text x="${W - pad.r}" y="${H - 6}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(fmtT(t1))}</text>
+    <text x="${pad.l}" y="${Y(ref) < 24 ? Y(ref) + 14 : Y(ref) - 5}" font-size="11" fill="var(--muted)">${esc(symState.refLabel)} ${fmtMoney(ref, 2)}</text>
+    <g class="cross" visibility="hidden"><line y1="${pad.t}" y2="${H - pad.b}" stroke="var(--axis)"/><circle r="4" fill="${color}"/></g>
+  </svg>`;
+  const svg = el.querySelector("svg"), cross = svg.querySelector(".cross");
+  svg.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (W / r.width);
+    const t = t0 + (x - pad.l) / (W - pad.l - pad.r) * (t1 - t0);
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    cross.setAttribute("visibility", "visible");
+    cross.querySelector("line").setAttribute("x1", X(best.t)); cross.querySelector("line").setAttribute("x2", X(best.t));
+    cross.querySelector("circle").setAttribute("cx", X(best.t)); cross.querySelector("circle").setAttribute("cy", Y(best.p));
+    showTip(e, `<b>${fmtMoney(best.p)}</b> <span class="${cls(best.p - ref)}">${fmtPct((best.p / ref - 1) * 100, 2)}</span><br>${esc(fmtT(best.t))}`);
+  });
+  svg.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+function renderPosition() {
+  const h = holdingsList.find((x) => x.symbol === symState.sym), el = $("#sym-position");
+  if (!h) { el.innerHTML = `<p class="muted">You don't own ${esc(symState.sym)}. Use Buy to record a purchase, or import your Robinhood history in Portfolio.</p>`; return; }
+  const t = Live.prices[symState.sym], value = t ? h.quantity * t.price : null, pnl = value != null ? value - h.cost_basis : null;
+  el.innerHTML = `<table class="data"><tbody>
+    <tr><td>Shares</td><td class="num">${h.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td></tr>
+    <tr><td>Average cost</td><td class="num">${fmtMoney(h.avg_cost)}</td></tr>
+    <tr><td>Market value</td><td class="num">${fmtMoney(value)}</td></tr>
+    <tr><td>Total return</td><td class="num ${cls(pnl)}">${fmtMoney(pnl)} ${h.cost_basis ? `(${fmtPct(pnl / h.cost_basis * 100)})` : ""}</td></tr>
+  </tbody></table>`;
+}
+
+async function loadSymbolDetails(sym) {
+  $("#sym-signal").innerHTML = `<p class="muted">Loading signal and news…</p>`;
+  try {
+    const a = await api(`/api/analyze/${encodeURIComponent(sym)}?smart_money=false&insiders=false`);
+    if (sym !== symState.sym) return;
+    symState.analysis = a;
+    const sig = a.signal;
+    const comps = sig ? Object.entries(sig.components || {}).filter(([, v]) => v).map(([k, v]) => `<li><span>${esc(k.replace("_", " "))}</span><span class="${cls(v.score)}">${v.score > 0 ? "+" : ""}${v.score.toFixed(0)}</span></li>`).join("") : "";
+    $("#sym-signal").innerHTML = sig ? `<div class="sig-line"><span class="sig-score ${cls(sig.score)}">${sig.score > 0 ? "+" : ""}${sig.score}</span> ${esc(sig.label)}</div>
+      <ul class="sig-comps">${comps}</ul>
+      <p class="muted small">Trend, momentum and news only here; Full analysis adds 13F and insider data. The score is a ranking aid that hasn't yet been shown to predict returns.</p>`
+      : `<p class="muted">No signal available.</p>`;
+    if (a.news) renderNews($("#sym-news"), $("#sym-news-terms"), $("#sym-news-pill"), a.news);
+  } catch (err) { $("#sym-signal").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
+$("#sym-buy").addEventListener("click", () => prefillTrade("buy"));
+$("#sym-sell").addEventListener("click", () => prefillTrade("sell"));
+function prefillTrade(side) {
+  selectTab("portfolio");
+  const f = $("#tx-form");
+  f.symbol.value = symState.sym; f.side.value = side;
+  if (Live.prices[symState.sym]) f.price.value = Live.prices[symState.sym].price;
+  f.quantity.focus();
+}
+$("#sym-watch").addEventListener("click", async () => {
+  if (watchlist.includes(symState.sym)) return;
+  await api("/api/watchlist/" + encodeURIComponent(symState.sym), { method: "POST" });
+  $("#sym-watch").textContent = "Watching";
+  loadWatchlist();
+});
+$("#sym-analyze").addEventListener("click", () => { $("#analyze-input").value = symState.sym; selectTab("analyze"); runAnalyze(); });
+$("#sym-research").addEventListener("click", () => { $("#research-symbol").value = symState.sym; selectTab("research"); $("#research-question").focus(); });
+$("#quick-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("#quick-input").value; $("#quick-input").value = "";
+  openSymbol(v);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#quick-input").focus(); }
+});
+
+// ---------------------------------------------------------------- Robinhood import
+let rhText = "";
+$("#rh-preview").addEventListener("click", async () => {
+  const file = $("#rh-file").files[0];
+  if (!file) { $("#rh-result").innerHTML = `<p class="muted">Choose the CSV file first.</p>`; return; }
+  rhText = await file.text();
+  await runImport(false);
+});
+async function runImport(commit) {
+  const out = $("#rh-result");
+  out.innerHTML = `<p class="muted">${commit ? "Importing…" : "Reading…"}</p>`;
+  try {
+    const r = await api("/api/import/robinhood", { method: "POST", body: JSON.stringify({ csv: rhText, commit }) });
+    const skipped = Object.entries(r.skipped).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
+    out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} trades.</b>` : `<b>${r.new} new trades</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
+      ${skipped ? `<br><span class="muted small">Skipped (not share trades): ${skipped}</span>` : ""}
+      ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}</p>
+      <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}`).join(", ") || "none"}</p>
+      ${!commit && r.new ? `<button id="rh-commit" type="button">Import ${r.new} trades</button>` : ""}`;
+    const btn = $("#rh-commit");
+    if (btn) btn.addEventListener("click", () => runImport(true));
+    if (commit) { loadPortfolio(); loadHoldings(); }
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
+// ---------------------------------------------------------------- start
+api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
+loadHoldings();
+if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));

@@ -8,19 +8,84 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
+from contextlib import asynccontextmanager
+from urllib.parse import parse_qs
+
 import anthropic
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, http, journal, research, service
+from . import auth, db, http, importers, journal, livefeed, research, service
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
-app = FastAPI(title="Plumbline", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    livefeed.hub.start()
+    yield
+    await livefeed.hub.stop()
+
+
+app = FastAPI(title="Plumbline", version="0.1.0", lifespan=lifespan)
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+throttle = auth.Throttle()
+
+
+# ------------------------------------------------------------------ login (only when APP_PASSWORD is set)
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if auth.misconfigured() and request.url.path != "/healthz":
+        return JSONResponse({"detail": "APP_PASSWORD is not set. Add it as a secret on your host, then restart."},
+                            status_code=503)
+    if not auth.enabled() or auth.is_open(request.url.path) or auth.valid_token(request.cookies.get(auth.COOKIE)):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "Sign in required"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/api/session")
+def session():
+    return {"auth": auth.enabled()}
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return {"ok": True}
+
+
+@app.get("/login", include_in_schema=False)
+def login_form():
+    return HTMLResponse(auth.login_page())
+
+
+@app.post("/login", include_in_schema=False)
+async def login(request: Request):
+    client = request.client.host if request.client else "?"
+    if throttle.blocked(client):
+        return HTMLResponse(auth.login_page("Too many attempts. Wait 15 minutes."), status_code=429)
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    if not auth.check_password((form.get("password") or [""])[0]):
+        throttle.fail(client)
+        return HTMLResponse(auth.login_page("Wrong password."), status_code=401)
+    throttle.reset(client)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(auth.COOKIE, auth.make_token(), max_age=auth.SESSION_DAYS * 86400, httponly=True,
+                    secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
+                    samesite="lax")
+    return resp
+
+
+@app.get("/logout", include_in_schema=False)
+def logout():
+    resp = RedirectResponse("/login" if auth.enabled() else "/", status_code=303)
+    resp.delete_cookie(auth.COOKIE)
+    return resp
 
 
 def _unavailable(exc: Exception) -> HTTPException:
@@ -67,6 +132,64 @@ def _safe_quote(symbol: str) -> dict | None:
         return market.get_quote(symbol).to_dict()
     except http.DataUnavailable:
         return None
+
+
+@app.get("/api/stream/live")
+async def stream_live(request: Request, symbols: str, snapshot_only: bool = False):
+    """Server-sent events: a snapshot of each symbol's price, then every live tick (see livefeed).
+    `snapshot_only` ends the stream after the snapshot (a one-off batch quote)."""
+    syms = [s for s in (x.strip() for x in symbols.split(",")) if s][:60]
+    hub = livefeed.hub
+    client = hub.subscribe(syms)
+
+    async def snapshot(sym: str) -> dict | None:
+        if sym in hub.latest:
+            return hub.latest[sym].to_dict()
+        q = await asyncio.to_thread(_safe_quote, sym)
+        if q and q.get("previous_close"):
+            hub.prev_close.setdefault(sym, q["previous_close"])
+        return q and {"symbol": sym, "price": q["price"], "change_pct": q["change_pct"], "ts": q["as_of"],
+                      "source": q["source"]}
+
+    async def gen():
+        try:
+            first = await asyncio.gather(*(snapshot(s) for s in client.symbols))
+            yield f"event: snapshot\ndata: {json.dumps([x for x in first if x])}\n\n"
+            while not snapshot_only:
+                if await request.is_disconnected():
+                    break
+                try:
+                    tick = await asyncio.wait_for(client.queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"data: {json.dumps(tick.to_dict())}\n\n"
+        finally:
+            hub.unsubscribe(client)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/intraday/{symbol}")
+def intraday(symbol: str, range_: Literal["1d", "5d", "1m", "1y"] = Query("1d", alias="range")):
+    try:
+        return livefeed.intraday(symbol, range_)
+    except http.DataUnavailable as exc:
+        raise _unavailable(exc)
+
+
+@app.get("/api/holdings")
+def holdings():
+    """Open positions from the ledger, without prices (cheap; the page fills prices live)."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    try:
+        pos = service.pf.build_positions(txs)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return [{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "cost_basis": p.cost_basis}
+            for p in pos.values() if p.quantity > 0]
 
 
 # ------------------------------------------------------------------ smart money
@@ -153,6 +276,36 @@ def delete_transaction(tx_id: int):
         if not db.delete_transaction(conn, tx_id):
             raise HTTPException(404, "Not found")
     return {"deleted": tx_id}
+
+
+class ImportIn(BaseModel):
+    csv: str = Field(min_length=1, max_length=5_000_000)
+    commit: bool = False
+
+
+@app.post("/api/import/robinhood")
+def import_robinhood(body: ImportIn):
+    """Preview (commit=false) or import a Robinhood account-activity CSV."""
+    res = importers.parse_robinhood(body.csv)
+    if res.errors and not res.transactions:
+        raise HTTPException(400, res.errors[0])
+    with db.connect() as conn:
+        existing = db.list_transactions(conn)
+        known = db.import_keys(conn)
+        new = [t for t in res.transactions if t["import_key"] not in known]
+        try:
+            positions = service.pf.build_positions(existing + new)
+        except ValueError as exc:
+            raise HTTPException(400, f"{exc}. The file probably starts after some of these shares were bought: "
+                                     "export the full history, or record the earlier buys first.")
+        if body.commit:
+            for t in new:
+                db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
+                                   t["note"], import_key=t["import_key"])
+    return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
+            "errors": res.errors, "committed": body.commit,
+            "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
+                                 for p in positions.values() if p.quantity > 0], key=lambda x: x["symbol"])}
 
 
 @app.get("/api/portfolio")

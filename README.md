@@ -130,6 +130,34 @@ program) or an S-1 in the last year. The result goes into the alert issue and th
 the site. The watcher also sends a notification when a company that alerted in the last 90 days files one of these.
 `mt dilution TICKER` checks any company. A shelf is only a possibility: plenty of companies keep one and never use it.
 
+## Private app (your dashboard, online, behind a password)
+
+The full dashboard (`mt serve`) can run on a small always-on server so you can use it from your phone:
+- live prices: crypto tick by tick from Coinbase; US stocks tick by tick from Finnhub if `FINNHUB_API_KEY` is set,
+  otherwise refreshed every ~8 seconds;
+- a ticker tape of your holdings and watchlist; click any ticker for its page, with a live 1D/1W/1M/1Y chart, your
+  position, the signal and news, and Buy/Sell buttons that fill in the trade form;
+- your portfolio, imported from Robinhood (Portfolio → Import from Robinhood), plus deep dives.
+
+It is one Docker image (`Dockerfile`). Every page and API call needs the password in `APP_PASSWORD`; the hosted
+configs also set `REQUIRE_LOGIN=1`, so a server without a password shows nothing. Your trades live on a small
+persistent disk.
+
+**Fly.io** (about $3–5 a month for one small always-on machine plus a 1 GB volume):
+1. Install `flyctl` and run `fly auth signup` (or `login`).
+2. In this repo: `fly launch --copy-config --no-deploy` (accept a unique app name), then
+   `fly volumes create plumbline_data --size 1`.
+3. Set secrets: `fly secrets set APP_PASSWORD='a long passphrase' SEC_USER_AGENT='plumbline you@example.com'`,
+   plus optionally `FINNHUB_API_KEY=...` (free at finnhub.io) and `ANTHROPIC_API_KEY=...` for deep dives.
+4. `fly deploy`, then open `https://<app-name>.fly.dev`.
+
+**Render** (Starter plan, about $7 a month plus the disk): New → Blueprint → choose this repo. `render.yaml` sets
+up the service and disk and asks for the secrets. The free plan sleeps after 15 minutes and has no disk, so it
+doesn't suit this app.
+
+The `Docker image` workflow builds the image on every pull request that touches it and checks that it starts,
+refuses requests without a login, and serves the dashboard after one.
+
 ## Public site
 
 `https://jwill736.github.io/market-tracker/` is a read-only Plumbline page that anyone can open. It shows:
@@ -151,8 +179,11 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 | `SEC_USER_AGENT` | **Required by SEC**: `"your-app your@email.com"`. Requests are throttled below SEC's 10 req/s limit |
 | `ANTHROPIC_API_KEY` | Deep-dive research (or any credential source the Anthropic SDK resolves) |
 | `MT_RESEARCH_MODEL` | Default `claude-opus-5`. Requests opt into server-side refusal fallbacks (`fallbacks="default"`) |
-| `FINNHUB_API_KEY` | Optional: real-time US stock quotes and company news |
+| `FINNHUB_API_KEY` | Optional: real-time US stock trades (streamed to the private app), quotes and company news |
 | `MT_DB_PATH` | SQLite file (default `market_tracker.db`) |
+| `APP_PASSWORD` | Password for the private app. When set, every page and API call needs a login |
+| `APP_SECRET` | Optional: signs login sessions (defaults to one derived from the password) |
+| `REQUIRE_LOGIN` | Set to `1` on a server so the app refuses to serve until `APP_PASSWORD` is set |
 
 ## Architecture
 

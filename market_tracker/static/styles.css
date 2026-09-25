@@ -133,3 +133,45 @@ table.data tr.clickable:hover td { background: var(--mid); }
 }
 .verdict-line { font-size: 15px; font-weight: 600; margin: 4px 0 12px; }
 code { font-size: 12px; background: var(--mid); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- live: tape, flashes, search */
+.quick { margin-left: auto; }
+.quick input { width: 180px; }
+.signout { font-size: 13px; color: var(--muted); text-decoration: none; }
+.signout:hover { color: var(--ink); text-decoration: underline; }
+.tape { display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); scrollbar-width: thin; }
+.tape-item { flex: none; display: inline-flex; gap: 8px; align-items: baseline; padding: 5px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--page); color: var(--ink); cursor: pointer; font: inherit; font-size: 13px; }
+.tape-item:hover { border-color: var(--accent); }
+.tape-item.held .t-sym::after { content: " ●"; color: var(--accent); font-size: 9px; vertical-align: middle; }
+.t-sym { font-weight: 600; }
+.t-price { font-variant-numeric: tabular-nums; }
+.t-chg { font-size: 12px; font-variant-numeric: tabular-nums; }
+.up { color: var(--good); } .down { color: var(--bad); }
+@keyframes flashUp { from { background: color-mix(in srgb, var(--good) 28%, transparent); } to { background: transparent; } }
+@keyframes flashDown { from { background: color-mix(in srgb, var(--bad) 28%, transparent); } to { background: transparent; } }
+.flash-up { animation: flashUp .8s ease-out; border-radius: 4px; }
+.flash-down { animation: flashDown .8s ease-out; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { .flash-up, .flash-down { animation: none; } }
+#live-dot { color: var(--muted); } #live-dot.on { color: var(--good); }
+
+/* ---------------------------------------------------------------- symbol page */
+.sym-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; margin: 4px 0 16px; }
+.sym-name { font-size: 15px; font-weight: 600; color: var(--ink-2); letter-spacing: .02em; }
+.sym-price { font: 400 clamp(40px, 7vw, 60px)/1.05 "Instrument Serif", Georgia, serif; font-variant-numeric: lining-nums tabular-nums; }
+.sym-change { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.sym-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.live-chart { min-height: 220px; touch-action: pan-y; }
+.live-chart svg { display: block; }
+.range { display: flex; gap: 4px; margin-top: 8px; }
+.range button { background: transparent; color: var(--ink-2); border: 0; padding: 6px 12px; border-radius: 6px; font-weight: 600; }
+.range button[aria-pressed="true"] { background: var(--mid); color: var(--accent); }
+.sig-line { display: flex; align-items: baseline; gap: 10px; font-size: 15px; }
+.sig-score { font: 400 34px/1 "Instrument Serif", Georgia, serif; }
+.sig-comps { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 4px; }
+.sig-comps li { display: flex; justify-content: space-between; border-bottom: 1px solid var(--grid); padding: 4px 0; text-transform: capitalize; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--mid); }
+@media (max-width: 720px) { .quick { order: 3; width: 100%; } .quick input { width: 100%; } }

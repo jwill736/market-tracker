@@ -29,7 +29,12 @@
     <button role="tab" data-tab="research">Deep dive</button>
     <button role="tab" data-tab="journal">Track record</button>
   </nav>
+  <form id="quick-form" class="quick" role="search">
+    <input id="quick-input" placeholder="Search a symbol" aria-label="Open a symbol" autocomplete="off">
+  </form>
+  <a class="signout" id="signout" href="/logout" hidden>Sign out</a>
 </header>
+<div class="tape" id="tape" aria-label="Live prices: your holdings and watchlist"></div>
 
 <main>
   <!-- Dashboard -->
@@ -55,6 +60,38 @@
         <ul id="mkt-news" class="news"></ul>
       </div>
     </div>
+  </section>
+
+  <!-- Symbol (opened by clicking any ticker) -->
+  <section id="tab-symbol" class="tab" hidden>
+    <div class="sym-head">
+      <div>
+        <div class="sym-name" id="sym-name"></div>
+        <div class="sym-price" id="sym-price">—</div>
+        <div class="sym-change" id="sym-change"></div>
+        <div class="muted small" id="sym-src"></div>
+      </div>
+      <div class="sym-actions">
+        <button id="sym-buy">Buy</button>
+        <button id="sym-sell" class="secondary">Sell</button>
+        <button id="sym-watch" class="secondary">Watch</button>
+        <button id="sym-analyze" class="secondary">Full analysis</button>
+        <button id="sym-research" class="secondary">Deep dive</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="sym-chart" class="live-chart" role="img" aria-label="Price chart"></div>
+      <div class="range" role="group" aria-label="Chart range">
+        <button data-range="1d" aria-pressed="true">1D</button><button data-range="5d">1W</button>
+        <button data-range="1m">1M</button><button data-range="1y">1Y</button>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card"><h2>Your position</h2><div id="sym-position"></div></div>
+      <div class="card"><div class="card-head"><h2>Signal</h2><span class="chip-warn">Unproven</span></div><div id="sym-signal" class="muted">Loading…</div></div>
+    </div>
+    <div class="card"><div class="card-head"><h2>News</h2><span id="sym-news-pill" class="pill"></span></div>
+      <div id="sym-news-terms" class="terms"></div><ul id="sym-news" class="news"></ul></div>
   </section>
 
   <!-- Analyze -->
@@ -151,6 +188,15 @@
           <button>Save</button>
           <span id="tx-status" class="muted"></span>
         </form>
+        <h2 class="mt">Import from Robinhood</h2>
+        <p class="muted small">In the Robinhood app: Account → Reports and statements → Reports → generate an
+          <b>account activity</b> CSV for all dates, then choose it here. Buys, sells and splits are imported;
+          dividends, transfers and options are listed and skipped. Importing the same file twice adds nothing.</p>
+        <div class="row">
+          <input type="file" id="rh-file" accept=".csv,text/csv" aria-label="Robinhood CSV file">
+          <button id="rh-preview" type="button">Preview</button>
+        </div>
+        <div id="rh-result"></div>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
       </div>
