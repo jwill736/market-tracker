@@ -208,6 +208,32 @@ def cmd_journal(args) -> int:
     return 0
 
 
+def cmd_score_backtest(args) -> int:
+    import json
+    from datetime import date as _date
+
+    from . import history, score_backtest
+
+    symbols = args.symbols or score_backtest.DEFAULT_UNIVERSE
+    end = args.end or _date.today().isoformat()
+    history.log(f"Loading history for {len(symbols)} symbols from {args.start}…")
+    data = history.load_all(symbols, args.start, args.investors)
+    calendar = [d for d, _ in history.load_prices(["SPY"]).get("SPY", [])]
+    dates = score_backtest.month_ends(calendar, args.start, end)
+    history.log(f"Scoring {len(dates)} month-ends…")
+    rows = score_backtest.score_history(data, dates)
+    result = score_backtest.evaluate(rows)
+    md = score_backtest.report_markdown(result)
+    print(md)
+    if args.summary_file:
+        with open(args.summary_file, "a", encoding="utf-8") as fh:
+            fh.write(md + "\n")
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump({"result": result, "rows": rows}, fh)
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
@@ -264,6 +290,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="Skip 13F/insider components (faster, but rows won't match the daily job's)")
     s.add_argument("--summary-file", help="Also append the Markdown report to this file")
     s.set_defaults(func=cmd_journal)
+
+    s = sub.add_parser("score-backtest", help="Replay the score on history using only point-in-time data")
+    s.add_argument("--start", default="2016-01-01")
+    s.add_argument("--end")
+    s.add_argument("--symbols", nargs="*")
+    s.add_argument("--investors", nargs="*", help="Investor keys to include (default: all tracked)")
+    s.add_argument("--json", help="Write full results and per-stock rows to this file")
+    s.add_argument("--summary-file", help="Also append the Markdown report to this file")
+    s.set_defaults(func=cmd_score_backtest)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")

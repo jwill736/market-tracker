@@ -228,6 +228,25 @@ def _recent_filings(cik: str, forms: set[str]) -> tuple[str, list[dict]]:
     return data.get("name", ""), rows
 
 
+def all_filings(cik: str, forms: set[str]) -> tuple[str, list[dict]]:
+    """Every filing of the given forms, following EDGAR's older-history pages beyond the
+    ~1,000 most recent filings that the main submissions file holds."""
+    data = _sec_get(SUBMISSIONS.format(cik=cik), ttl=3600)
+    pages = [data["filings"]["recent"]]
+    for extra in data["filings"].get("files", []):
+        page = _sec_get("https://data.sec.gov/submissions/" + extra["name"], ttl=86400)
+        # Older-history pages hold the column arrays at the top level; accept either shape.
+        pages.append(page if "form" in page else page.get("filings", {}).get("recent", {"form": []}))
+    rows = []
+    for page in pages:
+        for i, form in enumerate(page["form"]):
+            if form in forms:
+                rows.append({k: page[k][i] for k in
+                             ("accessionNumber", "form", "filingDate", "reportDate", "primaryDocument")})
+    rows.sort(key=lambda r: r["filingDate"], reverse=True)
+    return data.get("name", ""), rows
+
+
 def _infotable_url(cik: str, accession: str) -> str:
     acc = accession.replace("-", "")
     index = _sec_get(ARCHIVE.format(cik=int(cik), acc=acc) + "/index.json", ttl=86400)
@@ -325,8 +344,13 @@ def investor_report(inv: Investor) -> dict:
     filings = get_13f_filings(inv, count=2)
     if not filings:
         raise http.DataUnavailable(f"No 13F-HR filings found for {inv.fund}")
-    current = filings[0]
-    previous = filings[1] if len(filings) > 1 else None
+    return build_report(inv, filings[0], filings[1] if len(filings) > 1 else None)
+
+
+def build_report(inv: Investor, current: Filing13F, previous: Filing13F | None,
+                 as_of: date | None = None) -> dict:
+    """Report for one investor from two consecutive 13F filings. `as_of` sets the date the
+    staleness is measured from (today for live use; the rebalance date in backtests)."""
     changes = diff_filings(current, previous)
     return {
         "investor": asdict(inv),
@@ -343,7 +367,7 @@ def investor_report(inv: Investor) -> dict:
             action: [asdict(c) for c in changes if c.action == action]
             for action in ("new", "added", "reduced", "exited")
         },
-        "staleness_days": (date.today() - date.fromisoformat(current.period)).days,
+        "staleness_days": ((as_of or date.today()) - date.fromisoformat(current.period)).days,
     }
 
 
@@ -398,6 +422,7 @@ class InsiderTrade:
     acquired: bool
     shares_after: float
     ten_b5_1: bool = False
+    filed: str = ""  # date the Form 4 became public; backtests must not use it before then
 
     @property
     def value(self) -> float:

@@ -64,9 +64,21 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None,
         data = resp.json() if as_json else resp.text
     except (httpx.HTTPError, ValueError) as exc:
         raise DataUnavailable(f"{url}: {exc}") from exc
-    with _cache_lock:
-        _cache[key] = (now + ttl, data)
+    if ttl > 0:  # ttl <= 0: one-off download (e.g. a 10 MB 13F table) - don't hold it in memory
+        with _cache_lock:
+            _cache[key] = (now + ttl, data)
     return data
+
+
+def get_bytes(url: str, *, headers: dict | None = None, timeout: float = 180.0) -> bytes:
+    """Uncached binary download (bulk data files), throttled like `get`."""
+    _throttle(urlparse(url).hostname or "")
+    try:
+        resp = client().get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise DataUnavailable(f"{url}: {exc}") from exc
+    return resp.content
 
 
 def clear_cache() -> None:
