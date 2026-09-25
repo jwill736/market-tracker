@@ -64,8 +64,15 @@ def _iso(ts: float) -> str:
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 
-def _yahoo_chart(symbol: str, range_: str, interval: str, ttl: float) -> dict:
-    data = http.get(YAHOO_CHART.format(symbol=symbol), params={"range": range_, "interval": interval}, ttl=ttl)
+def _yahoo_chart(symbol: str, range_: str, interval: str, ttl: float, *, period_days: int | None = None) -> dict:
+    """`period_days` asks for an explicit window (period1/period2) instead of a named range:
+    Yahoo can silently return weekly or monthly bars for range=max."""
+    if period_days:
+        now = int(datetime.now(timezone.utc).timestamp())
+        params = {"period1": now - period_days * 86400, "period2": now, "interval": interval}
+    else:
+        params = {"range": range_, "interval": interval}
+    data = http.get(YAHOO_CHART.format(symbol=symbol), params=params, ttl=ttl)
     try:
         result = data["chart"]["result"][0]
     except (KeyError, IndexError, TypeError) as exc:
@@ -180,5 +187,13 @@ def get_history(symbol: str, days: int = 400) -> list[PriceBar]:
     sym = normalize_symbol(symbol)
     if asset_class(sym) == "crypto":
         return _coinbase_history(sym, days)
-    range_ = "1y" if days <= 365 else "2y" if days <= 730 else "5y" if days <= 1825 else "max"
-    return parse_yahoo_history(_yahoo_chart(sym, range_, "1d", ttl=900))[-days:]
+    if days <= 1825:
+        range_ = "1y" if days <= 365 else "2y" if days <= 730 else "5y"
+        result = _yahoo_chart(sym, range_, "1d", ttl=900)
+    else:
+        # Explicit daily window; ~1.46 calendar days per trading day plus slack.
+        result = _yahoo_chart(sym, "", "1d", ttl=900, period_days=int(days * 1.5) + 10)
+    granularity = result.get("meta", {}).get("dataGranularity")
+    if granularity and granularity != "1d":
+        raise http.DataUnavailable(f"Yahoo returned {granularity} bars for {sym}, not daily")
+    return parse_yahoo_history(result)[-days:]

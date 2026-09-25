@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: journal
+  group: journal-data-branch   # shared with insider-alerts.yml: both push to journal-data
   cancel-in-progress: false
 
 jobs:

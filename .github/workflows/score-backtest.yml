@@ -1,0 +1,45 @@
+name: Score backtest
+
+# Replays the composite score month by month on real history (SEC 13F and Form 4 data plus
+# prices), using only what was public on each date, and reports whether each part predicted
+# returns. Heavy (downloads ~11 years of SEC bulk data), so it runs on demand and when the
+# backtest code itself changes.
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: First month to score (YYYY-MM-DD)
+        default: "2016-01-01"
+  pull_request:
+    paths:
+      - market_tracker/score_backtest.py
+      - market_tracker/history.py
+      - market_tracker/http.py
+      - .github/workflows/score-backtest.yml
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Run backtest
+        run: >
+          mt score-backtest --start "${{ inputs.start || '2016-01-01' }}"
+          --json backtest.json --summary-file "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: score-backtest
+          path: backtest.json
+          retention-days: 30
