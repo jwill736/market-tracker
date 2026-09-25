@@ -67,3 +67,18 @@ def test_sentinel_sends_once(monkeypatch):
     assert sentinel.send_brief_if_due(now, gather_fn=lambda now: fake)
     assert not sentinel.send_brief_if_due(now, gather_fn=lambda now: fake)
     assert len(sent) == 1 and sent[0].title == fake["title"] and "Holding is the plan." in sent[0].body
+
+
+def test_gather_uses_the_last_early_scan_instead_of_running_one(monkeypatch):
+    from market_tracker import holdplan
+    monkeypatch.setattr(holdplan, "gather", lambda today=None: {"holdings": [{"symbol": "KO", "verdict": "Hold", "value": 100.0,
+                                                                          "triggers": []}], "radar": {}, "events": {}, "tax": {}})
+    monkeypatch.setattr(market, "get_live_quote", lambda s: q(s, 0.1, "regular"))
+    monkeypatch.setattr(sentinel, "build_early", lambda mine: (_ for _ in ()).throw(AssertionError("scanned inline")))
+    sentinel.early_cache.clear()
+    b = brief.gather(now=datetime(2026, 9, 28, 12, 31, tzinfo=timezone.utc))
+    assert not any(ln["section"] == "Early wire" for ln in b["lines"])
+    sentinel.early_cache.get("early", lambda: {"signals": [{"symbol": "KO", "strength": 50, "early": True,
+                                                           "signals": [{"headline": "KO deal"}]}]})
+    b = brief.gather(now=datetime(2026, 9, 28, 12, 31, tzinfo=timezone.utc))
+    assert any("KO deal" in ln["text"] for ln in b["lines"])

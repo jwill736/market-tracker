@@ -139,14 +139,14 @@ def gather(today: date | None = None, now: datetime | None = None) -> dict:
             return sym, None
     with ThreadPoolExecutor(max_workers=6) as pool:
         quotes = {s: v for s, v in pool.map(q, syms) if v}
-    try:
-        early_data = sentinel.build_early(set(syms))
-    except (http.DataUnavailable, ValueError, KeyError):
-        early_data = None
+    # The early wire's last scan (the background loop refreshes it every few minutes); running a
+    # fresh one here would hold the brief up by half a minute.
+    early_data = sentinel.early_cache.peek("early", 1800)
     crypto = None
-    if any(market.asset_class(s) == "crypto" for s in syms):
+    coins = tuple(s for s in syms if market.asset_class(s) == "crypto")
+    if coins:
         try:
-            crypto = cryptoradar.build(syms, now)
+            crypto = sentinel.crypto_cache.get(coins, lambda: cryptoradar.build(list(coins), now))
         except (http.DataUnavailable, ValueError, KeyError):
             crypto = None
     return compose(today=today, plan=plan, quotes=quotes, early_data=early_data, crypto=crypto, now=now)
