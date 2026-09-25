@@ -1,0 +1,39 @@
+name: Docker image
+
+# Builds the image the private app is deployed from (Fly.io / Render) and checks that it starts,
+# requires a login, and serves the dashboard after one.
+on:
+  pull_request:
+    paths: ["Dockerfile", ".dockerignore", "pyproject.toml", "market_tracker/**", ".github/workflows/docker.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t plumbline .
+      - name: Start and check
+        run: |
+          docker run -d --name app -p 8080:8080 -e APP_PASSWORD=ci-password plumbline
+          for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+          curl -fs localhost:8080/healthz
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/watchlist)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/)" = 303
+          curl -s -c jar -o /dev/null -X POST --data 'password=ci-password' localhost:8080/login
+          curl -fs -b jar localhost:8080/ | grep -q 'id="tape"'
+          curl -fs -b jar localhost:8080/api/watchlist
+          echo "Image starts, locks without a cookie, and serves the dashboard after login."
+      - name: Refuses to serve without a password
+        run: |
+          docker run -d --name bare -p 8081:8080 plumbline
+          for i in $(seq 1 30); do curl -fs localhost:8081/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/)" = 503
+      - name: Logs
+        if: always()
+        run: docker logs app 2>&1 | tail -50 || true

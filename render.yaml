@@ -1,0 +1,27 @@
+# Render: New → Blueprint → pick this repo. Fill in the secrets it asks for (see README).
+services:
+  - type: web
+    name: plumbline
+    runtime: docker
+    plan: starter            # the free plan sleeps after 15 minutes and has no disk
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: MT_DB_PATH
+        value: /data/market_tracker.db
+      - key: REQUIRE_LOGIN
+        value: "1"
+      - key: APP_PASSWORD
+        sync: false
+      - key: APP_SECRET
+        generateValue: true
+      - key: SEC_USER_AGENT
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+    disk:
+      name: plumbline-data
+      mountPath: /data
+      sizeGB: 1

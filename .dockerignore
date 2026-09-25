@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.db
+.env
+tests
+scripts
+_site
+alerts_data
+signal_journal.csv

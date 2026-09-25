@@ -31,18 +31,32 @@ def connect(path: str | None = None):
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
         conn.close()
 
 
+def _migrate(conn) -> None:
+    """Columns added after the first release, for databases created before them."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
+    if "import_key" not in cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN import_key TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS transactions_import_key ON transactions(import_key)")
+
+
 def add_transaction(conn, symbol: str, side: str, quantity: float, price: float, date: str,
-                    fees: float = 0.0, note: str | None = None) -> int:
+                    fees: float = 0.0, note: str | None = None, import_key: str | None = None) -> int:
     cur = conn.execute(
-        "INSERT INTO transactions (symbol, side, quantity, price, fees, date, note) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (symbol.upper(), side, quantity, price, fees, date, note))
+        "INSERT INTO transactions (symbol, side, quantity, price, fees, date, note, import_key) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (symbol.upper(), side, quantity, price, fees, date, note, import_key))
     return cur.lastrowid
+
+
+def import_keys(conn) -> set[str]:
+    return {r["import_key"] for r in conn.execute("SELECT import_key FROM transactions WHERE import_key IS NOT NULL")}
 
 
 def list_transactions(conn) -> list[dict]:
