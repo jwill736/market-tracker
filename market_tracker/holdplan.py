@@ -349,8 +349,8 @@ def new_money(plan: dict, amount: float, min_order: float = MIN_ORDER) -> dict:
                                                          "buying now would cancel the loss you took"})
         else:
             eligible.append(r)
-    set_targets = {r["symbol"]: min(r["thesis"]["target_weight"], cap) for r in eligible
-                   if r.get("thesis") and r["thesis"].get("target_weight")}
+    asked = {r["symbol"]: r["thesis"]["target_weight"] for r in eligible if r.get("thesis") and r["thesis"].get("target_weight")}
+    set_targets = {s: min(t, cap) for s, t in asked.items()}
     left = max(0.0, 1.0 - sum(set_targets.values()))
     free = [r for r in eligible if r["symbol"] not in set_targets]
     free_w = sum(r["weight"] for r in free)
@@ -379,7 +379,7 @@ def new_money(plan: dict, amount: float, min_order: float = MIN_ORDER) -> dict:
     buys = []
     for s, v in sorted(alloc.items(), key=lambda kv: -kv[1]):
         r = by_sym[s]
-        why = (f"Below the {targets[s]:.0%} you set" if s in set_targets
+        why = ((f"Below the {asked[s]:.0%} you set" + (f" (held to your {cap:.0%} cap)" if asked[s] > cap else "")) if s in set_targets
                else f"Keeps your mix ({r['weight']:.1%} now)" if not set_targets else f"Its share of what your targets leave ({targets[s]:.1%})")
         buys.append({"symbol": s, "amount": round(v, 2), "shares": round(v / r["price"], 6) if r.get("price") else None,
                      "weight_now": round(r["value"] / total, 4) if total else 0.0, "weight_after": round((r["value"] + v) / total, 4) if total else 0.0,

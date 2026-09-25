@@ -120,3 +120,10 @@ def test_year_end_zero_bracket_room_and_lots():
     assert taxes.year_end(_ye_tax(), [], today)["zero_bracket"] is None
     # The default limit follows the filing status
     assert taxes.year_end(_ye_tax(), [], today, taxable_income=90000, filing="married")["zero_bracket"]["room"] == 8900.0
+
+
+def test_year_end_net_loss_does_not_add_zero_bracket_room():
+    today = date(2026, 12, 1)
+    y = taxes.year_end(_ye_tax(st=-2000), [], today, taxable_income=40000, zero_limit=49450)
+    assert y["zero_bracket"]["room"] == 9450.0 and y["zero_bracket"]["net_loss"] == 2000.0
+    assert "give up its deduction" in y["zero_bracket"]["note"]

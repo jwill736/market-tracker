@@ -1870,8 +1870,9 @@ async function loadYearEnd() {
   $("#ye-meta").textContent = y.days_left ? `${y.days_left} days until ${y.last_trading_day}, the last trading day` : `Last trading day was ${y.last_trading_day}`;
   $("#ye-filing").value = y.settings.filing; $("#ye-income").value = y.settings.taxable_income ?? "";
   $("#ye-carry").value = y.settings.carryover || ""; $("#ye-zero").value = y.settings.zero_limit ?? ""; $("#ye-zero").placeholder = y.default_zero_limit;
-  $("#ye-sums").innerHTML = `<div><span class="muted small">Tax on this year's gains now</span><b>${fmtMoney(y.tax_before, 0)}</b></div>
-    <div><span class="muted small">After the losses below</span><b>${fmtMoney(y.tax_after, 0)}</b><span class="muted small">saves ${fmtMoney(y.saves, 0)}</span></div>
+  const owed = (x) => x < 0 ? `<b class="up">−${fmtMoney(-x, 0)}</b><span class="muted small">a net loss: lowers tax on your other income</span>` : `<b>${fmtMoney(x, 0)}</b>`;
+  $("#ye-sums").innerHTML = `<div><span class="muted small">Tax on this year's gains now</span>${owed(y.tax_before)}</div>
+    <div><span class="muted small">After the losses below</span>${owed(y.tax_after)}<span class="muted small">saves ${fmtMoney(y.saves, 0)}</span></div>
     <div><span class="muted small">Loss carried to next year</span><b>${fmtMoney(y.carry_forward, 0)}</b></div>`;
   const parts = [];
   if (y.harvest.length) parts.push(`<h3>Losses to take</h3><ul class="hp-lines">${y.harvest.map((h) => `<li><b>${esc(h.symbol)}</b>${h.account ? ` <span class="muted small">${esc(h.account)}</span>` : ""}
@@ -1915,7 +1916,7 @@ async function loadIncome(force = false) {
     <div><span class="muted small">Received, last 12 months</span><b>${fmtMoney(d.received_12m, 0)}</b><span class="muted small">${fmtMoney(d.received_ytd, 0)} this year${d.estimated_share ? ` · ${Math.round(d.estimated_share * 100)}% estimated` : ""}</span></div>`;
   const max = Math.max(...d.months.map((m) => m.amount), 1);
   $("#in-months").innerHTML = d.months.map((m) => `<div class="in-month"><span class="muted small">${esc(new Date(m.month + "-15").toLocaleString(undefined, { month: "short" }))}</span>
-    <span class="in-bar"><span style="width:${(m.amount / max * 100).toFixed(1)}%"></span></span><b>${fmtMoney(m.amount, 0)}</b></div>`).join("");
+    <span class="in-bar"><span style="width:${(m.amount / max * 100).toFixed(1)}%"></span></span><b>${fmtMoney(m.amount, m.amount && m.amount < 10 ? 2 : 0)}</b></div>`).join("");
   $("#in-upcoming").innerHTML = d.upcoming.map((u) => `<li><b>${esc(u.ex_date)}</b> <button type="button" class="linkish" data-open="${esc(u.symbol)}">${esc(u.symbol)}</button>
     about <b>${fmtMoney(u.amount, 2)}</b> <span class="muted small">(${fmtMoney(u.per_share, 4)} a share${u.pay_date ? `, paid ${esc(u.pay_date)}` : ""}${u.estimated ? ", date estimated from past spacing" : ", declared"})</span></li>`).join("")
     || `<li class="muted">None of your holdings pays a regular dividend.</li>`;

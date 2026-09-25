@@ -440,9 +440,9 @@ def year_end(tax: dict, transactions: list[dict], today: date, *, st_rate: float
     if taxable_income is not None:
         limit = zero_limit if zero_limit else ZERO_RATE_LIMIT.get(filing, ZERO_RATE_LIMIT["single"])
         net = st + lt
-        # Net gains use up bracket room first; a net loss lowers income by up to the offset,
-        # and any loss beyond that would absorb new gains before they're taxed at all.
-        room = limit - taxable_income - (net if net >= 0 else -min(offset, -net)) + max(0.0, -net - offset)
+        # Net gains use up bracket room first. A net loss doesn't add room: new gains would
+        # cancel that loss first, giving up its deduction against income (worth the ordinary rate).
+        room = limit - taxable_income - max(net, 0.0)
         lots = []
         left = room
         for v in sorted((v for v in tax.get("lots", []) if v["long_term"] and v["gain"] > 0), key=lambda v: -v["gain"] / v["quantity"]):
@@ -453,9 +453,13 @@ def year_end(tax: dict, transactions: list[dict], today: date, *, st_rate: float
             lots.append({"symbol": v["symbol"], "account": v["account"], "bought": v["bought"], "quantity": round(qty, 6),
                          "gain": round(qty * per_share, 2), "future_tax_avoided": round(qty * per_share * lt_rate, 2)})
             left -= qty * per_share
-        zero = {"limit": limit, "room": round(max(room, 0.0), 2), "lots": lots,
-                "note": "Selling and buying back the same day is fine for gains (the wash-sale rule only covers losses). "
-                        "Your state may still tax the gain, and the extra income can affect credits or health-plan subsidies."}
+        note = ("Selling and buying back the same day is fine for gains (the wash-sale rule only covers losses). "
+                "Your state may still tax the gain, and the extra income can affect credits or health-plan subsidies.")
+        if net < 0:
+            note = (f"You have a net loss of ${-net:,.0f} this year (after the losses above): the first ${-net:,.0f} of gains you take "
+                    "would cancel it and give up its deduction against your income, so taking gains at 0% pays mainly beyond that, "
+                    "or in a year without losses. " + note)
+        zero = {"limit": limit, "room": round(max(room, 0.0), 2), "lots": lots, "net_loss": round(max(-net, 0.0), 2), "note": note}
 
     return {
         "year": today.year, "last_trading_day": last.isoformat(), "days_left": max(0, (last - today).days),
