@@ -21,6 +21,12 @@ def synthetic_closes(n: int = 600, drift: float = 0.0005, vol: float = 0.015, se
 
 
 @pytest.fixture(autouse=True)
+def _no_background(monkeypatch):
+    monkeypatch.setenv("MT_BACKGROUND", "0")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     from market_tracker import config
     monkeypatch.setattr(config, "settings", config.Settings(db_path=str(tmp_path / "test.db")))

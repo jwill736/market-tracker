@@ -11,8 +11,9 @@ import os
 import sys
 import time
 import traceback
+from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import http, pulse, service
+from market_tracker import http, pulse, radar, reading, service
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -180,6 +181,49 @@ def _():
     buys = pulse.load_watcher_buys()
     assert buys, "no rows"
     return f"{len(buys)} purchases, latest filed {max(b.filed for b in buys)}"
+
+
+@check("Filing radar: EDGAR feeds classify (8-K items, delistings, late filings)")
+def _():
+    entries = radar.fetch_feed("8-K")
+    assert entries and any(e.items for e in entries), "8-K entries carry no item numbers"
+    alerts, errors = radar.scan_market()
+    assert not errors, errors
+    levels = {n: sum(1 for a in alerts if a.level == n) for n in (3, 2, 1)}
+    return f"{len(entries)} 8-Ks in the feed; radar filings now: {levels[3]} act-today, {levels[2]} serious, {levels[1]} read-it"
+
+
+@check("Filing radar: going-concern full-text search")
+def _():
+    found = radar.going_concern_ciks(date.today(), days=60, pages=1)
+    assert found, "no hits"
+    return f"{len(found)} companies with going-concern language in 60 days (first page)"
+
+
+@check("Filing radar: a company's history (Apple)")
+def _():
+    subs = sec._sec_get(sec.SUBMISSIONS.format(cik="0000320193"), ttl=0)
+    recent = subs["filings"]["recent"]
+    assert "items" in recent and any(recent["items"]), "no 8-K item numbers"
+    got = radar.company_alerts("0000320193", subs, date.today() - timedelta(days=365), "AAPL")
+    return f"{len(got)} radar filings in a year: " + (", ".join(sorted({a.headline for a in got})) or "none")
+
+
+@check("Reading room: professional feeds")
+def _():
+    feeds, errors = reading.fetch_all()
+    ok = {k: len(v) for k, v in feeds.items() if v}
+    assert len(ok) >= 12, f"only {len(ok)} of {len(reading.SOURCES)} feeds: {errors}"
+    return f"{len(ok)}/{len(reading.SOURCES)} feeds" + (f"; failed: {'; '.join(errors)}" if errors else "")
+
+
+@check("Reading room: links picked by Abnormal Returns / Ritholtz")
+def _():
+    feeds, _ = reading.fetch_all([s for s in reading.SOURCES if s.kind == "curated"])
+    picks = reading.curated_picks(feeds, datetime.now(timezone.utc))
+    assert len(picks) >= 10, f"{len(picks)} picks"
+    both = sum(1 for p in picks if len(p.picked_by) > 1)
+    return f"{len(picks)} picks, {both} picked by both; e.g. {picks[0].title[:60]} ({picks[0].domain})"
 
 
 @check("Full analysis MSFT (with SEC)")
