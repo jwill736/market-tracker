@@ -476,6 +476,17 @@ async def reading_room(refresh: bool = False):
     return await asyncio.to_thread(sentinel.reading_cache.get, tuple(syms), lambda: sentinel.build_reading(syms))
 
 
+@app.get("/api/early")
+async def early_wire(limit: int = Query(80, ge=1, le=200), refresh: bool = False):
+    """Tickers moving on social, press wires, SEC catalysts and crypto listings, marked early
+    while the mainstream press hasn't covered them; plus the wire's own logged history."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    if refresh:
+        sentinel.early_cache.clear()
+    data = await asyncio.to_thread(sentinel.build_early, set(held + watched))
+    return dict(data, signals=data["signals"][:limit])
+
+
 class TopicIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     terms: str = Field(min_length=1, max_length=400)

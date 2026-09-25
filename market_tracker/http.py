@@ -80,7 +80,7 @@ _BACKOFF = 1.0
 
 
 def get(url: str, *, params: dict | None = None, headers: dict | None = None,
-        ttl: float = 60.0, as_json: bool = True) -> Any:
+        ttl: float = 60.0, as_json: bool = True, timeout: float | None = None) -> Any:
     """GET a URL, returning parsed JSON (or text). Results are cached for `ttl` seconds."""
     key = url + "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
     now = time.time()
@@ -88,7 +88,7 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None,
         hit = _cache.get(key)
         if hit and hit[0] > now:
             return hit[1]
-    resp = _request(url, params=params, headers=headers)
+    resp = _request(url, params=params, headers=headers, timeout=timeout)
     try:
         data = resp.json() if as_json else resp.text
     except ValueError as exc:

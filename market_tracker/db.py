@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS topics (
     name TEXT PRIMARY KEY,
     terms TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS early_log (
+    day TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    kinds TEXT NOT NULL,
+    strength REAL NOT NULL,
+    early INTEGER NOT NULL,
+    price REAL,
+    headline TEXT,
+    PRIMARY KEY (day, symbol)
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -173,3 +183,19 @@ def get_meta(conn, key: str, default: str = "") -> str:
 def set_meta(conn, key: str, value: str) -> None:
     conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                  (key, value))
+
+
+def log_early(conn, day: str, symbol: str, kinds: str, strength: float, early: bool, price: float | None,
+              headline: str) -> bool:
+    cur = conn.execute("INSERT OR IGNORE INTO early_log (day, symbol, kinds, strength, early, price, headline) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?)", (day, symbol, kinds, strength, int(early), price, headline))
+    return cur.rowcount > 0
+
+
+def early_logged(conn, day: str) -> set[str]:
+    return {r["symbol"] for r in conn.execute("SELECT symbol FROM early_log WHERE day = ?", (day,))}
+
+
+def early_history(conn, limit: int = 150) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM early_log WHERE price IS NOT NULL ORDER BY day DESC, strength DESC "
+                                          "LIMIT ?", (limit,))]

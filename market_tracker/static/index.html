@@ -23,6 +23,8 @@
   </a>
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="home" aria-selected="true">Home</button>
+    <button role="tab" data-tab="early" aria-selected="false">Early</button>
+    <button role="tab" data-tab="people" aria-selected="false">People</button>
     <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
     <button role="tab" data-tab="plan" aria-selected="false">Plan</button>
     <button role="tab" data-tab="mynews" aria-selected="false">News</button>
@@ -88,6 +90,27 @@
     <div class="grid two home-feeds">
       <div class="card"><div class="card-head"><h2>Early wire</h2><button type="button" class="ghost" data-goto="early">See all</button></div><ul class="pulse-list" id="home-early"></ul></div>
       <div class="card"><div class="card-head"><h2>Your news</h2><button type="button" class="ghost" data-goto="mynews">See all</button></div><ul class="pulse-list" id="home-news"></ul></div>
+    </div>
+  </section>
+
+  <!-- Early wire -->
+  <section id="tab-early" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Early wire</h2><span class="muted small" id="ew-meta"></span></div>
+      <p class="muted small">Tickers starting to move where the mainstream press hasn't caught up: StockTwits trending, Reddit mention spikes,
+        companies' own press releases (usually minutes before any article), SEC deal filings, crypto listings and trending coins,
+        and stablecoins off their peg. <b>Early</b> means two or fewer mainstream articles in 24 hours. Social spikes are also where
+        pump-and-dumps start: read the source before acting.</p>
+      <div class="ew-filters">
+        <div class="seg" id="ew-filter"><button data-f="" aria-pressed="true">All</button><button data-f="stock">Stocks</button><button data-f="crypto">Crypto</button><button data-f="yours">Yours</button></div>
+        <label class="small"><input type="checkbox" id="ew-early"> Early only</label>
+      </div>
+      <ul class="ew-list" id="ew-list"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>How the wire's calls are doing</h2><span class="muted small">First sighting each day, price then vs now (live)</span></div>
+      <p id="ew-score" class="small"></p>
+      <div class="scroll"><table class="data" id="ew-history"></table></div>
     </div>
   </section>
 

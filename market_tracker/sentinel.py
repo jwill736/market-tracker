@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from . import db, http, mynews, notify, radar, reading
+from . import db, early, http, mynews, notify, radar, reading
 from .analytics import portfolio as pf
 from .providers import market, sec
 
@@ -170,6 +170,8 @@ class Sentinel:
                     news_data = await asyncio.to_thread(news_cache.get, tuple(mine), lambda: build_news(mine))
                     read_data = await asyncio.to_thread(reading_cache.get, tuple(mine), lambda: build_reading(mine))
                     await asyncio.to_thread(self.reading_headsups, mine, news_data, read_data)
+                    early_data = await asyncio.to_thread(build_early, set(mine))
+                    await asyncio.to_thread(early_headsups, early_data)
                     self.reading_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 except Exception:
                     pass
@@ -193,7 +195,7 @@ def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", u
     if new:
         notify.send(notify.Message(title=title, body=body, url=url, priority=PUSH_PRIORITY.get(level, 3),
                                    tags=({"radar": ("rotating_light",), "news": ("newspaper",), "reading": ("books",),
-                                          "topic": ("fire",)}.get(kind, ()))))
+                                          "topic": ("fire",), "early": ("zap",)}.get(kind, ()))))
     return int(new)
 
 
@@ -214,6 +216,57 @@ class Cache:
 
     def clear(self):
         self._c.store.clear()
+
+
+early_cache = Cache(120)
+
+
+def build_early(mine: set[str]) -> dict:
+    """The early wire, with Coinbase's pair list remembered between runs (new pairs = listings)
+    and each day's first sighting of a strong or early ticker logged with its price."""
+    import json
+    with db.connect() as conn:
+        pairs = set(json.loads(db.get_meta(conn, "coinbase_pairs", "[]") or "[]"))
+    data = early_cache.get("early", lambda: early.build(mine, known_pairs=pairs))
+    today = datetime.now(timezone.utc).date().isoformat()
+    with db.connect() as conn:
+        if data.get("pairs"):
+            db.set_meta(conn, "coinbase_pairs", json.dumps(data["pairs"]))
+        logged = db.early_logged(conn, today)
+    todo = [s for s in data["signals"] if (s["early"] or s["strength"] >= 50) and s["symbol"] not in logged][:10]
+
+    def price(sym):
+        try:
+            return market.get_quote(sym).price
+        except http.DataUnavailable:
+            return None
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        prices = dict(zip([s["symbol"] for s in todo], pool.map(price, [s["symbol"] for s in todo])))
+    with db.connect() as conn:
+        for s in todo:
+            db.log_early(conn, today, s["symbol"], ",".join(s["kinds"]), s["strength"], s["early"], prices.get(s["symbol"]),
+                         (s["reasons"] or [""])[0][:300])
+        history = db.early_history(conn)
+    for s in data["signals"]:
+        s["yours"] = s["symbol"] in mine
+    return dict(data, history=history)
+
+
+def early_headsups(data: dict) -> int:
+    n = 0
+    for s in data.get("signals", []):
+        why = (s["reasons"] or [""])[0]
+        if "depeg" in s["kinds"]:
+            n += raise_headsup(f"depeg:{s['symbol']}:{date.today().isoformat()}", "early", 3,
+                               f"Stablecoin off its peg: {s['symbol']}", why, s["signals"][0].get("url", ""), s["symbol"])
+        elif s["yours"] and s["strength"] >= 30:
+            n += raise_headsup(f"early:{s['symbol']}:{date.today().isoformat()}", "early", 2,
+                               f"{s['symbol']}: early signal{' (not in the mainstream yet)' if s['early'] else ''}", why,
+                               s["signals"][0].get("url", ""), s["symbol"])
+        elif "listing" in s["kinds"] and s["strength"] >= 40:
+            n += raise_headsup(f"listing:{s['symbol']}", "early", 1, f"New listing: {s['symbol']}", why,
+                               s["signals"][0].get("url", ""), s["symbol"])
+    return n
 
 
 news_cache = Cache(300)

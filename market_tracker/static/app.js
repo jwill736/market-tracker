@@ -53,6 +53,7 @@ function selectTab(name) {
   if (name === "reading") loadReading();
   if (name === "radar") loadRadar();
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
+  if (name !== "early" && typeof Live !== "undefined") Live.drop("early");
   if (name !== "pulse" && typeof Live !== "undefined") Live.drop("pulse");
   if (name !== "plan" && typeof Live !== "undefined") Live.drop("plan");
   if (name !== "symbol" && typeof Live !== "undefined") { Live.drop("symbol"); symState.sym = null; history.replaceState(null, "", location.pathname); }
@@ -1191,7 +1192,7 @@ async function loadHeadsup(markRead = false) {
     fresh.slice(0, 3).forEach((i) => { try { new Notification(i.title, { body: i.body }); } catch { /* blocked */ } });
   }
   h.items.forEach((i) => huState.seen.add(i.key));
-  const kinds = { radar: "Filing", news: "Loud news", reading: "Pro mention", topic: "Hot topic" };
+  const kinds = { radar: "Filing", news: "Loud news", reading: "Pro mention", topic: "Hot topic", early: "Early wire", people: "Following" };
   $("#hu-list").innerHTML = h.items.length ? h.items.slice(0, 25).map((i) => `<li class="hu lvl${i.level}${i.read ? "" : " unread"}">
       <span class="hu-kind">${esc(kinds[i.kind] || i.kind)}</span>
       <div><a href="${esc(safeUrl(i.url))}" target="_blank" rel="noopener noreferrer">${esc(i.title)}</a>
@@ -1566,6 +1567,62 @@ $("#trade-modal").addEventListener("click", (e) => { if (e.target.id === "trade-
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#trade-modal").hidden) closeTrade(); });
 Live.onTick((t) => { if (tradeState.update && t.symbol === tradeState.sym) tradeState.update(); });
 $("#sym-trade").addEventListener("click", () => symState.sym && openTradeTicket(symState.sym, "buy"));
+
+// ---------------------------------------------------------------- early wire
+const earlyState = { data: null, loadedAt: 0, filter: "", earlyOnly: false };
+const KIND_LABEL = { social: "Social spike", wire: "Press release", filing: "SEC filing", crypto: "Trending coin", listing: "Listing", depeg: "Depeg" };
+function earlyItem(m) {
+  const s = esc(m.symbol);
+  return `<li class="ew-item${m.yours ? " yours" : ""}" data-open="${s}">
+    <div class="ew-top"><b class="ew-sym">${esc(m.symbol.replace(/-USD$/, ""))}</b>
+      <span data-live="${s}" data-lf="price"></span><span class="small" data-live="${s}" data-lf="chg"></span>
+      ${m.early ? `<span class="chip chip-early">Not in the mainstream yet</span>` : m.mainstream_24h != null ? `<span class="chip chip-muted">${m.mainstream_24h} mainstream today</span>` : ""}
+      ${m.yours ? `<span class="chip chip-ok">Yours</span>` : ""}
+      ${m.tone < 0 ? `<span class="chip chip-review">Bad news</span>` : ""}
+      <span class="ew-bar" title="Signal strength ${m.strength}"><i style="width:${Math.min(100, m.strength)}%"></i></span></div>
+    <div class="ew-kinds">${m.kinds.map((k) => `<span class="tag">${esc(KIND_LABEL[k] || k)}</span>`).join("")}${m.name ? `<span class="muted small">${esc(m.name)}</span>` : ""}</div>
+    <ul class="ew-why">${m.signals.slice(0, 3).map((x) => `<li>${x.url ? `<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener noreferrer">${esc(x.headline)}</a>` : esc(x.headline)} <span class="muted small">${esc(x.source)}${x.at ? ` · <span data-ago="${esc(x.at)}"></span>` : ""}</span></li>`).join("")}</ul></li>`;
+}
+async function loadEarly(force = false) {
+  if (!earlyState.data) $("#ew-meta").textContent = "Checking social, wires, filings and crypto… (up to a minute the first time)";
+  try {
+    earlyState.data = await api("/api/early" + (force ? "?refresh=true" : ""));
+    earlyState.loadedAt = Date.now();
+    renderEarly();
+  } catch (err) { $("#ew-meta").textContent = err.message; }
+}
+function renderEarly() {
+  const d = earlyState.data;
+  $("#ew-meta").innerHTML = `Updated <span data-ago="${esc(d.generated_at)}"></span> · every 2 minutes${d.errors.length ? ` · ${d.errors.length} source${d.errors.length > 1 ? "s" : ""} down` : ""}`;
+  const f = earlyState.filter;
+  const rows = d.signals.filter((m) => (!f || (f === "yours" ? m.yours : f === "crypto" ? m.asset === "crypto" : m.asset !== "crypto")) && (!earlyState.earlyOnly || m.early));
+  $("#ew-list").innerHTML = rows.map(earlyItem).join("") || `<li class="muted">Nothing matches right now.</li>`;
+  document.querySelectorAll("#ew-list [data-open]").forEach((el) => el.addEventListener("click", (e) => { if (!e.target.closest("a")) openSymbol(el.dataset.open); }));
+  const hist = d.history || [];
+  $("#ew-history").innerHTML = hist.length ? `<thead><tr><th>Day</th><th>Symbol</th><th>Why</th><th class="num">Price then</th><th class="num">Now</th><th class="num">Since</th></tr></thead><tbody>` +
+    hist.map((h) => { const s = esc(h.symbol); return `<tr class="clickable" data-open="${s}"><td>${esc(h.day)}</td><td><b>${esc(h.symbol.replace(/-USD$/, ""))}</b>${h.early ? ` <span class="chip chip-early">early</span>` : ""}</td>
+      <td class="small clip">${esc(h.headline || "")}</td><td class="num">${fmtMoney(h.price)}</td><td class="num" data-live="${s}" data-lf="price">—</td>
+      <td class="num" data-live="${s}" data-lf="since" data-p0="${h.price}">—</td></tr>`; }).join("") + "</tbody>"
+    : `<tr><td class="muted">The first sightings are logged today; come back tomorrow to see how they did.</td></tr>`;
+  $("#ew-history").querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  bindLive("early", $("#tab-early"));
+  paintAgo(); paintEarlyScore();
+}
+function paintEarlyScore() {
+  const cells = [...document.querySelectorAll('#ew-history [data-lf="since"]')];
+  const vals = cells.map((c) => parseFloat(c.textContent)).filter((v) => !isNaN(v));
+  if (!vals.length) { $("#ew-score").textContent = ""; return; }
+  const up = vals.filter((v) => v > 0).length, avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  $("#ew-score").textContent = `${up} of ${vals.length} logged tickers are up since first seen; average ${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%. A few days prove nothing; compare with the market over months.`;
+}
+document.querySelectorAll("#ew-filter button").forEach((b) => b.addEventListener("click", () => {
+  earlyState.filter = b.dataset.f;
+  document.querySelectorAll("#ew-filter button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (earlyState.data) renderEarly();
+}));
+$("#ew-early").addEventListener("change", (e) => { earlyState.earlyOnly = e.target.checked; if (earlyState.data) renderEarly(); });
+let earlyScoreTimer = null;
+Live.onTick(() => { if (currentTab() === "early" && !earlyScoreTimer) earlyScoreTimer = setTimeout(() => { earlyScoreTimer = null; paintEarlyScore(); }, 1000); });
 
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
