@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS snapshots (
     data TEXT NOT NULL,
     PRIMARY KEY (source, day)
 );
+CREATE TABLE IF NOT EXISTS theses (
+    symbol TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated TEXT NOT NULL DEFAULT (date('now'))
+);
 CREATE TABLE IF NOT EXISTS follows (
     who TEXT PRIMARY KEY,
     grp TEXT NOT NULL,
@@ -184,6 +189,22 @@ def set_topic(conn, name: str, terms: str) -> None:
 
 def delete_topic(conn, name: str) -> None:
     conn.execute("DELETE FROM topics WHERE name = ?", (name,))
+
+
+def theses(conn) -> dict[str, dict]:
+    import json
+    return {r["symbol"]: dict(json.loads(r["data"]), symbol=r["symbol"], updated=r["updated"])
+            for r in conn.execute("SELECT symbol, data, updated FROM theses")}
+
+
+def save_thesis(conn, symbol: str, data: dict) -> None:
+    import json
+    conn.execute("INSERT INTO theses (symbol, data, updated) VALUES (?, ?, date('now')) ON CONFLICT(symbol) DO UPDATE "
+                 "SET data = excluded.data, updated = excluded.updated", (symbol.upper(), json.dumps(data)))
+
+
+def delete_thesis(conn, symbol: str) -> None:
+    conn.execute("DELETE FROM theses WHERE symbol = ?", (symbol.upper(),))
 
 
 def get_meta(conn, key: str, default: str = "") -> str:

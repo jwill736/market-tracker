@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, coinbase_sync, db, dilution, early, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
-               sentinel, service, strategy)
+from . import (auth, charts, events, coinbase_sync, db, dilution, early, holdplan, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+               sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -389,6 +389,144 @@ def _plan_candidates(watch: list[str], held: set[str], limit: int = 10) -> list[
             seen.add(sym)
             keep.append((sym, why))
     return keep[:limit]
+
+
+holdplan_cache = pulse.Cache(300)
+events_cache = pulse.Cache(3600)
+
+
+def _hold_settings(conn) -> dict:
+    return {"cap": float(db.get_meta(conn, "hold_cap", str(holdplan.CAP))),
+            "st_rate": float(db.get_meta(conn, "tax_st_rate", str(taxes.ST_RATE))),
+            "lt_rate": float(db.get_meta(conn, "tax_lt_rate", str(taxes.LT_RATE)))}
+
+
+def _thesis_objs(raw: dict[str, dict]) -> dict[str, holdplan.Thesis]:
+    keys = {f for f in holdplan.Thesis.__dataclass_fields__}
+    return {s: holdplan.Thesis(**{k: v for k, v in d.items() if k in keys}) for s, d in raw.items()}
+
+
+async def _holdplan_data(refresh: bool = False) -> dict:
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        watch = db.watchlist(conn)
+        raw = db.theses(conn)
+        cash = float(db.get_meta(conn, "cash", "0") or 0)
+        settings = _hold_settings(conn)
+    summary = {"positions": [], "total_value": 0.0}
+    if txs:
+        try:
+            summary = await asyncio.to_thread(service.portfolio_summary, txs, False)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    positions = [p for p in summary["positions"] if p.get("quantity")]
+    held = [p["symbol"] for p in positions]
+    radar_by: dict[str, list[dict]] = {}
+    try:
+        s = sentinel.sentinel
+        mine, _ = await asyncio.to_thread(sentinel.radar_cache.get, tuple(held + watch), lambda: s.mine(held + watch))
+        for a in mine:
+            radar_by.setdefault(a.symbol, []).append(a.to_dict())
+    except (http.DataUnavailable, ValueError):
+        pass
+    earnings_by = {}
+    try:
+        cal = await asyncio.to_thread(events_cache.get, tuple(held), lambda: events.build(positions, date.today()))
+        earnings_by = {e["symbol"]: e for e in cal.get("earnings", [])}
+    except (http.DataUnavailable, ValueError, KeyError):
+        pass
+    key = (tuple((p["symbol"], round(p["quantity"], 6), round(p.get("price") or 0, 2)) for p in positions), len(txs),
+           round(cash, 2), tuple(sorted((k, str(v)) for k, v in raw.items())), tuple(watch), tuple(settings.items()),
+           len(radar_by), tuple(sorted(earnings_by)))
+    if refresh:
+        holdplan_cache.store.clear()
+    return holdplan_cache.get(key, lambda: holdplan.build(
+        positions, txs, _thesis_objs(raw), radar_by, date.today(), cash=cash, cap=settings["cap"], watch=watch,
+        st_rate=settings["st_rate"], lt_rate=settings["lt_rate"], earnings=earnings_by))
+
+
+@app.get("/api/events")
+async def events_view(refresh: bool = False):
+    """Earnings for your stocks with the options-implied move in dollars, Fed decisions and the
+    next two weeks of market-moving US releases."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    positions = []
+    if txs:
+        try:
+            positions = (await asyncio.to_thread(service.portfolio_summary, txs, False))["positions"]
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    held = tuple(p["symbol"] for p in positions if p.get("quantity"))
+    if refresh:
+        events_cache.store.clear()
+    return await asyncio.to_thread(events_cache.get, held, lambda: events.build(positions, date.today()))
+
+
+@app.get("/api/holdplan")
+async def hold_plan(refresh: bool = False):
+    """Buy-and-hold plan: Hold by default; Sell?/Trim/Review only when your tripwire, a serious
+    filing, concentration or taxes say so. Plus the reinvest queue and the tax picture."""
+    return await _holdplan_data(refresh)
+
+
+@app.get("/api/taxes")
+async def tax_view():
+    """Realized gains this year, wash sales across accounts, the don't-buy list, the long-term
+    clock and harvest candidates."""
+    return (await _holdplan_data())["tax"]
+
+
+class ThesisIn(BaseModel):
+    thesis: str = Field("", max_length=2000)
+    wrong_if: str = Field("", max_length=1000)
+    price_below: float | None = Field(None, ge=0)
+    price_above: float | None = Field(None, ge=0)
+    max_loss_pct: float | None = Field(None, ge=0, le=100)
+    review_on: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    target_weight: float | None = Field(None, gt=0, le=1)
+
+
+@app.get("/api/thesis")
+async def theses_view():
+    with db.connect() as conn:
+        return db.theses(conn)
+
+
+@app.post("/api/thesis/{symbol}")
+async def save_thesis(symbol: str, body: ThesisIn):
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        db.save_thesis(conn, sym, body.model_dump())
+        out = db.theses(conn)[sym]
+    holdplan_cache.store.clear()
+    return out
+
+
+@app.delete("/api/thesis/{symbol}")
+async def delete_thesis(symbol: str):
+    with db.connect() as conn:
+        db.delete_thesis(conn, market.normalize_symbol(symbol))
+    holdplan_cache.store.clear()
+    return {}
+
+
+class HoldSettings(BaseModel):
+    cap: float | None = Field(None, gt=0, le=1)
+    st_rate: float | None = Field(None, ge=0, le=0.6)
+    lt_rate: float | None = Field(None, ge=0, le=0.4)
+
+
+@app.post("/api/holdplan/settings")
+async def hold_settings(body: HoldSettings):
+    with db.connect() as conn:
+        for k, meta in (("cap", "hold_cap"), ("st_rate", "tax_st_rate"), ("lt_rate", "tax_lt_rate")):
+            v = getattr(body, k)
+            if v is not None:
+                db.set_meta(conn, meta, str(v))
+        out = _hold_settings(conn)
+    holdplan_cache.store.clear()
+    return out
 
 
 @app.get("/api/plan")
