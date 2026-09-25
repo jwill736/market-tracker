@@ -809,7 +809,7 @@ document.querySelectorAll("#imp-seg button").forEach((b) => b.addEventListener("
   impSource = b.dataset.src;
   document.querySelectorAll("#imp-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   document.querySelectorAll(".imp-help").forEach((p) => { p.hidden = p.dataset.for !== impSource; });
-  $(".imp-file").hidden = impSource === "holdings";
+  $(".imp-file").hidden = impSource === "holdings" || impSource === "snaptrade";
   $(".imp-list").hidden = impSource !== "holdings";
   $("#rh-result").innerHTML = "";
 }));
@@ -835,6 +835,35 @@ $("#cb-sync").addEventListener("click", async () => {
     const r = await api("/api/sync/coinbase", { method: "POST" });
     out.innerHTML = `<p><b>${r.new} new trade${r.new === 1 ? "" : "s"}</b> imported${r.duplicates ? `, ${r.duplicates} already there` : ""}.</p>` +
       (r.differences.length ? `<p class="small">Balances your ledger doesn't explain (rewards, transfers or older trades; add them with Stash / other):</p><ul class="small">${r.differences.map((d) => `<li>${esc(d.coin)}: Coinbase ${d.coinbase} vs ledger ${d.ledger.toFixed(8)}</li>`).join("")}</ul>` : `<p class="small muted">Every coin's balance matches the ledger.</p>`);
+    loadPortfolio(); loadHoldings();
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+api("/api/sync/snaptrade").then((r) => {
+  $("#st-setup").hidden = r.configured; $("#st-buttons").hidden = !r.configured;
+  $("#st-last").textContent = r.last_sync ? `Last synced ${r.last_sync}` : "";
+}).catch(() => {});
+$("#st-connect").addEventListener("click", async () => {
+  const tab = window.open("", "_blank");        // opened now, so pop-up blockers allow it
+  try {
+    const r = await api("/api/sync/snaptrade/connect", { method: "POST" });
+    if (tab) tab.location = r.url; else location.href = r.url;
+    $("#rh-result").innerHTML = `<p class="muted small">Sign in to your broker in the SnapTrade tab, then come back and press Sync now.</p>`;
+  } catch (err) { if (tab) tab.close(); $("#rh-result").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+$("#st-sync").addEventListener("click", async () => {
+  const out = $("#rh-result");
+  out.innerHTML = `<p class="muted">Reading your connected accounts…</p>`;
+  try {
+    const r = await api("/api/sync/snaptrade", { method: "POST" });
+    const skipped = Object.entries(r.skipped || {}).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
+    out.innerHTML = r.note ? `<p class="muted">${esc(r.note)}</p>` :
+      `<p><b>${r.new} new trade${r.new === 1 ? "" : "s"}</b>${r.duplicates ? `, ${r.duplicates} already there` : ""}${r.income_new ? `, ${r.income_new} dividend and interest payments` : ""}
+        <span class="muted small">(${r.accounts.map((a) => `${esc(a.name)} ${a.new}`).join(", ")})</span></p>
+      ${skipped ? `<p class="muted small">Not trades: ${skipped}</p>` : ""}` +
+      (r.differences.length ? `<p class="small">Positions your ledger doesn't explain (transfers in, or trades older than the broker's history; add them with Stash / other):</p>
+        <ul class="small">${r.differences.map((d) => `<li>${esc(d.account)} ${esc(d.symbol)}: broker ${d.broker} vs ledger ${d.ledger}</li>`).join("")}</ul>`
+        : `<p class="small muted">Every position matches your broker.</p>`);
+    $("#st-last").textContent = "Last synced today";
     loadPortfolio(); loadHoldings();
   } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 });

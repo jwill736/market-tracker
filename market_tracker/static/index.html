@@ -543,10 +543,11 @@
           <button type="button" data-src="robinhood" aria-pressed="true">Robinhood</button>
           <button type="button" data-src="coinbase">Coinbase</button>
           <button type="button" data-src="holdings">Stash / other</button>
+          <button type="button" data-src="snaptrade">Automatic</button>
         </div>
         <p class="muted small imp-help" data-for="robinhood">In the Robinhood app: Account → Reports and statements → Reports →
-          generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells and splits are imported;
-          dividends, transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
+          generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells, splits, dividends and
+          interest are imported; transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
           Stash / other.</p>
         <p class="muted small imp-help" data-for="coinbase" hidden>On coinbase.com: Profile → Statements (or Taxes → Documents) →
           generate a <b>transaction history</b> CSV for all time. Buys, sells, conversions and rewards (at their value when
@@ -564,6 +565,15 @@
           <input id="imp-account" value="Stash" maxlength="40">
           <textarea id="imp-text" rows="5" placeholder="VOO 3.214 1450.20 2024-03-01&#10;AAPL 1.5 310.00&#10;BTC 0.004 260"></textarea>
           <button id="imp-list-preview" type="button">Preview</button>
+        </div>
+        <div class="imp-help" data-for="snaptrade" hidden>
+          <p class="muted small">Keeps Robinhood, Coinbase and other brokers in sync without CSVs, through <b>SnapTrade</b> (a paid
+            service; a personal key covers your own accounts). Access is read-only: it can see trades and positions, not place
+            orders or move money. Trades you already imported from a CSV aren't added twice.</p>
+          <p class="muted small" id="st-setup">Set up: create a personal API key at snaptrade.com, then add
+            <code>SNAPTRADE_CLIENT_ID</code> and <code>SNAPTRADE_CONSUMER_KEY</code> to <code>.env</code> in the app folder and restart.</p>
+          <div class="row" id="st-buttons" hidden><button type="button" id="st-connect" class="secondary">Connect a broker</button>
+            <button type="button" id="st-sync">Sync now</button><span class="muted small" id="st-last"></span></div>
         </div>
         <div class="row imp-sync" hidden><button type="button" id="cb-sync">Sync Coinbase now</button></div>
         <div id="rh-result"></div>
