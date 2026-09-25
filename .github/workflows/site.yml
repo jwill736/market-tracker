@@ -1,0 +1,65 @@
+name: Site
+
+# Builds the public Plumbline page (market_tracker/site_static + a data.json snapshot) and
+# publishes it to GitHub Pages. One-time setup: Settings -> Pages -> Source: GitHub Actions.
+# Crypto prices stream live in the visitor's browser; this job refreshes everything else.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["market_tracker/**", ".github/workflows/site.yml"]
+  schedule:
+    - cron: "*/30 13-20 * * 1-5"   # every 30 minutes while US markets are open (UTC)
+    - cron: "17 */6 * * *"          # a few times a day otherwise
+  workflow_run:
+    workflows: ["Signal journal", "Insider alerts"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}   # for the fund check on insider clusters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Load journal and alert data
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
+            for f in signal_journal.csv insider_buys.csv alerted.csv; do
+              git show "origin/journal-data:$f" > "$RUNNER_TEMP/data/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/data/$f"
+            done
+          fi
+      - name: Build
+        run: |
+          mt site --out _site --journal "$RUNNER_TEMP/data/signal_journal.csv" --alerts-dir "$RUNNER_TEMP/data" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

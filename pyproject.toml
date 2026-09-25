@@ -26,7 +26,7 @@ mt = "market_tracker.cli:main"
 include = ["market_tracker*"]
 
 [tool.setuptools.package-data]
-market_tracker = ["static/*"]
+market_tracker = ["static/*", "site_static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

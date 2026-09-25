@@ -294,6 +294,20 @@ def cmd_alerts(args) -> int:
     return 0
 
 
+def cmd_site(args) -> int:
+    from . import site
+
+    data = site.build(args.out, args.journal, args.alerts_dir)
+    quoted = sum(1 for r in data["universe"] if "price" in r)
+    scored = sum(1 for r in data["universe"] if r.get("score") is not None)
+    print(f"Built {args.out}: {quoted}/{len(data['universe'])} quotes, {scored} scores, "
+          f"{len(data['clusters'])} insider clusters")
+    for r in data["universe"]:
+        if "quote_error" in r:
+            print(f"  quote failed: {r['symbol']}: {r['quote_error']}", file=sys.stderr)
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False)
@@ -366,6 +380,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--issues-dir", help="Write one title/body pair per new cluster here")
     s.add_argument("--dry-run", action="store_true", help="Don't save state (for testing)")
     s.set_defaults(func=cmd_alerts)
+
+    s = sub.add_parser("site", help="Build the static public site (GitHub Pages) into a folder")
+    s.add_argument("--out", default="_site")
+    s.add_argument("--journal", help="signal_journal.csv to publish scores and the track record from")
+    s.add_argument("--alerts-dir", help="Folder holding insider_buys.csv and alerted.csv")
+    s.set_defaults(func=cmd_site)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")
