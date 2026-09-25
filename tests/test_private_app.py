@@ -38,6 +38,18 @@ def test_pages_and_api_need_login(locked):
     assert "Sign in" in locked.get("/login").text
 
 
+def test_phone_app_files_are_open_but_data_is_not(locked):
+    sw = locked.get("/sw.js")
+    assert sw.status_code == 200 and sw.headers["content-type"].startswith("application/javascript")
+    assert "/api/" in sw.text and "never stored" in sw.text
+    man = locked.get("/static/manifest.webmanifest")
+    assert man.status_code == 200 and man.json()["display"] == "standalone"
+    for icon in man.json()["icons"]:
+        r = locked.get(icon["src"])
+        assert r.status_code == 200 and r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert locked.get("/static/app.js", follow_redirects=False).status_code == 303      # the app itself still needs login
+
+
 def test_login_flow_and_throttle(locked):
     assert locked.post("/login", content="password=wrong",
                        headers={"content-type": "application/x-www-form-urlencoded"}).status_code == 401
@@ -206,7 +218,8 @@ def test_parse_robinhood():
     assert [(t["symbol"], t["side"], t["quantity"], t["price"]) for t in txs] == [
         ("AAPL", "buy", 10, 200.0), ("AAPL", "sell", 4, 210.0), ("NVDA", "buy", 2, 150.0), ("NVDA", "buy", 18, 0.0)]
     assert txs[0]["date"] == "2026-09-02" and txs[1]["fees"] == 0.02     # regulatory fee on the sale
-    assert dict(res.skipped) == {"CDIV": 1, "ACH": 1} and not res.errors
+    assert dict(res.skipped) == {"ACH": 1} and not res.errors
+    assert [(r["symbol"], r["day"], r["amount"], r["kind"]) for r in res.income] == [("AAPL", "2026-09-10", 1.56, "dividend")]
     assert len({t["import_key"] for t in txs}) == 4
     assert importers.parse_robinhood(RH).transactions[0]["import_key"] == txs[0]["import_key"]   # stable
     assert importers.parse_robinhood("a,b\n1,2").errors
@@ -222,6 +235,7 @@ def test_import_endpoint_previews_commits_and_dedupes(monkeypatch):
     assert c.post("/api/import/robinhood", json={"csv": RH, "commit": True}).json()["new"] == 4
     again = c.post("/api/import/robinhood", json={"csv": RH, "commit": True}).json()
     assert again["new"] == 0 and again["duplicates"] == 4 and len(c.get("/api/transactions").json()) == 4
+    assert preview["income_new"] == 1 and again["income_new"] == 0      # the dividend is kept once
     nvda = next(h for h in c.get("/api/holdings").json() if h["symbol"] == "NVDA")
     assert nvda["quantity"] == 20 and nvda["avg_cost"] == 15.0      # split: same cost, ten times the shares
     partial = RH.splitlines()[0] + '\n"9/20/2026","","","TSLA","Tesla","Sell","3","$300.00","$900.00"\n'

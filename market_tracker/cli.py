@@ -503,7 +503,19 @@ def cmd_serve(args) -> int:
     import threading
     import uvicorn
     import webbrowser
-    from . import bgservice
+    from . import auth, bgservice
+    if args.lan:
+        # Anyone on the same Wi-Fi could open it: never without a password.
+        if not auth.enabled():
+            print("--lan lets other devices on your network open Plumbline, so it needs a password first.")
+            print("Add a line like this to .env in the app folder, then run it again:")
+            print('  APP_PASSWORD="pick-a-long-passphrase"')
+            return 2
+        args.host = "0.0.0.0"
+        for ip in lan_addresses():
+            print(f"On your phone (same Wi-Fi): http://{ip}:{args.port}")
+        print("That address is plain http: fine at home, but it can't be installed as an app and anyone on the Wi-Fi")
+        print("could see the traffic. For the installable app anywhere, use Tailscale (README: Phone app).")
     url = f"http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}"
     if bgservice.answering(args.port):
         print(f"Plumbline is already running at {url} (the background service). Opening it.")
@@ -524,9 +536,31 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def lan_addresses() -> list[str]:
+    """This computer's addresses on the local network (what a phone on the same Wi-Fi uses)."""
+    import socket
+    found = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))          # no packet is sent; this just picks the outgoing interface
+            found.append(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in found:
+                found.append(ip)
+    except OSError:
+        pass
+    return found or ["<this computer's IP>"]
+
+
 def cmd_service(args) -> int:
     """Keep the dashboard running whenever you're logged in (macOS, Linux or Windows)."""
     from . import bgservice
+    if args.action == "install":
+        return bgservice.install(args.port, lan=args.lan)
     return getattr(bgservice, args.action)(args.port)
 
 
@@ -636,6 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--open", action="store_true", help="Open the dashboard in your browser")
+    s.add_argument("--lan", action="store_true", help="Let your phone on the same Wi-Fi open it (needs APP_PASSWORD)")
     s.add_argument("--log", help="Write output to this file (the background service uses plumbline.log)")
     s.add_argument("--pidfile", help="Write the process id here (lets `mt service restart` stop it)")
     s.set_defaults(func=cmd_serve)
@@ -643,6 +678,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("service", help="Run the dashboard in the background whenever you're logged in")
     s.add_argument("action", choices=["install", "uninstall", "status", "restart", "update"])
     s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--lan", action="store_true", help="install: also reachable from your phone on the same Wi-Fi (needs APP_PASSWORD)")
     s.set_defaults(func=cmd_service)
 
     args = p.parse_args(argv)

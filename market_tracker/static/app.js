@@ -50,6 +50,7 @@ function selectTab(name) {
   if (name === "early") loadEarly();
   if (name === "people") { loadPeople(); loadPickers(); }
   if (name === "hold") loadHold();
+  if (name === "income") loadIncome();
   if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
@@ -808,7 +809,7 @@ document.querySelectorAll("#imp-seg button").forEach((b) => b.addEventListener("
   impSource = b.dataset.src;
   document.querySelectorAll("#imp-seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   document.querySelectorAll(".imp-help").forEach((p) => { p.hidden = p.dataset.for !== impSource; });
-  $(".imp-file").hidden = impSource === "holdings";
+  $(".imp-file").hidden = impSource === "holdings" || impSource === "snaptrade";
   $(".imp-list").hidden = impSource !== "holdings";
   $("#rh-result").innerHTML = "";
 }));
@@ -834,6 +835,35 @@ $("#cb-sync").addEventListener("click", async () => {
     const r = await api("/api/sync/coinbase", { method: "POST" });
     out.innerHTML = `<p><b>${r.new} new trade${r.new === 1 ? "" : "s"}</b> imported${r.duplicates ? `, ${r.duplicates} already there` : ""}.</p>` +
       (r.differences.length ? `<p class="small">Balances your ledger doesn't explain (rewards, transfers or older trades; add them with Stash / other):</p><ul class="small">${r.differences.map((d) => `<li>${esc(d.coin)}: Coinbase ${d.coinbase} vs ledger ${d.ledger.toFixed(8)}</li>`).join("")}</ul>` : `<p class="small muted">Every coin's balance matches the ledger.</p>`);
+    loadPortfolio(); loadHoldings();
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+api("/api/sync/snaptrade").then((r) => {
+  $("#st-setup").hidden = r.configured; $("#st-buttons").hidden = !r.configured;
+  $("#st-last").textContent = r.last_sync ? `Last synced ${r.last_sync}` : "";
+}).catch(() => {});
+$("#st-connect").addEventListener("click", async () => {
+  const tab = window.open("", "_blank");        // opened now, so pop-up blockers allow it
+  try {
+    const r = await api("/api/sync/snaptrade/connect", { method: "POST" });
+    if (tab) tab.location = r.url; else location.href = r.url;
+    $("#rh-result").innerHTML = `<p class="muted small">Sign in to your broker in the SnapTrade tab, then come back and press Sync now.</p>`;
+  } catch (err) { if (tab) tab.close(); $("#rh-result").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+$("#st-sync").addEventListener("click", async () => {
+  const out = $("#rh-result");
+  out.innerHTML = `<p class="muted">Reading your connected accounts…</p>`;
+  try {
+    const r = await api("/api/sync/snaptrade", { method: "POST" });
+    const skipped = Object.entries(r.skipped || {}).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
+    out.innerHTML = r.note ? `<p class="muted">${esc(r.note)}</p>` :
+      `<p><b>${r.new} new trade${r.new === 1 ? "" : "s"}</b>${r.duplicates ? `, ${r.duplicates} already there` : ""}${r.income_new ? `, ${r.income_new} dividend and interest payments` : ""}
+        <span class="muted small">(${r.accounts.map((a) => `${esc(a.name)} ${a.new}`).join(", ")})</span></p>
+      ${skipped ? `<p class="muted small">Not trades: ${skipped}</p>` : ""}` +
+      (r.differences.length ? `<p class="small">Positions your ledger doesn't explain (transfers in, or trades older than the broker's history; add them with Stash / other):</p>
+        <ul class="small">${r.differences.map((d) => `<li>${esc(d.account)} ${esc(d.symbol)}: broker ${d.broker} vs ledger ${d.ledger}</li>`).join("")}</ul>`
+        : `<p class="small muted">Every position matches your broker.</p>`);
+    $("#st-last").textContent = "Last synced today";
     loadPortfolio(); loadHoldings();
   } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 });
@@ -866,10 +896,11 @@ async function runImport(commit) {
     const skipped = Object.entries(r.skipped).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
     const noun = impSource === "holdings" ? "holdings" : "trades";
     out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} ${noun}.</b>` : `<b>${r.new} new ${noun}</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
+      ${r.income_new ? `<br>Plus ${r.income_new} dividend and interest payment${r.income_new === 1 ? "" : "s"} (${fmtMoney(r.income_total, 2)}) for the Income tab.` : ""}
       ${skipped ? `<br><span class="muted small">Skipped (not trades): ${skipped}</span>` : ""}
       ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}</p>
       <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })}`).join(", ") || "none"}</p>
-      ${!commit && r.new ? `<button id="rh-commit" type="button">Import ${r.new} ${noun}</button>` : ""}`;
+      ${!commit && (r.new || r.income_new) ? `<button id="rh-commit" type="button">Import${r.new ? ` ${r.new} ${noun}` : ""}${r.income_new ? `${r.new ? " and" : ""} ${r.income_new} payments` : ""}</button>` : ""}`;
     const btn = $("#rh-commit");
     if (btn) btn.addEventListener("click", () => runImport(true));
     if (commit) { loadPortfolio(); loadHoldings(); }
@@ -1787,6 +1818,7 @@ function holdRow(h) {
       <span class="pc-price" data-live="${s}" data-lf="price">${fmtMoney(h.price)}</span><span class="small" data-live="${s}" data-lf="chg"></span>
       <span class="muted small pc-w"><b data-live="${s}" data-lf="value" data-qty="${h.quantity}">${fmtMoney(h.value, 0)}</b> · ${(h.weight * 100).toFixed(1)}% of portfolio${h.cost_pct != null ? ` · <span class="${cls(h.cost_pct)}">${fmtPct(h.cost_pct, 0)}</span> from cost` : ""}</span></div>
     ${trig.length ? `<ul class="pc-why">${trig.map((x) => `<li class="t-${esc(x.level)}">${esc(x.text)}</li>`).join("")}</ul>` : `<p class="muted small">Nothing says otherwise: holding is the plan.</p>`}
+    ${h.fundamentals ? `<p class="muted small">${esc(h.fundamentals.line)}</p>` : ""}
     ${e ? `<p class="small">Reports ${esc(e.date)}${e.estimated ? " (estimated)" : ""}${e.move_pct != null ? `: options price about ±${e.move_pct.toFixed(1)}%, <b>±${fmtMoney(e.move_dollars, 0)}</b> on yours` : ""}</p>` : ""}
     <div class="hp-thesis small">${t && (t.thesis || t.wrong_if) ? `<b>Why you own it:</b> ${esc(t.thesis || "—")}${t.wrong_if ? ` · <b>Wrong if:</b> ${esc(t.wrong_if)}` : ""}` : `<span class="muted">No reason written down yet.</span>`}
       <button type="button" class="linkish" data-thesis="${s}">${t ? "Edit" : "Write it down"}</button></div>
@@ -1808,6 +1840,7 @@ function renderHold() {
     ...ev.macro.slice(0, 12).map((m) => `<li><b>${esc(m.date)}</b> ${esc(m.kind)} <span class="muted small">${esc(m.name)}${m.consensus ? ` · forecast ${esc(m.consensus)}` : ""}</span></li>`)].join("")
     || `<li class="muted">No earnings for your stocks in the next 100 days, and no big releases in two weeks.</li>`;
   renderTax(d.tax);
+  loadYearEnd();
   document.querySelectorAll("#tab-hold [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
   document.querySelectorAll("#tab-hold [data-thesis]").forEach((el) => el.addEventListener("click", () => openThesis(el.dataset.thesis)));
   bindLive("hold", $("#tab-hold"));
@@ -1831,12 +1864,86 @@ function renderTax(t) {
     <div class="muted small">${esc(h.note)}</div></li>`).join("")}</ul>`);
   $("#hp-tax").innerHTML = parts.join("") || `<p class="muted small">No wash sales, no don't-buy windows, nothing turning long-term within 90 days and no losses worth harvesting.</p>`;
 }
+async function loadYearEnd() {
+  let y;
+  try { y = await api("/api/taxes/yearend"); } catch (err) { $("#ye-meta").textContent = err.message; return; }
+  $("#ye-meta").textContent = y.days_left ? `${y.days_left} days until ${y.last_trading_day}, the last trading day` : `Last trading day was ${y.last_trading_day}`;
+  $("#ye-filing").value = y.settings.filing; $("#ye-income").value = y.settings.taxable_income ?? "";
+  $("#ye-carry").value = y.settings.carryover || ""; $("#ye-zero").value = y.settings.zero_limit ?? ""; $("#ye-zero").placeholder = y.default_zero_limit;
+  const owed = (x) => x < 0 ? `<b class="up">−${fmtMoney(-x, 0)}</b><span class="muted small">a net loss: lowers tax on your other income</span>` : `<b>${fmtMoney(x, 0)}</b>`;
+  $("#ye-sums").innerHTML = `<div><span class="muted small">Tax on this year's gains now</span>${owed(y.tax_before)}</div>
+    <div><span class="muted small">After the losses below</span>${owed(y.tax_after)}<span class="muted small">saves ${fmtMoney(y.saves, 0)}</span></div>
+    <div><span class="muted small">Loss carried to next year</span><b>${fmtMoney(y.carry_forward, 0)}</b></div>`;
+  const parts = [];
+  if (y.harvest.length) parts.push(`<h3>Losses to take</h3><ul class="hp-lines">${y.harvest.map((h) => `<li><b>${esc(h.symbol)}</b>${h.account ? ` <span class="muted small">${esc(h.account)}</span>` : ""}
+    sell ${fmtShares(h.quantity)} for a ${fmtMoney(h.loss, 0)} ${h.long_term ? "long" : "short"}-term loss: saves about <b>${fmtMoney(h.saves, 0)}</b>; hold <b>${esc(h.replacement)}</b> for 31 days
+    ${h.warnings.map((w) => `<div class="down small">${esc(w)}</div>`).join("")}</li>`).join("")}</ul>`);
+  else parts.push(`<p class="muted small">No loss worth taking${y.tax_before > 0 ? " among your holdings" : ": there's nothing to offset yet"}.</p>`);
+  if (y.blocked.length) parts.push(`<h3>Losses you can't take cleanly yet</h3><ul class="hp-lines">${y.blocked.map((b) => `<li><b>${esc(b.symbol)}</b> ${fmtMoney(b.loss, 0)}: <span class="muted small">${esc(b.why)}</span></li>`).join("")}</ul>`);
+  const z = y.zero_bracket;
+  if (!z) parts.push(`<p class="muted small">Add your taxable income above to see whether you could take long-term gains at 0%.</p>`);
+  else if (z.room <= 0) parts.push(`<p class="muted small">No room in the 0% long-term bracket this year (limit ${fmtMoney(z.limit, 0)}).</p>`);
+  else parts.push(`<h3>Gains you could take at 0%</h3><p class="small">Up to <b>${fmtMoney(z.room, 0)}</b> of long-term gains fit under the ${fmtMoney(z.limit, 0)} limit.
+      Sell and buy straight back to raise your cost basis, tax-free:</p>
+    <ul class="hp-lines">${z.lots.map((l) => `<li><b>${esc(l.symbol)}</b> ${fmtShares(l.quantity)} sh bought ${esc(l.bought)}${l.account ? ` in ${esc(l.account)}` : ""}:
+      ${fmtMoney(l.gain, 0)} gain <span class="muted small">(about ${fmtMoney(l.future_tax_avoided, 0)} of future tax avoided)</span></li>`).join("") || `<li class="muted">No long-term lots with gains.</li>`}</ul>
+    <p class="muted small">${esc(z.note)}</p>`);
+  $("#ye-body").innerHTML = parts.join("");
+}
+$("#ye-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { filing: $("#ye-filing").value, taxable_income: numOrNull($("#ye-income").value), carryover: numOrNull($("#ye-carry").value),
+    zero_limit: numOrNull($("#ye-zero").value) };
+  try { await api("/api/taxes/yearend/settings", { method: "POST", body: JSON.stringify(body) }); $("#ye-msg").textContent = "Saved"; loadYearEnd(); }
+  catch (err) { $("#ye-msg").textContent = err.message; }
+});
 $("#hp-settings").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
     await api("/api/holdplan/settings", { method: "POST", body: JSON.stringify({ cap: +$("#hp-cap").value / 100, st_rate: +$("#hp-st").value / 100, lt_rate: +$("#hp-lt").value / 100 }) });
     $("#hp-settings-msg").textContent = "Saved"; loadHold(true);
   } catch (err) { $("#hp-settings-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- income
+async function loadIncome(force = false) {
+  $("#in-meta").textContent = "Reading dividend histories…";
+  let d;
+  try { d = await api("/api/income" + (force ? "?refresh=true" : "")); } catch (err) { $("#in-meta").textContent = err.message; return; }
+  $("#in-meta").textContent = `Updated ${d.as_of}${d.errors.length ? ` · ${d.errors.length} source note${d.errors.length > 1 ? "s" : ""}` : ""}`;
+  $("#in-sums").innerHTML = `<div><span class="muted small">A year, at today's rates</span><b>${fmtMoney(d.annual_income, 0)}</b><span class="muted small">${fmtMoney(d.monthly_avg, 0)} a month</span></div>
+    <div><span class="muted small">Yield on what you paid</span><b>${d.yield_on_cost != null ? d.yield_on_cost.toFixed(2) + "%" : "—"}</b><span class="muted small">portfolio yield now ${d.portfolio_yield != null ? d.portfolio_yield.toFixed(2) + "%" : "—"}</span></div>
+    <div><span class="muted small">Received, last 12 months</span><b>${fmtMoney(d.received_12m, 0)}</b><span class="muted small">${fmtMoney(d.received_ytd, 0)} this year${d.estimated_share ? ` · ${Math.round(d.estimated_share * 100)}% estimated` : ""}</span></div>`;
+  const max = Math.max(...d.months.map((m) => m.amount), 1);
+  $("#in-months").innerHTML = d.months.map((m) => `<div class="in-month"><span class="muted small">${esc(new Date(m.month + "-15").toLocaleString(undefined, { month: "short" }))}</span>
+    <span class="in-bar"><span style="width:${(m.amount / max * 100).toFixed(1)}%"></span></span><b>${fmtMoney(m.amount, m.amount && m.amount < 10 ? 2 : 0)}</b></div>`).join("");
+  $("#in-upcoming").innerHTML = d.upcoming.map((u) => `<li><b>${esc(u.ex_date)}</b> <button type="button" class="linkish" data-open="${esc(u.symbol)}">${esc(u.symbol)}</button>
+    about <b>${fmtMoney(u.amount, 2)}</b> <span class="muted small">(${fmtMoney(u.per_share, 4)} a share${u.pay_date ? `, paid ${esc(u.pay_date)}` : ""}${u.estimated ? ", date estimated from past spacing" : ", declared"})</span></li>`).join("")
+    || `<li class="muted">None of your holdings pays a regular dividend.</li>`;
+  $("#in-rows").innerHTML = d.holdings.map((h) => `<tr><td><button type="button" class="linkish" data-open="${esc(h.symbol)}">${esc(h.symbol)}</button></td>
+    <td>${h.per_share != null ? `${fmtMoney(h.per_share, 4)} ×${h.per_year}` : "—"}</td><td><b>${fmtMoney(h.annual_income, 2)}</b></td>
+    <td>${h.yield_on_cost != null ? h.yield_on_cost.toFixed(2) + "%" : "—"}</td><td>${h.current_yield != null ? h.current_yield.toFixed(2) + "%" : "—"}</td>
+    <td>${fmtMoney(h.paid_12m, 2)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No dividend payers among your holdings.</td></tr>`;
+  const KIND = { dividend: "dividend", reinvested: "reinvested dividend", interest: "interest", tax_withheld: "tax withheld" };
+  $("#in-received").innerHTML = d.received.map((r) => `<li><b>${esc(r.day)}</b> ${esc(r.symbol || "cash")} <b class="${cls(r.amount)}">${fmtMoney(r.amount, 2)}</b>
+    <span class="muted small">${esc(KIND[r.kind] || r.kind)}${r.account ? " · " + esc(r.account) : ""}${r.estimated ? ` · estimated: ${fmtShares(r.shares)} × ${fmtMoney(r.per_share, 4)}` : ""}</span></li>`).join("")
+    || `<li class="muted">Nothing yet. Import a Robinhood account activity CSV (Portfolio tab) to bring in your dividends.</li>`;
+  document.querySelectorAll("#tab-income [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
+$("#nm-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = $("#nm-out");
+  out.innerHTML = `<li class="muted">Working it out…</li>`;
+  try {
+    const d = await api("/api/holdplan/newmoney?amount=" + encodeURIComponent(+$("#nm-amount").value));
+    out.innerHTML = d.buys.map((b) => `<li><b>${fmtMoney(b.amount, 2)}</b> → <button type="button" class="linkish" data-open="${esc(b.symbol)}"><b>${esc(b.symbol)}</b></button>
+        ${b.shares != null ? `<span class="muted small">≈ ${fmtShares(b.shares)} sh</span>` : ""}
+        <span class="muted small">${esc(b.why)}${b.weight_now != null ? ` · ${(b.weight_now * 100).toFixed(1)}% → ${(b.weight_after * 100).toFixed(1)}%` : ""}</span></li>`).join("")
+      + d.skipped.map((x) => `<li class="muted small">Not ${esc(x.symbol)}: ${esc(x.why)}</li>`).join("")
+      + `<li class="muted small">${esc(d.note)}${d.has_targets ? "" : " No targets set yet, so this keeps your current mix: set one in any holding's \"why you own it\"."}</li>`;
+    out.querySelectorAll("[data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  } catch (err) { out.innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
 });
 
 // the "why you own it" form
@@ -1850,8 +1957,15 @@ async function openThesis(sym) {
   $("#th-thesis").value = t.thesis || ""; $("#th-wrong").value = t.wrong_if || "";
   $("#th-below").value = t.price_below ?? ""; $("#th-above").value = t.price_above ?? ""; $("#th-loss").value = t.max_loss_pct ?? "";
   $("#th-target").value = t.target_weight != null ? +(t.target_weight * 100).toFixed(2) : ""; $("#th-review").value = t.review_on || "";
+  $("#th-rev").value = t.rev_growth_min ?? ""; $("#th-revq").value = t.rev_growth_quarters ?? "";
+  $("#th-om").value = t.op_margin_min ?? ""; $("#th-dil").value = t.dilution_max ?? ""; $("#th-fcf").checked = !!t.fcf_positive;
   $("#th-delete").hidden = !t.symbol;
+  $("#th-fund").textContent = "";
   $("#thesis-modal").hidden = false; $("#th-thesis").focus();
+  api("/api/fundamentals/" + encodeURIComponent(sym)).then((f) => {
+    if (thesisSym !== sym) return;
+    $("#th-fund").textContent = f.line || f.note || "";
+  }).catch(() => {});
 }
 const closeThesis = () => { $("#thesis-modal").hidden = true; };
 $("#th-close").addEventListener("click", closeThesis);
@@ -1863,7 +1977,9 @@ $("#th-form").addEventListener("submit", async (e) => {
   const target = numOrNull($("#th-target").value);
   const body = { thesis: $("#th-thesis").value.trim(), wrong_if: $("#th-wrong").value.trim(), price_below: numOrNull($("#th-below").value),
     price_above: numOrNull($("#th-above").value), max_loss_pct: numOrNull($("#th-loss").value), review_on: $("#th-review").value || null,
-    target_weight: target ? target / 100 : null };
+    target_weight: target ? target / 100 : null, rev_growth_min: numOrNull($("#th-rev").value),
+    rev_growth_quarters: numOrNull($("#th-revq").value), op_margin_min: numOrNull($("#th-om").value),
+    dilution_max: numOrNull($("#th-dil").value), fcf_positive: $("#th-fcf").checked };
   try { await api("/api/thesis/" + encodeURIComponent(thesisSym), { method: "POST", body: JSON.stringify(body) }); closeThesis(); loadHold(true); }
   catch (err) { $("#th-msg").textContent = err.message; }
 });
@@ -1950,3 +2066,7 @@ api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() =>
 loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadHome(); });
 loadHeadsup();
 if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
+// Installable on a phone (Add to Home Screen). Browsers only allow this on https or localhost.
+if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}

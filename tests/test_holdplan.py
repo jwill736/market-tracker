@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from market_tracker import api, events, holdplan, sentinel, service
+from market_tracker import api, events, fundamentals, holdplan, sentinel, service
 
 TODAY = date(2026, 9, 25)
 
@@ -62,6 +62,7 @@ def test_endpoints(monkeypatch):
     monkeypatch.setattr(service, "portfolio_summary", lambda txs, risk=True: {"positions": [pos("NKE", 20, 60)], "total_value": 1200})
     monkeypatch.setattr(sentinel.sentinel, "mine", lambda syms: ([], []))
     sentinel.radar_cache.clear()
+    monkeypatch.setattr(fundamentals, "build", lambda syms, theses=None, get=None: ({}, []))
     monkeypatch.setattr(events, "build", lambda positions, today: {"earnings": [{"symbol": "NKE", "date": "2026-10-01", "days": 6,
                                                                                "move_pct": 7.5, "move_dollars": 90.0}],
                                                                   "macro": [], "errors": []})
@@ -76,4 +77,57 @@ def test_endpoints(monkeypatch):
     assert plan["tax"]["harvest"][0]["symbol"] == "NKE"
     assert c.post("/api/holdplan/settings", json={"cap": 0.15}).json()["cap"] == 0.15
     assert c.get("/api/events").json()["earnings"][0]["symbol"] == "NKE"
+    nm = c.get("/api/holdplan/newmoney?amount=300").json()
+    assert nm["skipped"][0]["symbol"] == "NKE" and nm["buys"][0]["symbol"] == "VTI"      # NKE is flagged Sell?
+    assert c.get("/api/holdplan/newmoney?amount=0").status_code == 422
+    assert c.post("/api/taxes/yearend/settings", json={"filing": "married", "taxable_income": 50000}).json()["taxable_income"] == 50000
+    ye = c.get("/api/taxes/yearend").json()
+    assert ye["harvest"][0]["symbol"] == "NKE" and ye["zero_bracket"]["limit"] == 98900
+    assert c.post("/api/taxes/yearend/settings", json={"filing": "nope"}).status_code == 422
     assert c.delete("/api/thesis/NKE").json() == {}
+
+
+# ------------------------------------------------------------------ new money
+
+def _plan(rows, base, blackout=(), cap=0.2):
+    return {"holdings": rows, "base": base, "cap": cap, "tax": {"blackout": list(blackout)}}
+
+
+def _row(sym, value, base, verdict="Hold", target=None, price=10.0):
+    return {"symbol": sym, "value": value, "weight": value / base, "verdict": verdict, "price": price,
+            "thesis": {"target_weight": target} if target else None}
+
+
+def test_new_money_no_targets_keeps_the_mix():
+    rows = [_row("A", 600, 1000, price=20), _row("B", 400, 1000)]
+    out = holdplan.new_money(_plan(rows, 1000, cap=0.75), 500)
+    got = {b["symbol"]: b["amount"] for b in out["buys"]}
+    assert got == {"A": 300.0, "B": 200.0}
+    assert out["buys"][0]["shares"] == 15.0 and not out["has_targets"]
+
+
+def test_new_money_fills_the_biggest_shortfall_and_skips_flagged_and_wash_sale():
+    base = 10000
+    rows = [_row("A", 1000, base, target=0.20), _row("B", 1800, base, target=0.20),
+            _row("C", 500, base, verdict="Review", target=0.2), _row("D", 200, base, target=0.1),
+            _row("E", 6500, base)]
+    blackout = [{"symbol": "D", "avoid": ["D"], "until": "2026-10-20"}]
+    out = holdplan.new_money(_plan(rows, base, blackout, cap=0.7), 1000)
+    got = {b["symbol"]: b["amount"] for b in out["buys"]}
+    # A is 1,200 short of 20% of 11,000, B 400 short, and E (no target) keeps its share of the
+    # 60% the targets leave: 100 short. 1,000 split 12:4:1.
+    assert got == {"A": 705.88, "B": 235.29, "E": 58.82}
+    assert {s["symbol"] for s in out["skipped"]} == {"C", "D"}
+    assert "Wash-sale window until 2026-10-20" in next(s["why"] for s in out["skipped"] if s["symbol"] == "D")
+
+
+def test_new_money_leftover_goes_to_the_broad_fund_and_small_amounts_are_not_split():
+    base = 1000
+    rows = [_row("A", 150, base, target=0.2), _row("B", 850, base, target=0.8)]
+    out = holdplan.new_money(_plan(rows, base, cap=0.9), 1000)
+    got = {b["symbol"]: b["amount"] for b in out["buys"]}
+    assert got["A"] == 250.0 and got["B"] == 750.0
+    out = holdplan.new_money(_plan([_row("A", 900, 2000, target=0.5), _row("B", 1100, 2000, target=0.5)], 2000, cap=0.9), 8)
+    assert [(b["symbol"], b["amount"]) for b in out["buys"]] == [("A", 8.0)]
+    out = holdplan.new_money(_plan([], 0), 100)
+    assert out["buys"][0]["symbol"] == "VTI" and out["buys"][0]["amount"] == 100

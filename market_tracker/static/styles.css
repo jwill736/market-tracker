@@ -409,6 +409,8 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .th-form label { display: grid; gap: 4px; font-size: 13px; }
 .th-form textarea { width: 100%; resize: vertical; font: inherit; }
 .th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.th-grid label.check { display: flex; align-items: center; gap: 8px; flex-direction: row; }
+.th-grid label.check input { width: auto; }
 
 /* morning brief */
 .brief-card { margin-bottom: 14px; }
@@ -424,8 +426,17 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 #pk-suggested { margin: 6px 0; align-items: center; }
 #pk-suggested .chip { cursor: pointer; border: 0; }
 .brief-list button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
-.pk-card button.linkish, #pk-list button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+.pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #nm-out button.linkish, #ye-body button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 .hp-thesis button.linkish { color: var(--accent); }
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
 .hp-lines li:first-child { border-top: 0; }
+
+/* income */
+.in-months { display: grid; gap: 6px; }
+.in-month { display: grid; grid-template-columns: 40px 1fr 70px; align-items: center; gap: 8px; }
+.in-month b { text-align: right; font-variant-numeric: tabular-nums; }
+.in-bar { height: 10px; border-radius: 5px; background: var(--mid); overflow: hidden; }
+.in-bar span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+.in-table td, .in-table th { text-align: right; white-space: nowrap; }
+.in-table td:first-child, .in-table th:first-child { text-align: left; }

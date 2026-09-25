@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
-               sentinel, service, strategy)
+from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research, snaptrade,
+               sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -56,6 +56,12 @@ async def require_login(request: Request, call_next):
 @app.get("/api/session")
 def session():
     return {"auth": auth.enabled()}
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    """Served from the root so it can cover the whole app (installing it on a phone)."""
+    return FileResponse(STATIC / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -405,6 +411,32 @@ async def _holdplan_data(refresh: bool = False) -> dict:
         raise HTTPException(400, str(exc))
 
 
+_income_cache = sentinel.Cache(900)
+_income_last: dict = {}
+
+
+@app.get("/api/income")
+async def income_view(refresh: bool = False):
+    """Dividends received (imported, or estimated where an account has none), forward income,
+    yield on cost, upcoming ex/pay dates and the next 12 months."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        rows = db.income(conn)
+    key = (len(txs), max((t["id"] for t in txs), default=0), len(rows), date.today().isoformat())
+    if refresh:
+        _income_cache.clear()
+
+    def compute():
+        positions = service.portfolio_summary(txs, False)["positions"] if txs else []
+        out = dividends.build(positions, txs, rows, date.today())
+        _income_last["upcoming"] = out["upcoming"]
+        return out
+    try:
+        return await asyncio.to_thread(_income_cache.get, key, compute)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.get("/api/events")
 async def events_view(refresh: bool = False):
     """Earnings for your stocks with the options-implied move in dollars, Fed decisions and the
@@ -536,6 +568,47 @@ async def tax_view():
     return (await _holdplan_data())["tax"]
 
 
+def _yearend_settings(conn) -> dict:
+    def num(k):
+        v = db.get_meta(conn, k, "")
+        return float(v) if v not in ("", None) else None
+    return {"filing": db.get_meta(conn, "tax_filing", "single") or "single", "taxable_income": num("tax_income"),
+            "carryover": num("tax_carryover") or 0.0, "zero_limit": num("tax_zero_limit")}
+
+
+@app.get("/api/taxes/yearend")
+async def tax_year_end():
+    """Before Dec 31: realized gains, the losses worth taking to offset them and what that saves,
+    and long-term gains you could take at 0% if your income is low enough."""
+    plan = await _holdplan_data()
+    with db.connect() as conn:
+        cfg = _yearend_settings(conn)
+        txs = db.list_transactions(conn)
+        drip = {r["symbol"] for r in db.income(conn) if r["kind"] == "reinvested"} | set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
+    out = taxes.year_end(plan["tax"], txs, date.today(), st_rate=plan["rules"]["short_term_rate"], lt_rate=plan["rules"]["long_term_rate"],
+                         upcoming_dividends=_income_last.get("upcoming"), drip_symbols=drip, **cfg)
+    out["settings"] = cfg
+    out["default_zero_limit"] = taxes.ZERO_RATE_LIMIT.get(cfg["filing"], taxes.ZERO_RATE_LIMIT["single"])
+    return out
+
+
+class YearEndSettings(BaseModel):
+    filing: Literal["single", "married", "head", "separate"] = "single"
+    taxable_income: float | None = Field(None, ge=0, le=1e9)
+    carryover: float | None = Field(None, ge=0, le=1e9)
+    zero_limit: float | None = Field(None, ge=0, le=1e7)
+
+
+@app.post("/api/taxes/yearend/settings")
+async def tax_year_end_settings(body: YearEndSettings):
+    with db.connect() as conn:
+        db.set_meta(conn, "tax_filing", body.filing)
+        for k, meta in (("taxable_income", "tax_income"), ("carryover", "tax_carryover"), ("zero_limit", "tax_zero_limit")):
+            v = getattr(body, k)
+            db.set_meta(conn, meta, "" if v is None else str(v))
+        return _yearend_settings(conn)
+
+
 class ThesisIn(BaseModel):
     thesis: str = Field("", max_length=2000)
     wrong_if: str = Field("", max_length=1000)
@@ -544,6 +617,28 @@ class ThesisIn(BaseModel):
     max_loss_pct: float | None = Field(None, ge=0, le=100)
     review_on: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     target_weight: float | None = Field(None, gt=0, le=1)
+    rev_growth_min: float | None = Field(None, ge=-100, le=500)
+    rev_growth_quarters: int | None = Field(None, ge=1, le=8)
+    op_margin_min: float | None = Field(None, ge=-100, le=100)
+    dilution_max: float | None = Field(None, ge=0, le=100)
+    fcf_positive: bool = False
+
+
+@app.get("/api/fundamentals/{symbol}")
+async def fundamentals_view(symbol: str):
+    """Quarterly revenue growth, margins, EPS, free cash flow and share count from the company's
+    SEC filings, with the checks that would raise it in the hold plan."""
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        raw = db.theses(conn)
+    try:
+        got, errors = await asyncio.to_thread(fundamentals.build, [sym], holdplan.theses_from(raw))
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+    if sym not in got:
+        return {"symbol": sym, "quarters": [], "checks": [], "line": "",
+                "note": errors[0] if errors else "No company financials: funds, crypto and non-US listings don't file them with the SEC."}
+    return {"symbol": sym, **got[sym]}
 
 
 @app.get("/api/thesis")
@@ -568,6 +663,12 @@ async def delete_thesis(symbol: str):
         db.delete_thesis(conn, market.normalize_symbol(symbol))
     holdplan.clear_cache()
     return {}
+
+
+@app.get("/api/holdplan/newmoney")
+async def hold_new_money(amount: float = Query(..., gt=0, le=10_000_000)):
+    """Where the next deposit goes toward your targets, without selling."""
+    return holdplan.new_money(await _holdplan_data(), amount)
 
 
 class HoldSettings(BaseModel):
@@ -823,6 +924,81 @@ def coinbase_sync_now():
             "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
 
 
+@app.get("/api/sync/snaptrade")
+def snaptrade_status():
+    with db.connect() as conn:
+        return {"configured": snaptrade.configured(), "last_sync": db.get_meta(conn, "snaptrade_last_sync", "") or None}
+
+
+@app.post("/api/sync/snaptrade/connect")
+async def snaptrade_connect():
+    """A link to SnapTrade's page for connecting a broker (read-only access)."""
+    try:
+        return {"url": await asyncio.to_thread(snaptrade.connect_url)}
+    except snaptrade.SnapTradeError as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.post("/api/sync/snaptrade")
+async def snaptrade_sync_now():
+    """Import new trades, reinvested dividends, dividends and interest from every connected
+    account, then compare positions with the ledger."""
+    if not snaptrade.configured():
+        raise HTTPException(400, "Add SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY (a personal SnapTrade key) to .env first.")
+    try:
+        got = await asyncio.to_thread(snaptrade.fetch_all)
+    except snaptrade.SnapTradeError as exc:
+        raise HTTPException(502, str(exc))
+    if not got:
+        return {"accounts": [], "new": 0, "duplicates": 0, "income_new": 0, "differences": [], "skipped": {},
+                "note": "No broker connected yet: use Connect a broker first."}
+    with db.connect() as conn:
+        existing = db.list_transactions(conn)
+        known = db.import_keys(conn)
+        known_income = db.income_keys(conn)
+        have_income = db.income(conn)
+        new_tx, new_inc, skipped, drip, dup = [], [], {}, set(), 0
+        per_account = []
+        for a in got:
+            acct = a["account"]
+            name = snaptrade.account_name(acct)
+            inst = acct.get("institution_name") or ""
+            txs, inc, sk, dr = snaptrade.to_rows(a["activities"], name, inst)
+            drip |= dr
+            for k, n in sk.items():
+                skipped[k] = skipped.get(k, 0) + n
+            fresh, d = snaptrade.new_only(txs, known, existing, snaptrade.match)
+            dup += d
+            new_tx += fresh
+            new_inc += snaptrade.new_only(inc, known_income, have_income, snaptrade.match_income)[0]
+            per_account.append({"name": name, "institution": inst, "id": acct.get("id"), "trades": len(fresh),
+                                "positions": (a["holdings"] or {}).get("positions") or []})
+        try:
+            service.pf.build_positions(existing + new_tx)
+        except ValueError as exc:
+            raise HTTPException(400, f"{exc}. Shares that arrived by transfer have no purchase in the broker's history: "
+                                     "add them with Stash / other (their original cost), then sync again.")
+        for t in sorted(new_tx, key=lambda t: t["date"]):
+            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
+                               import_key=t["import_key"], account=t["account"])
+        db.add_income(conn, new_inc)
+        if drip:
+            old = set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
+            db.set_meta(conn, "drip_symbols", json.dumps(sorted(old | drip)))
+        db.set_meta(conn, "snaptrade_last_sync", date.today().isoformat())
+        ledger = db.list_transactions(conn)
+    differences = []
+    for a in per_account:
+        qty: dict[str, float] = {}
+        for t in ledger:
+            if (t.get("account") or "") == a["name"]:
+                qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+        differences += [dict(d, account=a["name"]) for d in snaptrade.reconcile(a["positions"], qty, a["institution"])]
+    holdplan.clear_cache()
+    return {"accounts": [{"name": a["name"], "new": a["trades"]} for a in per_account], "new": len(new_tx), "duplicates": dup,
+            "income_new": len(new_inc), "differences": differences, "skipped": skipped}
+
+
 @app.get("/api/backup")
 def backup():
     """Everything you entered, as one JSON file: trades, watchlist, cash, topics, follows."""
@@ -830,7 +1006,7 @@ def backup():
         return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
                 "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
                 "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn, include_pickers=True),
-                "theses": db.theses(conn)}
+                "theses": db.theses(conn), "income": db.income(conn)}
 
 
 class RestoreIn(BaseModel):
@@ -860,6 +1036,8 @@ def restore(body: RestoreIn):
         except ValueError as exc:
             conn.rollback()
             raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
+        db.add_income(conn, [dict(r, import_key=r.get("import_key") or "bk:" + "|".join(str(r.get(k)) for k in ("symbol", "day", "amount", "kind")))
+                             for r in d.get("income") or [] if r.get("day") and r.get("amount") is not None and r.get("kind")])
         for w in d.get("watchlist") or []:
             db.add_watch(conn, w)
         if d.get("cash"):
@@ -902,7 +1080,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
         res = importers.parse_coinbase(body.csv)
     else:
         res = importers.parse_holdings_list(body.csv, body.account.strip() or "Other", date.today().isoformat())
-    if res.errors and not res.transactions:
+    if res.errors and not (res.transactions or res.income):
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
         existing = db.list_transactions(conn)
@@ -912,12 +1090,16 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
             positions = service.pf.build_positions(existing + new)
         except ValueError as exc:
             raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
+        known_income = db.income_keys(conn)
+        new_income = [r for r in res.income if r["import_key"] not in known_income]
         if body.commit:
             for t in new:
                 db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
                                    t["note"], import_key=t["import_key"], account=t.get("account", ""))
+            db.add_income(conn, new_income)
     touched = {t["symbol"] for t in res.transactions}
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
+            "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
                                  for p in positions.values() if p.quantity > 0 and p.symbol in touched],

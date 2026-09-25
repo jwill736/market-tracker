@@ -6,6 +6,13 @@
   <title>Plumbline</title>
   <meta name="description" content="Plumbline: portfolio, smart-money and insider signals, tested before you trust them.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2328'/%3E%3Cpath d='M9 7H23M16 7V19' stroke='%23eef1f4' stroke-width='2.2' stroke-linecap='round'/%3E%3Cpath d='M16 18L20 23L16 28L12 23Z' fill='%236f86f4'/%3E%3C/svg%3E">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="theme-color" content="#1e2328">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Plumbline">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap">
@@ -24,6 +31,7 @@
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="home" aria-selected="true">Home</button>
     <button role="tab" data-tab="hold" aria-selected="false">Hold plan</button>
+    <button role="tab" data-tab="income" aria-selected="false">Income</button>
     <button role="tab" data-tab="early" aria-selected="false">Early</button>
     <button role="tab" data-tab="people" aria-selected="false">People</button>
     <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
@@ -123,7 +131,13 @@
       <div class="card"><div class="card-head"><h2>Where freed money goes</h2><span class="muted small" id="hp-freed"></span></div>
         <p class="muted small">Your own plan's order, not a buy signal: holdings below the target you set, then watchlist names with no serious
           filings, then a broad market fund.</p>
-        <ul class="hp-lines" id="hp-reinvest"></ul></div>
+        <ul class="hp-lines" id="hp-reinvest"></ul>
+        <h3 class="small">Putting new money in?</h3>
+        <form id="nm-form" class="inline-form"><label>Amount $<input type="number" id="nm-amount" min="1" step="any" value="500"></label>
+          <button type="submit">Where it goes</button></form>
+        <p class="muted small">Toward the targets you set, biggest shortfall first, without selling anything. Holdings you haven't given a
+          target keep their share of the rest; flagged holdings and ones in a wash-sale window are left out.</p>
+        <ul class="hp-lines" id="nm-out"></ul></div>
       <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">Earnings in dollars · Fed · CPI · jobs</span></div>
         <ul class="hp-lines" id="hp-events"></ul></div>
     </div>
@@ -135,6 +149,45 @@
       <div class="tax-sums" id="hp-realized"></div>
       <div id="hp-tax"></div>
     </div>
+    <div class="card">
+      <div class="card-head"><h2>Before December 31</h2><span class="muted small" id="ye-meta"></span></div>
+      <p class="muted small">Losses you take by the last trading day of the year offset this year's gains, then up to $3,000 of other income;
+        the rest carries forward. If your income is low, long-term gains can be taken at a 0% federal rate. Estimates at your rates, not tax advice.</p>
+      <details class="hp-settings"><summary class="small">Your tax situation (makes the numbers yours)</summary>
+        <form id="ye-settings" class="inline-form">
+          <label>Filing <select id="ye-filing"><option value="single">Single</option><option value="married">Married, jointly</option>
+            <option value="head">Head of household</option><option value="separate">Married, separately</option></select></label>
+          <label>Taxable income this year, before investment gains $<input type="number" id="ye-income" min="0" step="100"></label>
+          <label>Losses carried in from past years $<input type="number" id="ye-carry" min="0" step="1"></label>
+          <label>0% long-term limit $<input type="number" id="ye-zero" min="0" step="50"></label>
+          <button type="submit">Save</button><span class="muted small" id="ye-msg"></span>
+        </form>
+        <p class="muted small">Taxable income is after the standard deduction (last year's return, line 15, is a good starting guess).
+          The 0% limit defaults to the 2026 IRS figure for your filing status; it changes every year, so check it.</p>
+      </details>
+      <div class="tax-sums" id="ye-sums"></div>
+      <div id="ye-body"></div>
+    </div>
+  </section>
+
+  <section id="tab-income" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Income</h2><span class="muted small" id="in-meta"></span></div>
+      <p class="muted small">Dividends you've been paid (from your Robinhood file; estimated from ex-dates and your shares where an account
+        has no dividend rows, like Stash), what your holdings pay a year at today's rate, and when the next ones land.
+        To be paid you need the shares at the close the day before the ex-dividend date.</p>
+      <div class="tax-sums" id="in-sums"></div>
+    </div>
+    <div class="grid two">
+      <div class="card"><div class="card-head"><h2>Next 12 months</h2><span class="muted small">by ex-dividend month</span></div>
+        <div id="in-months" class="in-months"></div></div>
+      <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">own it before the ex-date</span></div>
+        <ul class="hp-lines" id="in-upcoming"></ul></div>
+    </div>
+    <div class="card"><div class="card-head"><h2>By holding</h2></div>
+      <div class="table-wrap"><table class="data in-table"><thead><tr><th>Symbol</th><th>Per share</th><th>A year (yours)</th>
+        <th>Yield on cost</th><th>Yield now</th><th>Paid, last 12 mo</th></tr></thead><tbody id="in-rows"></tbody></table></div></div>
+    <div class="card"><div class="card-head"><h2>Received</h2></div><ul class="hp-lines" id="in-received"></ul></div>
   </section>
 
   <section id="tab-early" class="tab" hidden>
@@ -490,10 +543,11 @@
           <button type="button" data-src="robinhood" aria-pressed="true">Robinhood</button>
           <button type="button" data-src="coinbase">Coinbase</button>
           <button type="button" data-src="holdings">Stash / other</button>
+          <button type="button" data-src="snaptrade">Automatic</button>
         </div>
         <p class="muted small imp-help" data-for="robinhood">In the Robinhood app: Account → Reports and statements → Reports →
-          generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells and splits are imported;
-          dividends, transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
+          generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells, splits, dividends and
+          interest are imported; transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
           Stash / other.</p>
         <p class="muted small imp-help" data-for="coinbase" hidden>On coinbase.com: Profile → Statements (or Taxes → Documents) →
           generate a <b>transaction history</b> CSV for all time. Buys, sells, conversions and rewards (at their value when
@@ -511,6 +565,15 @@
           <input id="imp-account" value="Stash" maxlength="40">
           <textarea id="imp-text" rows="5" placeholder="VOO 3.214 1450.20 2024-03-01&#10;AAPL 1.5 310.00&#10;BTC 0.004 260"></textarea>
           <button id="imp-list-preview" type="button">Preview</button>
+        </div>
+        <div class="imp-help" data-for="snaptrade" hidden>
+          <p class="muted small">Keeps Robinhood, Coinbase and other brokers in sync without CSVs, through <b>SnapTrade</b> (a paid
+            service; a personal key covers your own accounts). Access is read-only: it can see trades and positions, not place
+            orders or move money. Trades you already imported from a CSV aren't added twice.</p>
+          <p class="muted small" id="st-setup">Set up: create a personal API key at snaptrade.com, then add
+            <code>SNAPTRADE_CLIENT_ID</code> and <code>SNAPTRADE_CONSUMER_KEY</code> to <code>.env</code> in the app folder and restart.</p>
+          <div class="row" id="st-buttons" hidden><button type="button" id="st-connect" class="secondary">Connect a broker</button>
+            <button type="button" id="st-sync">Sync now</button><span class="muted small" id="st-last"></span></div>
         </div>
         <div class="row imp-sync" hidden><button type="button" id="cb-sync">Sync Coinbase now</button></div>
         <div id="rh-result"></div>
@@ -575,6 +638,16 @@
         <label>Take some off at $<input type="number" id="th-above" min="0" step="any"></label>
         <label>Target share of my portfolio %<input type="number" id="th-target" min="0" max="100" step="0.5"></label>
         <label>Remind me to review on<input type="date" id="th-review"></label>
+      </div>
+      <p class="muted small">From the company's quarterly filings (stocks only). Blank = the automatic checks: revenue shrinking
+        2 quarters running, share count up over 10% in a year, free cash flow turning negative.</p>
+      <p class="small" id="th-fund"></p>
+      <div class="th-grid">
+        <label>Revenue growth under %<input type="number" id="th-rev" min="-100" max="500" step="any"></label>
+        <label>…for this many quarters running<input type="number" id="th-revq" min="1" max="8" step="1" placeholder="2"></label>
+        <label>Operating margin under %<input type="number" id="th-om" min="-100" max="100" step="any"></label>
+        <label>Share count up more than % a year<input type="number" id="th-dil" min="0" max="100" step="any"></label>
+        <label class="check"><input type="checkbox" id="th-fcf"> Free cash flow must stay positive</label>
       </div>
       <div class="pc-buttons"><button type="submit">Save</button><button type="button" class="button-secondary" id="th-delete">Remove</button>
         <span class="muted small" id="th-msg"></span></div>

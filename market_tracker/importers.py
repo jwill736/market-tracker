@@ -5,8 +5,10 @@ Robinhood: Account → Reports and statements → Reports → generate an "accou
 Its columns are Activity Date, Process Date, Settle Date, Instrument, Description, Trans Code,
 Quantity, Price, Amount. Buys and sells become ledger transactions; stock splits become a
 zero-cost buy of the extra shares (the cost basis is unchanged, the average cost falls).
-Everything else (dividends, deposits, interest, options, transfers) is counted and skipped:
-this ledger tracks share positions, and a transferred-in position has no cost basis in the file.
+Dividends (CDIV, MDIV), foreign tax withheld on them (DTAX) and interest (INT, SLIP) become
+income rows for the Income tab; a reinvested dividend is also its own Buy row in the file.
+Everything else (deposits, options, transfers) is counted and skipped: this ledger tracks share
+positions, and a transferred-in position has no cost basis in the file.
 
 Each imported row carries a key derived from its contents, so importing the same file twice,
 or overlapping date ranges, adds nothing twice.
@@ -25,11 +27,14 @@ from datetime import datetime
 from .providers import market
 
 ROBINHOOD_COLUMNS = {"Activity Date", "Instrument", "Trans Code", "Quantity", "Price", "Amount"}
+ROBINHOOD_INCOME = {"CDIV": "dividend", "MDIV": "dividend", "QDIV": "dividend", "DTAX": "tax_withheld",
+                    "INT": "interest", "SLIP": "interest"}
 
 
 @dataclass
 class ImportResult:
     transactions: list[dict] = field(default_factory=list)
+    income: list[dict] = field(default_factory=list)
     skipped: Counter = field(default_factory=Counter)
     errors: list[str] = field(default_factory=list)
 
@@ -107,6 +112,14 @@ def parse_robinhood(text: str) -> ImportResult:
                                      "price": 0.0, "fees": 0.0, "date": day,
                                      "note": "Robinhood import: stock split shares", "import_key": key,
                                      "account": "Robinhood"})
+        elif code in ROBINHOOD_INCOME:
+            amount = _money(row.get("Amount", ""))
+            if day is None or amount is None:
+                res.errors.append(f"Line {n}: couldn't read the {code} amount.")
+                continue
+            res.income.append({"symbol": market.normalize_symbol(instrument) if instrument else "", "day": day,
+                               "amount": amount, "kind": ROBINHOOD_INCOME[code], "account": "Robinhood",
+                               "import_key": key, "note": row.get("Description", "").strip()[:120]})
         else:
             res.skipped[code] += 1
     return res

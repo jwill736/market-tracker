@@ -61,3 +61,69 @@ def test_realized_this_year_counts_disallowed_losses_back():
            tx(3, "VOO", "buy", 10, 440, "2026-09-05")]
     r = taxes.summary(txs, {"VOO": 450.0}, date(2026, 9, 25))["realized"]
     assert r["short_term"] == -500 and r["wash_disallowed"] == 500 and r["net"] == 0
+
+
+# ------------------------------------------------------------------ year-end planner
+
+def test_tax_on_netting_rules():
+    st_r, lt_r = 0.24, 0.15
+    assert taxes.tax_on(1000, 2000, st_r, lt_r) == 1000 * 0.24 + 2000 * 0.15
+    assert taxes.tax_on(-500, 2000, st_r, lt_r) == 1500 * 0.15          # short loss nets against long gain
+    assert taxes.tax_on(3000, -1000, st_r, lt_r) == 2000 * 0.24
+    assert taxes.tax_on(-10000, 2000, st_r, lt_r) == -3000 * 0.24       # $3,000 cap on other income
+    assert taxes.tax_on(-1000, -500, st_r, lt_r, offset=1500) == -1500 * 0.24
+
+
+def _ye_tax(st=0.0, lt=0.0, harvest=(), lots=()):
+    return {"realized": {"short_term": st, "long_term": lt}, "harvest": list(harvest), "lots": list(lots)}
+
+
+def _h(sym, loss, long_term=False, blocked=()):
+    return {"symbol": sym, "account": "Robinhood", "quantity": 10, "loss": loss, "long_term": long_term,
+            "replacement": "XLK", "blocked_by": list(blocked)}
+
+
+def test_year_end_harvests_until_losses_stop_helping():
+    today = date(2026, 11, 2)
+    tax = _ye_tax(st=4000, harvest=[_h("AAA", 5000), _h("BBB", 3000), _h("CCC", 400)])
+    y = taxes.year_end(tax, [], today)
+    # AAA wipes the 4,000 gain and 1,000 of income; BBB adds 2,000 more of the 3,000 offset
+    # and carries 1,000 forward; CCC then saves nothing this year.
+    assert [p["symbol"] for p in y["harvest"]] == ["AAA", "BBB"]
+    assert y["tax_before"] == 960.0 and y["tax_after"] == -720.0 and y["saves"] == 1680.0
+    assert y["carry_forward"] == 1000.0
+    assert y["last_trading_day"] == "2026-12-31" and y["days_left"] == 59
+
+
+def test_year_end_blocked_losses_and_warnings():
+    today = date(2026, 12, 1)
+    txs = [{"symbol": "VOO", "side": "buy", "quantity": 1, "price": 500, "date": d} for d in ("2026-09-01", "2026-10-01", "2026-11-01")]
+    tax = _ye_tax(st=2000, harvest=[_h("VOO", 1500), _h("KO", 800, blocked=[{"symbol": "KO", "date": "2026-11-20"}]), _h("T", 900)])
+    y = taxes.year_end(tax, txs, today, upcoming_dividends=[{"symbol": "T", "ex_date": "2026-12-20"}], drip_symbols={"T"})
+    assert y["blocked"][0]["symbol"] == "KO" and "2026-12-21" in y["blocked"][0]["why"]
+    voo = next(p for p in y["harvest"] if p["symbol"] == "VOO")
+    assert any("recurring" in w for w in voo["warnings"])
+    t = next(p for p in y["harvest"] if p["symbol"] == "T")
+    assert any("reinvested" in w for w in t["warnings"]) and any("2026-12-20" in w for w in t["warnings"])
+
+
+def test_year_end_zero_bracket_room_and_lots():
+    today = date(2026, 12, 1)
+    lots = [{"symbol": "VTI", "account": "Stash", "bought": "2020-01-02", "quantity": 100, "gain": 10000, "long_term": True},
+            {"symbol": "NVDA", "account": "Robinhood", "bought": "2026-03-01", "quantity": 5, "gain": 900, "long_term": False}]
+    y = taxes.year_end(_ye_tax(lt=2000, lots=lots), [], today, taxable_income=40000, filing="single", zero_limit=49450)
+    z = y["zero_bracket"]
+    assert z["room"] == 7450.0
+    assert z["lots"] == [{"symbol": "VTI", "account": "Stash", "bought": "2020-01-02", "quantity": 74.5, "gain": 7450.0,
+                          "future_tax_avoided": 1117.5}]
+    assert taxes.year_end(_ye_tax(), [], today, taxable_income=60000)["zero_bracket"]["room"] == 0
+    assert taxes.year_end(_ye_tax(), [], today)["zero_bracket"] is None
+    # The default limit follows the filing status
+    assert taxes.year_end(_ye_tax(), [], today, taxable_income=90000, filing="married")["zero_bracket"]["room"] == 8900.0
+
+
+def test_year_end_net_loss_does_not_add_zero_bracket_room():
+    today = date(2026, 12, 1)
+    y = taxes.year_end(_ye_tax(st=-2000), [], today, taxable_income=40000, zero_limit=49450)
+    assert y["zero_bracket"]["room"] == 9450.0 and y["zero_bracket"]["net_loss"] == 2000.0
+    assert "give up its deduction" in y["zero_bracket"]["note"]

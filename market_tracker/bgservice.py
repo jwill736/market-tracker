@@ -43,12 +43,17 @@ def venv_bin(name: str) -> str:
 
 # ------------------------------------------------------------------ files each system needs
 
-def mac_plist(mt: str, root: str, port: int) -> str:
+def _extra(lan: bool) -> list[str]:
+    return ["--lan"] if lan else []
+
+
+def mac_plist(mt: str, root: str, port: int, lan: bool = False) -> str:
+    args = "".join(f"<string>{a}</string>" for a in _extra(lan))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>{LABEL}</string>
-  <key>ProgramArguments</key><array><string>{mt}</string><string>serve</string><string>--port</string><string>{port}</string></array>
+  <key>ProgramArguments</key><array><string>{mt}</string><string>serve</string><string>--port</string><string>{port}</string>{args}</array>
   <key>WorkingDirectory</key><string>{root}</string>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>{root}/{LOG_FILE}</string><key>StandardErrorPath</key><string>{root}/{LOG_FILE}</string>
@@ -56,17 +61,18 @@ def mac_plist(mt: str, root: str, port: int) -> str:
 """
 
 
-def windows_vbs(pythonw: str, root: str, port: int) -> str:
+def windows_vbs(pythonw: str, root: str, port: int, lan: bool = False) -> str:
     """Starts pythonw (no console) in the app folder; the app writes its own log and pid file."""
     q = lambda s: s.replace('"', '""')  # noqa: E731  (VBScript doubles quotes inside strings)
+    flag = " --lan" if lan else ""
     return ("' Plumbline: starts the app in the background at login (mt service uninstall removes this file)\r\n"
             'Set sh = CreateObject("WScript.Shell")\r\n'
             f'sh.CurrentDirectory = "{q(root)}"\r\n'
-            f'sh.Run """{q(pythonw)}"" -m market_tracker.cli serve --port {port} --log {LOG_FILE} --pidfile {PID_FILE}", 0, False\r\n')
+            f'sh.Run """{q(pythonw)}"" -m market_tracker.cli serve --port {port}{flag} --log {LOG_FILE} --pidfile {PID_FILE}", 0, False\r\n')
 
 
-def systemd_unit(mt: str, root: str, port: int) -> str:
-    return (f"[Unit]\nDescription=Plumbline\n\n[Service]\nWorkingDirectory={root}\nExecStart={mt} serve --port {port}\n"
+def systemd_unit(mt: str, root: str, port: int, lan: bool = False) -> str:
+    return (f"[Unit]\nDescription=Plumbline\n\n[Service]\nWorkingDirectory={root}\nExecStart={mt} serve --port {port}{' --lan' if lan else ''}\n"
             f"Restart=always\n\n[Install]\nWantedBy=default.target\n")
 
 
@@ -115,27 +121,32 @@ def _kill_pidfile(root: str) -> None:
         pass
 
 
-def install(port: int = 8000, say=print) -> int:
+def install(port: int = 8000, say=print, lan: bool = False) -> int:
     root, system = root_dir(), platform.system()
+    if lan:
+        from . import firstrun
+        if not firstrun.get(firstrun.read_env(os.path.join(root, firstrun.ENV)), "APP_PASSWORD") and not os.environ.get("APP_PASSWORD"):
+            say('--lan lets other devices on your network open Plumbline: add APP_PASSWORD="a-long-passphrase" to .env first.')
+            return 2
     if system == "Darwin":
         plist = mac_plist_path()
         os.makedirs(os.path.dirname(plist), exist_ok=True)
         with open(plist, "w") as fh:
-            fh.write(mac_plist(venv_bin("mt"), root, port))
+            fh.write(mac_plist(venv_bin("mt"), root, port, lan))
         subprocess.run(["launchctl", "unload", plist], capture_output=True)
         subprocess.run(["launchctl", "load", "-w", plist], check=True)
     elif system == "Windows":
         vbs = windows_startup_path()
         os.makedirs(os.path.dirname(vbs), exist_ok=True)
         with open(vbs, "w", encoding="utf-8") as fh:
-            fh.write(windows_vbs(venv_bin("pythonw"), root, port))
+            fh.write(windows_vbs(venv_bin("pythonw"), root, port, lan))
         if not answering(port):
             subprocess.Popen(["wscript.exe", vbs])
     elif system == "Linux":
         unit = systemd_path()
         os.makedirs(os.path.dirname(unit), exist_ok=True)
         with open(unit, "w") as fh:
-            fh.write(systemd_unit(venv_bin("mt"), root, port))
+            fh.write(systemd_unit(venv_bin("mt"), root, port, lan))
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "--user", "enable", "--now", "plumbline"], check=True)
     else:

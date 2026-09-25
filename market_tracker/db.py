@@ -83,6 +83,16 @@ CREATE TABLE IF NOT EXISTS follows (
     grp TEXT NOT NULL,
     added TEXT NOT NULL DEFAULT (date('now'))
 );
+CREATE TABLE IF NOT EXISTS income (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL DEFAULT '',
+    day TEXT NOT NULL,
+    amount REAL NOT NULL,
+    kind TEXT NOT NULL,               -- dividend / reinvested / interest / tax_withheld
+    account TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    import_key TEXT UNIQUE
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -125,6 +135,26 @@ def add_transaction(conn, symbol: str, side: str, quantity: float, price: float,
 
 def import_keys(conn) -> set[str]:
     return {r["import_key"] for r in conn.execute("SELECT import_key FROM transactions WHERE import_key IS NOT NULL")}
+
+
+def add_income(conn, rows: list[dict]) -> int:
+    """Insert income rows, skipping ones already imported (same import_key). Returns how many were new."""
+    n = 0
+    for r in rows:
+        cur = conn.execute("INSERT OR IGNORE INTO income (symbol, day, amount, kind, account, note, import_key) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (r.get("symbol") or "", r["day"], r["amount"], r["kind"], r.get("account") or "",
+                            r.get("note") or "", r.get("import_key")))
+        n += cur.rowcount
+    return n
+
+
+def income(conn) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM income ORDER BY day DESC, id DESC")]
+
+
+def income_keys(conn) -> set[str]:
+    return {r["import_key"] for r in conn.execute("SELECT import_key FROM income WHERE import_key IS NOT NULL")}
 
 
 def list_transactions(conn) -> list[dict]:

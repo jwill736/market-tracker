@@ -18,7 +18,8 @@ COOKIE = "plumbline_session"
 SESSION_DAYS = 30
 MAX_ATTEMPTS = 10                 # failed logins per client per window
 ATTEMPT_WINDOW = 15 * 60
-OPEN_PATHS = ("/login", "/logout", "/healthz")
+OPEN_PATHS = ("/login", "/logout", "/healthz", "/sw.js", "/static/manifest.webmanifest", "/static/icon-192.png",
+              "/static/icon-512.png", "/static/icon-maskable-512.png", "/static/apple-touch-icon.png")
 
 
 def password() -> str:
