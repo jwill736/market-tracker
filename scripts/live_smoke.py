@@ -255,7 +255,9 @@ def _():
 def _():
     got = people.fetch_ark()
     assert "ARKK" in got and len(got["ARKK"][1]) > 20, list(got)
-    return ", ".join(f"{f} {len(rows)} holdings ({day})" for f, (day, rows) in got.items())
+    stale = people.stale_funds(got)
+    return ", ".join(f"{f} {len(rows)} holdings ({day})" for f, (day, rows) in got.items()) + \
+        (f"; stale, skipped in the app: {', '.join(stale)}" if stale else "")
 
 
 @check("People: House trade reports (index + PDF text)")
