@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, db, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, coinbase_sync, db, dilution, early, people, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -153,7 +153,7 @@ async def stream_live(request: Request, symbols: str, snapshot_only: bool = Fals
         if q and q.get("previous_close"):
             hub.prev_close.setdefault(sym, q["previous_close"])
         return q and {"symbol": sym, "price": q["price"], "change_pct": q["change_pct"], "ts": q["as_of"],
-                      "source": q["source"], "session": q.get("session", "")}
+                      "source": q["source"], "session": q.get("session", ""), "regular": q.get("regular_price")}
 
     async def gen():
         try:
@@ -176,11 +176,60 @@ async def stream_live(request: Request, symbols: str, snapshot_only: bool = Fals
 
 
 @app.get("/api/intraday/{symbol}")
-def intraday(symbol: str, range_: Literal["1d", "5d", "1m", "1y"] = Query("1d", alias="range")):
+def intraday(symbol: str, range_: Literal["1d", "5d", "1m", "3m", "1y", "5y"] = Query("1d", alias="range")):
     try:
         return livefeed.intraday(symbol, range_)
     except http.DataUnavailable as exc:
         raise _unavailable(exc)
+
+
+@app.get("/api/candles/{symbol}")
+def candle_chart(symbol: str, range_: Literal["1d", "1w", "1m", "3m", "1y", "5y"] = Query("1d", alias="range")):
+    """OHLC candles with volume for the advanced chart."""
+    try:
+        return charts.candles(symbol, range_)
+    except http.DataUnavailable as exc:
+        raise _unavailable(exc)
+
+
+history_cache = pulse.Cache(60)
+
+
+@app.get("/api/portfolio/history")
+async def portfolio_history(range_: Literal["1d", "1w", "1m", "3m", "1y", "all"] = Query("1d", alias="range")):
+    """Your portfolio's value over the range, and the gain net of money added or withdrawn."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        cash = float(db.get_meta(conn, "cash", "0") or 0)
+    key = (range_, len(txs), max((t["id"] for t in txs), default=0))
+    data = await asyncio.to_thread(history_cache.get, key, lambda: charts.portfolio_history(txs, range_))
+    return dict(data, cash=cash)
+
+
+@app.get("/api/sparklines")
+async def sparkline_data(symbols: str):
+    syms = [market.normalize_symbol(s) for s in symbols.split(",") if s.strip()][:40]
+    return await asyncio.to_thread(sparkline_cache.get, tuple(sorted(syms)), lambda: charts.sparklines(syms))
+
+
+sparkline_cache = pulse.Cache(120)
+
+
+class CashIn(BaseModel):
+    cash: float = Field(ge=0, le=1e10)
+
+
+@app.get("/api/cash")
+def get_cash():
+    with db.connect() as conn:
+        return {"cash": float(db.get_meta(conn, "cash", "0") or 0)}
+
+
+@app.post("/api/cash")
+def set_cash(body: CashIn):
+    with db.connect() as conn:
+        db.set_meta(conn, "cash", str(body.cash))
+    return {"cash": body.cash}
 
 
 @app.get("/api/holdings")
@@ -427,6 +476,74 @@ async def reading_room(refresh: bool = False):
     return await asyncio.to_thread(sentinel.reading_cache.get, tuple(syms), lambda: sentinel.build_reading(syms))
 
 
+@app.get("/api/early")
+async def early_wire(limit: int = Query(80, ge=1, le=200), refresh: bool = False):
+    """Tickers moving on social, press wires, SEC catalysts and crypto listings, marked early
+    while the mainstream press hasn't covered them; plus the wire's own logged history."""
+    held, watched = await asyncio.to_thread(sentinel.my_symbols)
+    if refresh:
+        sentinel.early_cache.clear()
+    data = await asyncio.to_thread(sentinel.build_early, set(held + watched))
+    return dict(data, signals=data["signals"][:limit])
+
+
+scorecard_cache = pulse.Cache(1800)
+
+
+@app.get("/api/early/scorecard")
+async def early_scorecard(horizon: int = Query(5, ge=1, le=60)):
+    """The wire's logged first sightings `horizon` closes later, against SPY over the same days."""
+    with db.connect() as conn:
+        logged = db.early_history(conn, limit=5000)
+    return await asyncio.to_thread(scorecard_cache.get, f"h{horizon}:{len(logged)}",
+                                   lambda: early.scorecard(logged, horizon=horizon))
+
+
+@app.get("/api/people")
+async def people_view(refresh: bool = False):
+    """Congress trades, ARK's daily trades, big insider buys and activist stakes; your follows."""
+    with db.connect() as conn:
+        follows = db.follows(conn)
+    if refresh:
+        sentinel.people_cache.clear()
+    data = await asyncio.to_thread(sentinel.people_cache.get, "people", lambda: people.build(follows=follows))
+    followed = [m for ms in data["sections"].values() for m in ms if m["who"] in follows]
+    return dict(data, follows=follows, following=sorted(followed, key=lambda m: m["disclosed"], reverse=True))
+
+
+class FollowIn(BaseModel):
+    who: str = Field(min_length=1, max_length=120)
+    group: str = Field("congress", max_length=20)
+
+
+@app.post("/api/people/follow", status_code=201)
+def follow_person(body: FollowIn):
+    with db.connect() as conn:
+        db.follow(conn, body.who, body.group)
+        return db.follows(conn)
+
+
+@app.delete("/api/people/follow")
+def unfollow_person(who: str):
+    with db.connect() as conn:
+        db.unfollow(conn, who)
+        return db.follows(conn)
+
+
+copy_cache = pulse.Cache(3600)
+
+
+@app.get("/api/people/copy")
+async def copy_person(who: str):
+    """What copying this person's disclosed moves would have made, against SPY."""
+    data = await asyncio.to_thread(sentinel.people_cache.get, "people", lambda: people.build())
+    moves = [people.Move(**{k: v for k, v in m.items() if k != "lag_days"})
+             for ms in data["sections"].values() for m in ms if m["who"] == who]
+    if not moves:
+        raise HTTPException(404, f"No disclosed moves for {who}")
+    return await asyncio.to_thread(copy_cache.get, (who, len(moves)), lambda: dict(people.copy_sim(moves), who=who))
+
+
 class TopicIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     terms: str = Field(min_length=1, max_length=400)
@@ -470,6 +587,91 @@ def headsup_read():
     with db.connect() as conn:
         db.mark_headsup_read(conn)
     return {"ok": True}
+
+
+@app.get("/api/sync/coinbase")
+def coinbase_status():
+    return {"configured": coinbase_sync.configured()}
+
+
+@app.post("/api/sync/coinbase")
+def coinbase_sync_now():
+    """Import new Coinbase fills (read-only key) and compare balances with the ledger."""
+    if not coinbase_sync.configured():
+        raise HTTPException(400, "Add COINBASE_API_KEY_NAME and COINBASE_API_PRIVATE_KEY (a View-only key) to .env first.")
+    try:
+        txs = coinbase_sync.fills_to_transactions(coinbase_sync.fills())
+        bal = coinbase_sync.balances()
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, f"Coinbase: {exc}")
+    res = coinbase_sync.SyncResult()
+    with db.connect() as conn:
+        known = db.import_keys(conn)
+        new = [t for t in txs if t["import_key"] not in known]
+        existing = db.list_transactions(conn)
+        try:
+            positions = service.pf.build_positions(existing + new)
+        except ValueError as exc:
+            raise HTTPException(400, f"{exc}. Coins that arrived by transfer or reward need adding first (Quick add).")
+        for t in new:
+            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
+                               import_key=t["import_key"], account="Coinbase")
+    res.new, res.duplicates = len(new), len(txs) - len(new)
+    cb_qty: dict[str, float] = {}
+    for t in existing + new:
+        if (t.get("account") or "") == "Coinbase":
+            cb_qty[t["symbol"]] = cb_qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    res.differences = coinbase_sync.reconcile(bal, cb_qty)
+    return {"new": res.new, "duplicates": res.duplicates, "differences": res.differences,
+            "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
+
+
+@app.get("/api/backup")
+def backup():
+    """Everything you entered, as one JSON file: trades, watchlist, cash, topics, follows."""
+    with db.connect() as conn:
+        return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
+                "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
+                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn)}
+
+
+class RestoreIn(BaseModel):
+    data: dict
+
+
+@app.post("/api/backup/restore")
+def restore(body: RestoreIn):
+    """Add a backup's contents. Trades already present (same symbol, side, date, quantity and
+    price) are skipped, so restoring twice changes nothing."""
+    d = body.data
+    if d.get("format") != "plumbline-backup":
+        raise HTTPException(400, "This isn't a Plumbline backup file.")
+    added = 0
+    with db.connect() as conn:
+        keys = db.import_keys(conn)
+        for t in d.get("transactions") or []:
+            key = t.get("import_key") or "bk:" + "|".join(str(t.get(k)) for k in ("symbol", "side", "date", "quantity", "price"))
+            if key in keys:
+                continue
+            db.add_transaction(conn, t["symbol"], t["side"], float(t["quantity"]), float(t["price"]), t["date"],
+                               float(t.get("fees") or 0), t.get("note"), import_key=key, account=t.get("account") or "")
+            keys.add(key)
+            added += 1
+        try:
+            service.pf.build_positions(db.list_transactions(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
+        for w in d.get("watchlist") or []:
+            db.add_watch(conn, w)
+        if d.get("cash"):
+            db.set_meta(conn, "cash", str(float(d["cash"])))
+        db.topics(conn, reading.DEFAULT_TOPICS)
+        for name, terms in (d.get("topics") or {}).items():
+            db.set_topic(conn, name, terms)
+        for who, grp in (d.get("follows") or {}).items():
+            db.follow(conn, who, grp)
+    return {"transactions_added": added}
 
 
 class ImportIn(BaseModel):

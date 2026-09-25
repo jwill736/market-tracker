@@ -32,6 +32,7 @@ class Quote:
     source: str
     as_of: str
     session: str = ""    # stocks: pre / regular / post / closed; crypto: "24h"
+    regular_price: float | None = None   # the last regular-session price (for "Today" vs "After-hours")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -204,6 +205,7 @@ def parse_live_quote(symbol: str, result: dict, now: float | None = None) -> Quo
     closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
     last = next(((t, c) for t, c in zip(reversed(stamps), reversed(closes)) if c is not None), None)
     q.session = market_session(meta, now)
+    q.regular_price = q.price
     regular_time = meta.get("regularMarketTime") or 0
     if last and last[0] > regular_time:
         q.price = float(last[1])

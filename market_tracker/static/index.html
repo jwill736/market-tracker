@@ -22,7 +22,10 @@
     <span class="brand-tag">Measure it true before you trust it</span>
   </a>
   <nav id="tabs" role="tablist">
-    <button role="tab" data-tab="pulse" aria-selected="true">Pulse</button>
+    <button role="tab" data-tab="home" aria-selected="true">Home</button>
+    <button role="tab" data-tab="early" aria-selected="false">Early</button>
+    <button role="tab" data-tab="people" aria-selected="false">People</button>
+    <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
     <button role="tab" data-tab="plan" aria-selected="false">Plan</button>
     <button role="tab" data-tab="mynews" aria-selected="false">News</button>
     <button role="tab" data-tab="reading" aria-selected="false">Reading</button>
@@ -49,8 +52,99 @@
 </div>
 
 <main>
+  <!-- Home: your money, Robinhood-style -->
+  <section id="tab-home" class="tab">
+    <div class="home-grid">
+      <div class="home-main">
+        <div class="rh-hero">
+          <div class="rh-label">Investing</div>
+          <div class="rh-value" id="home-value">—</div>
+          <div class="rh-gain" id="home-gain">&nbsp;</div>
+          <div class="rh-chart" id="home-chart" role="img" aria-label="Portfolio value chart"></div>
+          <div class="rh-ranges" id="home-ranges" role="group" aria-label="Chart range">
+            <button data-range="1d" aria-pressed="true">1D</button><button data-range="1w">1W</button><button data-range="1m">1M</button>
+            <button data-range="3m">3M</button><button data-range="1y">1Y</button><button data-range="all">ALL</button>
+          </div>
+        </div>
+        <div class="rh-bp">
+          <span>Buying power</span>
+          <button type="button" class="linkbtn num" id="bp-btn" title="Set the cash you have available">$0.00</button>
+        </div>
+        <form id="bp-form" class="bp-form" hidden>
+          <label for="bp-input" class="small muted">Cash available across your accounts</label>
+          <input id="bp-input" type="number" min="0" step="any" inputmode="decimal">
+          <button>Save</button>
+        </form>
+        <div class="home-empty card" id="home-empty" hidden>
+          <h2>Bring your accounts in</h2>
+          <p class="muted">Import Robinhood and Coinbase (Portfolio → Import your accounts), or type in any other holdings. Everything here then moves live.</p>
+          <button type="button" id="home-import">Import accounts</button>
+        </div>
+      </div>
+      <aside class="home-side">
+        <div class="rh-list card"><div class="rh-list-head"><h2>Stocks</h2><span class="muted small" id="home-stocks-meta"></span></div><div id="home-stocks"></div></div>
+        <div class="rh-list card"><div class="rh-list-head"><h2>Crypto</h2></div><div id="home-crypto"></div></div>
+        <div class="rh-list card"><div class="rh-list-head"><h2>Watchlist</h2></div><div id="home-watch"></div></div>
+      </aside>
+    </div>
+    <div class="grid two home-feeds">
+      <div class="card"><div class="card-head"><h2>Early wire</h2><button type="button" class="ghost" data-goto="early">See all</button></div><ul class="pulse-list" id="home-early"></ul></div>
+      <div class="card"><div class="card-head"><h2>Your news</h2><button type="button" class="ghost" data-goto="mynews">See all</button></div><ul class="pulse-list" id="home-news"></ul></div>
+    </div>
+  </section>
+
+  <!-- Early wire -->
+  <section id="tab-early" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Early wire</h2><span class="muted small" id="ew-meta"></span></div>
+      <p class="muted small">Tickers starting to move where the mainstream press hasn't caught up: StockTwits trending, Reddit mention spikes,
+        companies' own press releases (usually minutes before any article), SEC deal filings, crypto listings and trending coins,
+        and stablecoins off their peg. <b>Early</b> means two or fewer mainstream articles in 24 hours. Social spikes are also where
+        pump-and-dumps start: read the source before acting.</p>
+      <div class="ew-filters">
+        <div class="seg" id="ew-filter"><button data-f="" aria-pressed="true">All</button><button data-f="stock">Stocks</button><button data-f="crypto">Crypto</button><button data-f="yours">Yours</button></div>
+        <label class="small"><input type="checkbox" id="ew-early"> Early only</label>
+      </div>
+      <ul class="ew-list" id="ew-list"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>How the wire's calls are doing</h2><span class="muted small">First sighting each day, price then vs now (live)</span></div>
+      <div class="ew-proof" id="ew-proof">
+        <div class="ew-proof-head"><b>Scorecard against SPY</b>
+          <div class="seg" id="ew-horizon"><button data-h="1">1 day</button><button data-h="5" aria-pressed="true">5 days</button><button data-h="20">20 days</button></div></div>
+        <p id="ew-proof-body" class="small muted">Scoring the logged sightings…</p>
+      </div>
+      <p id="ew-score" class="small"></p>
+      <div class="scroll"><table class="data" id="ew-history"></table></div>
+    </div>
+  </section>
+
+  <!-- People -->
+  <section id="tab-people" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Following</h2><span class="muted small" id="pp-meta"></span></div>
+      <p class="muted small">Follow members of Congress, ARK's funds, insiders and activists. Their new disclosed moves arrive as heads-ups.
+        <b>If you'd copied</b> puts the same dollars into each disclosed buy on the day it became public, the first day you could have
+        acted, and compares with SPY on the same days.</p>
+      <div class="chips" id="pp-follows"></div>
+      <ul class="pulse-list" id="pp-following"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Congress</h2><span class="muted small">Members must report within 45 days; the delay is shown</span></div>
+      <div class="scroll"><table class="data" id="pp-congress"></table></div>
+    </div>
+    <div class="grid two">
+      <div class="card"><div class="card-head"><h2>ARK Invest</h2><span class="muted small" id="pp-ark-status"></span></div>
+        <div class="scroll"><table class="data" id="pp-ark"></table></div></div>
+      <div class="card"><div class="card-head"><h2>Big insider buys</h2><span class="muted small">$250k+ in 14 days</span></div>
+        <div class="scroll"><table class="data" id="pp-insider"></table></div></div>
+    </div>
+    <div class="card"><div class="card-head"><h2>Activist stakes (13D/13G)</h2></div>
+      <div class="scroll"><table class="data" id="pp-activist"></table></div></div>
+  </section>
+
   <!-- Pulse -->
-  <section id="tab-pulse" class="tab">
+  <section id="tab-pulse" class="tab" hidden>
     <div class="card" id="sw-card" hidden>
       <div class="card-head"><h2>Sell watch: your holdings</h2><span class="chip-warn">Rules, not advice</span></div>
       <p class="muted small">Each flag is a rule with its reason: a broken trend, negative momentum, insider selling, a stretched run-up, a position too big for its volatility, or share sales. "Review" means two or more serious flags. You decide.</p>
@@ -203,11 +297,13 @@
         <div class="sym-name" id="sym-name"></div>
         <div class="sym-price" id="sym-price">—</div>
         <div class="sym-change" id="sym-change"></div>
+        <div class="sym-change sym-ext" id="sym-ext" hidden></div>
         <div class="muted small" id="sym-src"></div>
       </div>
       <div class="sym-actions">
-        <button id="sym-buy">Buy</button>
-        <button id="sym-sell" class="secondary">Sell</button>
+        <button id="sym-trade" class="trade-btn">Trade</button>
+        <button id="sym-buy" class="secondary">Record buy</button>
+        <button id="sym-sell" class="secondary">Record sell</button>
         <button id="sym-watch" class="secondary">Watch</button>
         <button id="sym-analyze" class="secondary">Full analysis</button>
         <button id="sym-research" class="secondary">Deep dive</button>
@@ -215,9 +311,14 @@
     </div>
     <div class="card">
       <div id="sym-chart" class="live-chart" role="img" aria-label="Price chart"></div>
-      <div class="range" role="group" aria-label="Chart range">
-        <button data-range="1d" aria-pressed="true">1D</button><button data-range="5d">1W</button>
-        <button data-range="1m">1M</button><button data-range="1y">1Y</button>
+      <div class="range-row">
+        <div class="range" role="group" aria-label="Chart range">
+          <button data-range="1d" aria-pressed="true">1D</button><button data-range="5d">1W</button>
+          <button data-range="1m">1M</button><button data-range="3m">3M</button><button data-range="1y">1Y</button><button data-range="5y">5Y</button>
+        </div>
+        <button type="button" class="candle-toggle" id="sym-candles" aria-pressed="false" title="Candlesticks with volume">
+          <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="M4 1v14M14 3v12M9 0v16" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="4" width="4" height="7" fill="currentColor"/><rect x="7" y="3" width="4" height="5" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="12" y="6" width="4" height="6" fill="currentColor"/></svg>
+          Candles</button>
       </div>
     </div>
     <div class="grid two">
@@ -352,7 +453,14 @@
           <textarea id="imp-text" rows="5" placeholder="VOO 3.214 1450.20 2024-03-01&#10;AAPL 1.5 310.00&#10;BTC 0.004 260"></textarea>
           <button id="imp-list-preview" type="button">Preview</button>
         </div>
+        <div class="row imp-sync" hidden><button type="button" id="cb-sync">Sync Coinbase now</button></div>
         <div id="rh-result"></div>
+        <h2 class="mt">Backup</h2>
+        <p class="muted small">Everything you've entered (trades, accounts, watchlist, cash, topics, follows) in one file. Use it to move
+          to a server or another computer; restoring twice adds nothing twice.</p>
+        <div class="row"><button type="button" id="bk-download" class="secondary">Download backup</button>
+          <label class="button-secondary bk-restore">Restore a backup<input type="file" id="bk-file" accept=".json,application/json" hidden></label></div>
+        <p class="muted small" id="bk-status"></p>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
       </div>
@@ -388,6 +496,12 @@
     </div>
   </section>
 </main>
+<div class="modal" id="trade-modal" hidden role="dialog" aria-modal="true" aria-labelledby="trade-title">
+  <div class="modal-card">
+    <div class="card-head"><h2 id="trade-title">Trade</h2><button type="button" class="ghost" id="trade-close" aria-label="Close">✕</button></div>
+    <div id="trade-body"></div>
+  </div>
+</div>
 
 <div id="tooltip" class="tooltip" hidden></div>
 <script src="/static/app.js"></script>

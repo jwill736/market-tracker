@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date
 
@@ -472,6 +473,72 @@ def cmd_serve(args) -> int:
     return 0
 
 
+SERVICE_LABEL = "com.plumbline.app"
+
+
+def cmd_service(args) -> int:
+    """Keep the dashboard running whenever you're logged in (macOS, Linux or Windows)."""
+    import platform
+    import shutil
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mt = shutil.which("mt") or os.path.join(os.path.dirname(sys.executable), "mt")
+    system = platform.system()
+    if system == "Darwin":
+        plist = os.path.expanduser(f"~/Library/LaunchAgents/{SERVICE_LABEL}.plist")
+        if args.action == "install":
+            os.makedirs(os.path.dirname(plist), exist_ok=True)
+            with open(plist, "w") as fh:
+                fh.write(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>{SERVICE_LABEL}</string>
+  <key>ProgramArguments</key><array><string>{mt}</string><string>serve</string><string>--port</string><string>{args.port}</string></array>
+  <key>WorkingDirectory</key><string>{root}</string>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{root}/plumbline.log</string><key>StandardErrorPath</key><string>{root}/plumbline.log</string>
+</dict></plist>
+""")
+            subprocess.run(["launchctl", "unload", plist], capture_output=True)
+            subprocess.run(["launchctl", "load", plist], check=True)
+        elif args.action == "uninstall":
+            subprocess.run(["launchctl", "unload", plist], capture_output=True)
+            if os.path.exists(plist):
+                os.remove(plist)
+        else:
+            print(subprocess.run(["launchctl", "list", SERVICE_LABEL], capture_output=True, text=True).stdout or "not installed")
+    elif system == "Linux":
+        unit = os.path.expanduser("~/.config/systemd/user/plumbline.service")
+        if args.action == "install":
+            os.makedirs(os.path.dirname(unit), exist_ok=True)
+            with open(unit, "w") as fh:
+                fh.write(f"[Unit]\nDescription=Plumbline\n\n[Service]\nWorkingDirectory={root}\n"
+                         f"ExecStart={mt} serve --port {args.port}\nRestart=always\n\n[Install]\nWantedBy=default.target\n")
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "enable", "--now", "plumbline"], check=True)
+        elif args.action == "uninstall":
+            subprocess.run(["systemctl", "--user", "disable", "--now", "plumbline"], capture_output=True)
+            if os.path.exists(unit):
+                os.remove(unit)
+        else:
+            print(subprocess.run(["systemctl", "--user", "status", "plumbline", "--no-pager"], capture_output=True, text=True).stdout)
+    elif system == "Windows":
+        if args.action == "install":
+            cmd = f'cmd /c cd /d "{root}" && "{mt}" serve --port {args.port}'
+            subprocess.run(["schtasks", "/Create", "/F", "/SC", "ONLOGON", "/TN", "Plumbline", "/TR", cmd], check=True)
+            subprocess.run(["schtasks", "/Run", "/TN", "Plumbline"], check=True)
+        elif args.action == "uninstall":
+            subprocess.run(["schtasks", "/Delete", "/F", "/TN", "Plumbline"], capture_output=True)
+        else:
+            print(subprocess.run(["schtasks", "/Query", "/TN", "Plumbline"], capture_output=True, text=True).stdout or "not installed")
+    else:
+        print(f"Not supported on {system}")
+        return 1
+    if args.action == "install":
+        print(f"Plumbline now starts when you log in: http://localhost:{args.port} (logs: plumbline.log).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mt", description="Market tracker")
     sub = p.add_subparsers(dest="command", required=True)
@@ -569,6 +636,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--open", action="store_true", help="Open the dashboard in your browser")
     s.set_defaults(func=cmd_serve)
+
+    s = sub.add_parser("service", help="Run the dashboard in the background whenever you're logged in")
+    s.add_argument("action", choices=["install", "uninstall", "status"])
+    s.add_argument("--port", type=int, default=8000)
+    s.set_defaults(func=cmd_service)
 
     args = p.parse_args(argv)
     if args.command == "portfolio" and args.action == "add" and not (args.symbol and args.quantity and args.price is not None):
