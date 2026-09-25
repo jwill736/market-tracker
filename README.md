@@ -26,6 +26,18 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Track record** | Logs each day's scores to a CSV, then measures them against what prices did 1, 3 and 6 months later. Reports the IC (rank correlation) with its error band, average return by label, and a per-component IC. A scheduled GitHub Actions job records 15 symbols every weekday | computed locally + GitHub Actions |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
+## Always on (alerts while your laptop sleeps)
+
+The app watches filings, the early wire, news and the people you follow only while it runs. Three ways to run it:
+
+| Where | Always on? | Cost | How |
+|---|---|---|---|
+| A small server | Yes, around the clock | about $4-5 a month on Fly.io | `./deploy_fly.sh` (one command: installs Fly's tool, asks for a password, your email and your ntfy topic, creates the app and a 1 GB disk, deploys) |
+| Your computer, in the background | Whenever you're logged in and it's awake | free | `mt service install` (macOS launch agent, Linux systemd user service, or a Windows logon task); `mt service uninstall` removes it |
+| A GitHub Codespace | While the tab is open (stops after 30 idle minutes) | GitHub's free allowance | the button below |
+
+Move your data between them with Portfolio → Backup → Download backup, then Restore a backup on the other one.
+
 ## Run it in your browser (no install)
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/jwill736/market-tracker?quickstart=1)
@@ -187,6 +199,35 @@ holdings deserve a second look. Every row says why it is there; click any ticker
 
 `GET /api/pulse` (cached 3 minutes, `?refresh=true` rescans) and `GET /api/sellwatch` (cached 10
 minutes per portfolio) return the same data as JSON.
+
+## Home, trading screens and accounts
+
+- **Home** (Robinhood-style): your portfolio's value with a live 1D line and 1W/1M/3M/1Y/ALL history, green when up and
+  orange when down; hover to read any moment. The gain counts purchases as money put in, not as profit. Buying power
+  (the cash you set), your stocks, crypto and watchlist with sparklines and live price pills, the early wire and your news.
+- **Symbol page**: Today and After-hours (or Pre-market) changes on separate lines, ranges 1D to 5Y, a candlestick
+  chart with volume and OHLC on hover, and **Trade**: buy or sell in shares or dollars, market or limit, a live estimate,
+  Copy order, Open in Robinhood/Coinbase, and "It filled: record it". Orders are placed in your broker: neither Robinhood
+  nor Stash has a trading API for individuals.
+- **Accounts**: Robinhood (CSV), Coinbase (CSV or **read-only API sync**: a View-only key in `.env` imports your fills
+  with cost basis and reports balances the ledger can't explain), Stash and anything else (type holdings once).
+
+## Early wire (before the mainstream)
+
+The **Early** tab lists tickers starting to move where the press hasn't caught up: StockTwits trending (with its one-line
+reason), Reddit mention spikes (via ApeWisdom: Reddit blocks servers), companies' own press releases (GlobeNewswire; Business
+Wire, PR Newswire and Accesswire via Google News) sorted into catalysts (deal, FDA, contract, guidance, buyback, offering,
+reverse split), 8-Ks that sign an agreement, complete a deal or change control, CoinGecko trending coins, Binance new
+listings, new Coinbase USD pairs, and stablecoins more than 0.5% off $1. A ticker is **early** while mainstream outlets have
+at most two articles about it in 24 hours. Each day's first sighting is logged with its price and scored live on the
+same tab. Social spikes are also where pump-and-dumps start.
+
+## People (follow traders with a record)
+
+The **People** tab: congressional stock trades (House reports parsed from the Clerk's PDFs, Senate reports from eFD, each
+with how late it was disclosed), ARK Invest's daily trades (its six ETFs diffed day over day), big insider purchases and
+activist stakes. Follow anyone to get their new moves as heads-ups. **If you'd copied** buys the same dollars at the close
+on each disclosure date (the first day you could have acted), sells on disclosed sales, and compares with SPY.
 
 ## Filing radar (scary SEC filings)
 

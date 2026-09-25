@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, charts, db, people, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, charts, coinbase_sync, db, people, dilution, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -575,6 +575,91 @@ def headsup_read():
     with db.connect() as conn:
         db.mark_headsup_read(conn)
     return {"ok": True}
+
+
+@app.get("/api/sync/coinbase")
+def coinbase_status():
+    return {"configured": coinbase_sync.configured()}
+
+
+@app.post("/api/sync/coinbase")
+def coinbase_sync_now():
+    """Import new Coinbase fills (read-only key) and compare balances with the ledger."""
+    if not coinbase_sync.configured():
+        raise HTTPException(400, "Add COINBASE_API_KEY_NAME and COINBASE_API_PRIVATE_KEY (a View-only key) to .env first.")
+    try:
+        txs = coinbase_sync.fills_to_transactions(coinbase_sync.fills())
+        bal = coinbase_sync.balances()
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, f"Coinbase: {exc}")
+    res = coinbase_sync.SyncResult()
+    with db.connect() as conn:
+        known = db.import_keys(conn)
+        new = [t for t in txs if t["import_key"] not in known]
+        existing = db.list_transactions(conn)
+        try:
+            positions = service.pf.build_positions(existing + new)
+        except ValueError as exc:
+            raise HTTPException(400, f"{exc}. Coins that arrived by transfer or reward need adding first (Quick add).")
+        for t in new:
+            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
+                               import_key=t["import_key"], account="Coinbase")
+    res.new, res.duplicates = len(new), len(txs) - len(new)
+    cb_qty: dict[str, float] = {}
+    for t in existing + new:
+        if (t.get("account") or "") == "Coinbase":
+            cb_qty[t["symbol"]] = cb_qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    res.differences = coinbase_sync.reconcile(bal, cb_qty)
+    return {"new": res.new, "duplicates": res.duplicates, "differences": res.differences,
+            "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
+
+
+@app.get("/api/backup")
+def backup():
+    """Everything you entered, as one JSON file: trades, watchlist, cash, topics, follows."""
+    with db.connect() as conn:
+        return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
+                "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
+                "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn)}
+
+
+class RestoreIn(BaseModel):
+    data: dict
+
+
+@app.post("/api/backup/restore")
+def restore(body: RestoreIn):
+    """Add a backup's contents. Trades already present (same symbol, side, date, quantity and
+    price) are skipped, so restoring twice changes nothing."""
+    d = body.data
+    if d.get("format") != "plumbline-backup":
+        raise HTTPException(400, "This isn't a Plumbline backup file.")
+    added = 0
+    with db.connect() as conn:
+        keys = db.import_keys(conn)
+        for t in d.get("transactions") or []:
+            key = t.get("import_key") or "bk:" + "|".join(str(t.get(k)) for k in ("symbol", "side", "date", "quantity", "price"))
+            if key in keys:
+                continue
+            db.add_transaction(conn, t["symbol"], t["side"], float(t["quantity"]), float(t["price"]), t["date"],
+                               float(t.get("fees") or 0), t.get("note"), import_key=key, account=t.get("account") or "")
+            keys.add(key)
+            added += 1
+        try:
+            service.pf.build_positions(db.list_transactions(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
+        for w in d.get("watchlist") or []:
+            db.add_watch(conn, w)
+        if d.get("cash"):
+            db.set_meta(conn, "cash", str(float(d["cash"])))
+        db.topics(conn, reading.DEFAULT_TOPICS)
+        for name, terms in (d.get("topics") or {}).items():
+            db.set_topic(conn, name, terms)
+        for who, grp in (d.get("follows") or {}).items():
+            db.follow(conn, who, grp)
+    return {"transactions_added": added}
 
 
 class ImportIn(BaseModel):

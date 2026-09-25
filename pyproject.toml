@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.6",
     "websockets>=13",
     "pypdf>=4",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

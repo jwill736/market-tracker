@@ -376,3 +376,5 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .pp-copy:empty { display: none; }
 .pp-copy { margin-top: 3px; }
 #tab-people td { vertical-align: top; }
+
+.bk-restore { cursor: pointer; text-align: center; }

@@ -821,6 +821,41 @@ $("#imp-list-preview").addEventListener("click", () => {
   if (!impText.trim()) { $("#rh-result").innerHTML = `<p class="muted">Type at least one holding.</p>`; return; }
   runImport(false);
 });
+let cbConfigured = false;
+api("/api/sync/coinbase").then((r) => { cbConfigured = r.configured; }).catch(() => {});
+function paintSyncButton() { $(".imp-sync").hidden = !(impSource === "coinbase" && cbConfigured); }
+document.querySelectorAll("#imp-seg button").forEach((b) => b.addEventListener("click", paintSyncButton));
+$("#cb-sync").addEventListener("click", async () => {
+  const out = $("#rh-result");
+  out.innerHTML = `<p class="muted">Reading your Coinbase fills and balances…</p>`;
+  try {
+    const r = await api("/api/sync/coinbase", { method: "POST" });
+    out.innerHTML = `<p><b>${r.new} new trade${r.new === 1 ? "" : "s"}</b> imported${r.duplicates ? `, ${r.duplicates} already there` : ""}.</p>` +
+      (r.differences.length ? `<p class="small">Balances your ledger doesn't explain (rewards, transfers or older trades; add them with Stash / other):</p><ul class="small">${r.differences.map((d) => `<li>${esc(d.coin)}: Coinbase ${d.coinbase} vs ledger ${d.ledger.toFixed(8)}</li>`).join("")}</ul>` : `<p class="small muted">Every coin's balance matches the ledger.</p>`);
+    loadPortfolio(); loadHoldings();
+  } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+$("#bk-download").addEventListener("click", async () => {
+  try {
+    const data = await api("/api/backup");
+    const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `plumbline-backup-${localDate()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    $("#bk-status").textContent = `Saved ${data.transactions.length} trades.`;
+  } catch (err) { $("#bk-status").textContent = err.message; }
+});
+$("#bk-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const r = await api("/api/backup/restore", { method: "POST", body: JSON.stringify({ data: JSON.parse(await file.text()) }) });
+    $("#bk-status").textContent = `Restored: ${r.transactions_added} trades added.`;
+    loadPortfolio(); loadHoldings(); loadWatchlist();
+  } catch (err) { $("#bk-status").textContent = err.message; }
+  e.target.value = "";
+});
+
 async function runImport(commit) {
   const out = $("#rh-result");
   out.innerHTML = `<p class="muted">${commit ? "Importing…" : "Reading…"}</p>`;

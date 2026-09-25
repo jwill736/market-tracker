@@ -448,7 +448,14 @@
           <textarea id="imp-text" rows="5" placeholder="VOO 3.214 1450.20 2024-03-01&#10;AAPL 1.5 310.00&#10;BTC 0.004 260"></textarea>
           <button id="imp-list-preview" type="button">Preview</button>
         </div>
+        <div class="row imp-sync" hidden><button type="button" id="cb-sync">Sync Coinbase now</button></div>
         <div id="rh-result"></div>
+        <h2 class="mt">Backup</h2>
+        <p class="muted small">Everything you've entered (trades, accounts, watchlist, cash, topics, follows) in one file. Use it to move
+          to a server or another computer; restoring twice adds nothing twice.</p>
+        <div class="row"><button type="button" id="bk-download" class="secondary">Download backup</button>
+          <label class="button-secondary bk-restore">Restore a backup<input type="file" id="bk-file" accept=".json,application/json" hidden></label></div>
+        <p class="muted small" id="bk-status"></p>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
       </div>
