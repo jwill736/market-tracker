@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
+from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research,
                sentinel, service, strategy)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -401,6 +401,29 @@ def _hold_settings(conn) -> dict:
 async def _holdplan_data(refresh: bool = False) -> dict:
     try:
         return await asyncio.to_thread(holdplan.cached, refresh)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+_income_cache = sentinel.Cache(900)
+
+
+@app.get("/api/income")
+async def income_view(refresh: bool = False):
+    """Dividends received (imported, or estimated where an account has none), forward income,
+    yield on cost, upcoming ex/pay dates and the next 12 months."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        rows = db.income(conn)
+    key = (len(txs), max((t["id"] for t in txs), default=0), len(rows), date.today().isoformat())
+    if refresh:
+        _income_cache.clear()
+
+    def compute():
+        positions = service.portfolio_summary(txs, False)["positions"] if txs else []
+        return dividends.build(positions, txs, rows, date.today())
+    try:
+        return await asyncio.to_thread(_income_cache.get, key, compute)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -852,7 +875,7 @@ def backup():
         return {"format": "plumbline-backup", "version": 1, "exported": date.today().isoformat(),
                 "transactions": db.list_transactions(conn), "watchlist": db.watchlist(conn),
                 "cash": float(db.get_meta(conn, "cash", "0") or 0), "topics": db.topics(conn), "follows": db.follows(conn, include_pickers=True),
-                "theses": db.theses(conn)}
+                "theses": db.theses(conn), "income": db.income(conn)}
 
 
 class RestoreIn(BaseModel):
@@ -882,6 +905,8 @@ def restore(body: RestoreIn):
         except ValueError as exc:
             conn.rollback()
             raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
+        db.add_income(conn, [dict(r, import_key=r.get("import_key") or "bk:" + "|".join(str(r.get(k)) for k in ("symbol", "day", "amount", "kind")))
+                             for r in d.get("income") or [] if r.get("day") and r.get("amount") is not None and r.get("kind")])
         for w in d.get("watchlist") or []:
             db.add_watch(conn, w)
         if d.get("cash"):
@@ -924,7 +949,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
         res = importers.parse_coinbase(body.csv)
     else:
         res = importers.parse_holdings_list(body.csv, body.account.strip() or "Other", date.today().isoformat())
-    if res.errors and not res.transactions:
+    if res.errors and not (res.transactions or res.income):
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
         existing = db.list_transactions(conn)
@@ -934,12 +959,16 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
             positions = service.pf.build_positions(existing + new)
         except ValueError as exc:
             raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
+        known_income = db.income_keys(conn)
+        new_income = [r for r in res.income if r["import_key"] not in known_income]
         if body.commit:
             for t in new:
                 db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
                                    t["note"], import_key=t["import_key"], account=t.get("account", ""))
+            db.add_income(conn, new_income)
     touched = {t["symbol"] for t in res.transactions}
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
+            "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
                                  for p in positions.values() if p.quantity > 0 and p.symbol in touched],

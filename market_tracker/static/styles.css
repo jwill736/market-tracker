@@ -431,3 +431,12 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
 .hp-lines li:first-child { border-top: 0; }
+
+/* income */
+.in-months { display: grid; gap: 6px; }
+.in-month { display: grid; grid-template-columns: 40px 1fr 70px; align-items: center; gap: 8px; }
+.in-month b { text-align: right; font-variant-numeric: tabular-nums; }
+.in-bar { height: 10px; border-radius: 5px; background: var(--mid); overflow: hidden; }
+.in-bar span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+.in-table td, .in-table th { text-align: right; white-space: nowrap; }
+.in-table td:first-child, .in-table th:first-child { text-align: left; }

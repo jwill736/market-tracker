@@ -24,6 +24,7 @@
   <nav id="tabs" role="tablist">
     <button role="tab" data-tab="home" aria-selected="true">Home</button>
     <button role="tab" data-tab="hold" aria-selected="false">Hold plan</button>
+    <button role="tab" data-tab="income" aria-selected="false">Income</button>
     <button role="tab" data-tab="early" aria-selected="false">Early</button>
     <button role="tab" data-tab="people" aria-selected="false">People</button>
     <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
@@ -135,6 +136,26 @@
       <div class="tax-sums" id="hp-realized"></div>
       <div id="hp-tax"></div>
     </div>
+  </section>
+
+  <section id="tab-income" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Income</h2><span class="muted small" id="in-meta"></span></div>
+      <p class="muted small">Dividends you've been paid (from your Robinhood file; estimated from ex-dates and your shares where an account
+        has no dividend rows, like Stash), what your holdings pay a year at today's rate, and when the next ones land.
+        To be paid you need the shares at the close the day before the ex-dividend date.</p>
+      <div class="tax-sums" id="in-sums"></div>
+    </div>
+    <div class="grid two">
+      <div class="card"><div class="card-head"><h2>Next 12 months</h2><span class="muted small">by ex-dividend month</span></div>
+        <div id="in-months" class="in-months"></div></div>
+      <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">own it before the ex-date</span></div>
+        <ul class="hp-lines" id="in-upcoming"></ul></div>
+    </div>
+    <div class="card"><div class="card-head"><h2>By holding</h2></div>
+      <div class="table-wrap"><table class="in-table"><thead><tr><th>Symbol</th><th>Per share</th><th>A year (yours)</th>
+        <th>Yield on cost</th><th>Yield now</th><th>Paid, last 12 mo</th></tr></thead><tbody id="in-rows"></tbody></table></div></div>
+    <div class="card"><div class="card-head"><h2>Received</h2></div><ul class="hp-lines" id="in-received"></ul></div>
   </section>
 
   <section id="tab-early" class="tab" hidden>

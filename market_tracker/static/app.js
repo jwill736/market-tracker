@@ -50,6 +50,7 @@ function selectTab(name) {
   if (name === "early") loadEarly();
   if (name === "people") { loadPeople(); loadPickers(); }
   if (name === "hold") loadHold();
+  if (name === "income") loadIncome();
   if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
@@ -866,10 +867,11 @@ async function runImport(commit) {
     const skipped = Object.entries(r.skipped).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
     const noun = impSource === "holdings" ? "holdings" : "trades";
     out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} ${noun}.</b>` : `<b>${r.new} new ${noun}</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
+      ${r.income_new ? `<br>Plus ${r.income_new} dividend and interest payment${r.income_new === 1 ? "" : "s"} (${fmtMoney(r.income_total, 2)}) for the Income tab.` : ""}
       ${skipped ? `<br><span class="muted small">Skipped (not trades): ${skipped}</span>` : ""}
       ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}</p>
       <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })}`).join(", ") || "none"}</p>
-      ${!commit && r.new ? `<button id="rh-commit" type="button">Import ${r.new} ${noun}</button>` : ""}`;
+      ${!commit && (r.new || r.income_new) ? `<button id="rh-commit" type="button">Import${r.new ? ` ${r.new} ${noun}` : ""}${r.income_new ? `${r.new ? " and" : ""} ${r.income_new} payments` : ""}</button>` : ""}`;
     const btn = $("#rh-commit");
     if (btn) btn.addEventListener("click", () => runImport(true));
     if (commit) { loadPortfolio(); loadHoldings(); }
@@ -1839,6 +1841,32 @@ $("#hp-settings").addEventListener("submit", async (e) => {
     $("#hp-settings-msg").textContent = "Saved"; loadHold(true);
   } catch (err) { $("#hp-settings-msg").textContent = err.message; }
 });
+
+// ---------------------------------------------------------------- income
+async function loadIncome(force = false) {
+  $("#in-meta").textContent = "Reading dividend histories…";
+  let d;
+  try { d = await api("/api/income" + (force ? "?refresh=true" : "")); } catch (err) { $("#in-meta").textContent = err.message; return; }
+  $("#in-meta").textContent = `Updated ${d.as_of}${d.errors.length ? ` · ${d.errors.length} source note${d.errors.length > 1 ? "s" : ""}` : ""}`;
+  $("#in-sums").innerHTML = `<div><span class="muted small">A year, at today's rates</span><b>${fmtMoney(d.annual_income, 0)}</b><span class="muted small">${fmtMoney(d.monthly_avg, 0)} a month</span></div>
+    <div><span class="muted small">Yield on what you paid</span><b>${d.yield_on_cost != null ? d.yield_on_cost.toFixed(2) + "%" : "—"}</b><span class="muted small">portfolio yield now ${d.portfolio_yield != null ? d.portfolio_yield.toFixed(2) + "%" : "—"}</span></div>
+    <div><span class="muted small">Received, last 12 months</span><b>${fmtMoney(d.received_12m, 0)}</b><span class="muted small">${fmtMoney(d.received_ytd, 0)} this year${d.estimated_share ? ` · ${Math.round(d.estimated_share * 100)}% estimated` : ""}</span></div>`;
+  const max = Math.max(...d.months.map((m) => m.amount), 1);
+  $("#in-months").innerHTML = d.months.map((m) => `<div class="in-month"><span class="muted small">${esc(new Date(m.month + "-15").toLocaleString(undefined, { month: "short" }))}</span>
+    <span class="in-bar"><span style="width:${(m.amount / max * 100).toFixed(1)}%"></span></span><b>${fmtMoney(m.amount, 0)}</b></div>`).join("");
+  $("#in-upcoming").innerHTML = d.upcoming.map((u) => `<li><b>${esc(u.ex_date)}</b> <button type="button" class="linkish" data-open="${esc(u.symbol)}">${esc(u.symbol)}</button>
+    about <b>${fmtMoney(u.amount, 2)}</b> <span class="muted small">(${fmtMoney(u.per_share, 4)} a share${u.pay_date ? `, paid ${esc(u.pay_date)}` : ""}${u.estimated ? ", date estimated from past spacing" : ", declared"})</span></li>`).join("")
+    || `<li class="muted">None of your holdings pays a regular dividend.</li>`;
+  $("#in-rows").innerHTML = d.holdings.map((h) => `<tr><td><button type="button" class="linkish" data-open="${esc(h.symbol)}">${esc(h.symbol)}</button></td>
+    <td>${h.per_share != null ? `${fmtMoney(h.per_share, 4)} ×${h.per_year}` : "—"}</td><td><b>${fmtMoney(h.annual_income, 2)}</b></td>
+    <td>${h.yield_on_cost != null ? h.yield_on_cost.toFixed(2) + "%" : "—"}</td><td>${h.current_yield != null ? h.current_yield.toFixed(2) + "%" : "—"}</td>
+    <td>${fmtMoney(h.paid_12m, 2)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No dividend payers among your holdings.</td></tr>`;
+  const KIND = { dividend: "dividend", reinvested: "reinvested dividend", interest: "interest", tax_withheld: "tax withheld" };
+  $("#in-received").innerHTML = d.received.map((r) => `<li><b>${esc(r.day)}</b> ${esc(r.symbol || "cash")} <b class="${cls(r.amount)}">${fmtMoney(r.amount, 2)}</b>
+    <span class="muted small">${esc(KIND[r.kind] || r.kind)}${r.account ? " · " + esc(r.account) : ""}${r.estimated ? ` · estimated: ${fmtShares(r.shares)} × ${fmtMoney(r.per_share, 4)}` : ""}</span></li>`).join("")
+    || `<li class="muted">Nothing yet. Import a Robinhood account activity CSV (Portfolio tab) to bring in your dividends.</li>`;
+  document.querySelectorAll("#tab-income [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
 
 // the "why you own it" form
 let thesisSym = null;
