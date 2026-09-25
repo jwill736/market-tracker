@@ -200,3 +200,26 @@ def test_news_mood_is_diluted_by_neutral_headlines():
     score, _ = signals.news_component(news.summarize(few_positive))
     assert 0 < score < 0.1
     assert news.summarize([])["avg_sentiment"] == 0.0
+
+
+def test_market_news_falls_back_to_yahoo_when_google_fails(monkeypatch):
+    def google_down(query):
+        raise news.http.DataUnavailable(f"{query}: 503")
+    yahoo_calls = []
+
+    def yahoo(sym):
+        yahoo_calls.append(sym)
+        return [news.Article(f"{sym} headline {i}", "Yahoo", f"https://example.com/{sym}/{i}",
+                             "2026-09-24", 0.0, "yahoo") for i in range(8)]
+    monkeypatch.setattr(news, "_google", google_down)
+    monkeypatch.setattr(news, "_yahoo", yahoo)
+    n = news.market_news()
+    assert yahoo_calls == list(news.MARKET_FALLBACK_SYMBOLS)
+    assert n["count"] == 16 and len(n["errors"]) == 4
+
+
+def test_market_news_skips_fallback_when_google_is_healthy(monkeypatch):
+    monkeypatch.setattr(news, "_google", lambda q: [news.Article(f"{q} story {i}", "S", f"https://e.com/{q}/{i}",
+                                                                 "2026-09-24", 0.0, "google") for i in range(5)])
+    monkeypatch.setattr(news, "_yahoo", lambda sym: pytest.fail("fallback should not run"))
+    assert news.market_news()["count"] == 20
