@@ -206,7 +206,14 @@ def _():
     recent = subs["filings"]["recent"]
     assert "items" in recent and any(recent["items"]), "no 8-K item numbers"
     got = radar.company_alerts("0000320193", subs, date.today() - timedelta(days=365), "AAPL")
-    return f"{len(got)} radar filings in a year: " + (", ".join(sorted({a.headline for a in got})) or "none")
+    assert not [a for a in got if a.level == 3], [a.headline for a in got if a.level == 3]
+    f25 = [a for a, f in zip(recent["accessionNumber"], recent["form"]) if f in radar.DELISTING_FORMS][:3]
+    scopes = []
+    for acc in f25:
+        url = f"https://www.sec.gov/Archives/edgar/data/320193/{acc.replace('-', '')}/{acc}.txt"
+        scopes.append(radar.delisting_scope(http.get(url, headers=radar.sec_headers(), ttl=0, as_json=False)))
+    return (f"{len(got)} radar filings in a year: " + (", ".join(sorted({a.headline for a in got})) or "none")
+            + f"; Apple's Form 25s read as {scopes or 'none'}")
 
 
 @check("Reading room: professional feeds")

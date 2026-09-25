@@ -294,3 +294,43 @@ def test_news_and_reading_endpoints(client, monkeypatch):
     monkeypatch.setattr(sentinel, "build_reading", lambda syms: {"picks": [], "mentions": [], "symbols": syms})
     assert client.get("/api/mynews").json()["symbols"][0]["symbol"] == "NVDA"
     assert client.get("/api/reading").json()["symbols"] == ["NVDA"]
+
+
+F25_STOCK = "<SEC-HEADER>COMPANY CONFORMED NAME: Jasper Therapeutics, notes</SEC-HEADER><XML><securitiesClassTitle>Common Stock, $0.0001 par value</securitiesClassTitle></XML>"
+F25_NOTES = "<SEC-HEADER>x</SEC-HEADER><XML><securitiesClassTitle>1.000% Notes due 2026</securitiesClassTitle></XML>"
+F25_WARRANTS = "<SEC-HEADER>x</SEC-HEADER><XML><securitiesClassTitle>Redeemable Warrants</securitiesClassTitle></XML>"
+
+
+def test_delisting_scope_reads_the_security_class():
+    assert radar.delisting_scope(F25_STOCK) == "equity"          # header words don't count
+    assert radar.delisting_scope(F25_NOTES) == "debt"
+    assert radar.delisting_scope(F25_WARRANTS) == "other"
+    assert radar.delisting_scope("<XML>nothing here</XML>") == "unknown"
+
+
+def test_bond_delistings_drop_out_and_stock_delistings_stay():
+    from market_tracker import http
+    docs = {"stock": F25_STOCK, "notes": F25_NOTES, "warrants": F25_WARRANTS}
+
+    def get(url, **kw):
+        if "type=25-NSE" in url:
+            return FEED_25
+        if url.endswith(".txt"):
+            return docs[get.kind]
+        raise http.DataUnavailable("down")
+
+    for kind, expect in (("stock", 3), ("notes", None), ("warrants", 1)):
+        get.kind = kind
+        alerts, _ = radar.scan_market(get, forms=["25-NSE"])
+        assert ([a.level for a in alerts] or [None])[0] == expect, kind
+
+    subs = {"name": "Apple Inc.", "filings": {"recent": {
+        "accessionNumber": ["n-1"], "form": ["25-NSE"], "filingDate": ["2026-09-01"], "items": [""],
+        "primaryDocument": ["x"], "acceptanceDateTime": [""]}}}
+    get.kind = "notes"
+    assert radar.company_alerts("320193", subs, date(2026, 1, 1), "AAPL", get=get) == []
+
+    def broken(url, **kw):
+        raise http.DataUnavailable("down")
+    got = radar.company_alerts("320193", subs, date(2026, 1, 1), "AAPL", get=broken)
+    assert got[0].level == 2 and "couldn't tell" in got[0].headline

@@ -50,6 +50,7 @@ FORMS: dict[str, tuple[int, str, str]] = {
     "NT 20-F": (2, "Annual report will be late", "Late reports often come before bad news or accounting problems."),
     "25-NSE": (3, "Exchange is delisting the stock", "Trading on the exchange ends in about 10 days."),
     "25": (3, "Company is delisting its stock", "The company is taking the stock off its exchange."),
+    # (Form 25s for bonds are dropped and for warrants/preferred softened: see refine_delisting.)
     "15-12G": (2, "Deregistering: public reports will stop", "You would lose audited financial reports."),
     "15-12B": (2, "Deregistering: public reports will stop", "You would lose audited financial reports."),
     "15-15D": (2, "Deregistering: public reports will stop", "You would lose audited financial reports."),
@@ -58,6 +59,13 @@ GOING_CONCERN = (2, "Going-concern doubt in its latest report",
                  "The auditor or management doubts the company can last another year. Read the context: "
                  "some reports say the doubt was resolved.")
 FEED_FORMS = ["8-K", "NT 10-K", "NT 10-Q", "25-NSE", "25", "15-12G", "15-12B", "15-15D"]
+DELISTING_FORMS = {"25", "25-NSE"}
+# A Form 25 removes one class of securities. Large companies file them all the time for bonds
+# that matured or were redeemed; only a delisting of the shares is an emergency.
+_EQUITY = re.compile(r"common\s+stock|ordinary\s+shares|common\s+shares|american\s+depositary|"
+                     r"class\s+[a-c]\s+(?:common|ordinary)", re.I)
+_DEBT = re.compile(r"\bnotes?\b|\bdebentures?\b|\bbonds?\b|\bdue\s+(?:19|20)\d\d\b", re.I)
+_OTHER = re.compile(r"\bwarrants?\b|\bunits?\b|\bpreferred\b|\brights\b", re.I)
 LEVEL_NAMES = {3: "Act today", 2: "Serious", 1: "Read it"}
 
 
@@ -147,6 +155,43 @@ def alerts_from_feed(entries: list[FeedEntry]) -> list[Alert]:
     return list(out.values())
 
 
+def delisting_scope(text: str) -> str:
+    """equity / debt / other / unknown: which security a Form 25 removes."""
+    body = re.sub(r"<SEC-HEADER>.*?</SEC-HEADER>", " ", text or "", flags=re.S | re.I)
+    body = _strip_tags(body)
+    if _EQUITY.search(body):
+        return "equity"
+    if _DEBT.search(body):
+        return "debt"
+    if _OTHER.search(body):
+        return "other"
+    return "unknown"
+
+
+def _strip_tags(s: str) -> str:
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", s)))
+
+
+def refine_delisting(a: Alert, get=http.get) -> Alert | None:
+    """Read the Form 25 itself: drop bond delistings, soften warrants and preferred."""
+    if a.form not in DELISTING_FORMS or not a.url.endswith("-index.htm"):
+        return a
+    try:
+        scope = delisting_scope(get(a.url.replace("-index.htm", ".txt"), headers=sec_headers(), ttl=7 * 86400,
+                                    as_json=False))
+    except http.DataUnavailable:
+        scope = "unknown"
+    if scope == "debt":
+        return None
+    if scope == "other":
+        a.level, a.headline = 1, "Delisting of warrants, units or preferred shares"
+        a.why = "Not the common stock, but check what it means for the company."
+    elif scope == "unknown":
+        a.level, a.headline = 2, "Delisting filing (couldn't tell which security)"
+        a.why = "Open the filing: a delisting of the shares is serious; of a bond, routine."
+    return a
+
+
 def fetch_feed(form: str, count: int = 100, get=http.get) -> list[FeedEntry]:
     text = get(FEED.format(form=form.replace(" ", "+"), count=count), headers=sec_headers(), ttl=60, as_json=False)
     # The type filter matches by prefix ("25" also returns 25-NSE); keep exact forms only.
@@ -165,15 +210,17 @@ def scan_market(get=http.get, forms: list[str] = FEED_FORMS) -> tuple[list[Alert
     errors: list[str] = []
     for form in forms:
         try:
-            alerts += alerts_from_feed(fetch_feed(form, 100 if form == "8-K" else 40, get))
+            found = alerts_from_feed(fetch_feed(form, 100 if form == "8-K" else 40, get))
         except (http.DataUnavailable, ET.ParseError) as exc:
             errors.append(f"{form}: {exc}")
+            continue
+        alerts += [r for r in (refine_delisting(a, get) for a in found) if r]
     return alerts, errors
 
 
 # ------------------------------------------------------------------ one company's history
 
-def company_alerts(cik: str, submissions: dict, since: date, symbol: str = "") -> list[Alert]:
+def company_alerts(cik: str, submissions: dict, since: date, symbol: str = "", get=http.get) -> list[Alert]:
     recent = (submissions.get("filings") or {}).get("recent") or {}
     name = submissions.get("name", "")
     out = []
@@ -187,7 +234,10 @@ def company_alerts(cik: str, submissions: dict, since: date, symbol: str = "") -
             continue
         level, head, why, hits = got
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{acc}-index.htm"
-        out.append(Alert(acc, cik.zfill(10), name, form, filed, level, head, why, hits, url, symbol, accepted or ""))
+        a = refine_delisting(Alert(acc, cik.zfill(10), name, form, filed, level, head, why, hits, url, symbol,
+                                   accepted or ""), get)
+        if a:
+            out.append(a)
     return out
 
 
