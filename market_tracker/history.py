@@ -44,14 +44,31 @@ def _sec_date(txt: str) -> str:
 
 # ------------------------------------------------------------------ prices
 
+def median_gap_days(hist: list[tuple[str, float]]) -> float | None:
+    if len(hist) < 3:
+        return None
+    ds = [datetime.fromisoformat(d) for d, _ in hist]
+    gaps = sorted((b - a).days for a, b in zip(ds, ds[1:]))
+    return gaps[len(gaps) // 2]
+
+
 def load_prices(symbols: list[str], bars: int = 3200) -> dict[str, list[tuple[str, float]]]:
     out = {}
     for sym in symbols:
         try:
-            out[sym] = [(b.date, b.close) for b in market.get_history(sym, bars)]
+            hist = [(b.date, b.close) for b in market.get_history(sym, bars)]
         except http.DataUnavailable as exc:
             log(f"  prices {sym}: {exc}")
-    log(f"prices: {len(out)}/{len(symbols)} symbols")
+            continue
+        gap = median_gap_days(hist)
+        # Every engine window counts trading days; weekly or monthly bars would silently
+        # turn "next 21 days" into "next 21 weeks". Reject anything that isn't daily.
+        if gap is None or gap > 3:
+            log(f"  prices {sym}: rejected, {len(hist)} bars with median gap {gap} days (not daily)")
+            continue
+        out[sym] = hist
+        log(f"  prices {sym}: {len(hist)} daily bars {hist[0][0]} → {hist[-1][0]}")
+    log(f"prices: {len(out)}/{len(symbols)} symbols usable")
     return out
 
 

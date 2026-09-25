@@ -173,3 +173,26 @@ def test_all_filings_follows_older_pages(monkeypatch):
     monkeypatch.setattr(sec, "_sec_get", lambda url, ttl=0, as_json=True: older if "submissions-001" in url else main)
     name, rows = sec.all_filings("0000000001", {"13F-HR"})
     assert name == "BERKSHIRE" and [r["accessionNumber"] for r in rows] == ["a2", "a1"]
+
+
+def test_median_gap_flags_non_daily_series():
+    daily = [(d, 1.0) for d in _calendar("2020-01-01", 30)]
+    monthly = [(f"2020-{m:02d}-01", 1.0) for m in range(1, 13)]
+    assert history.median_gap_days(daily) == 1
+    assert history.median_gap_days(monthly) > 3
+    assert history.median_gap_days(daily[:2]) is None
+
+
+def test_get_history_rejects_non_daily_granularity(monkeypatch):
+    from market_tracker import http
+    from market_tracker.providers import market
+    calls = []
+
+    def fake_get(url, params=None, **kw):
+        calls.append(params)
+        return {"chart": {"result": [{"meta": {"dataGranularity": "1mo"}, "timestamp": [], "indicators": {"quote": [{}]}}]}}
+
+    monkeypatch.setattr(market.http, "get", fake_get)
+    with pytest.raises(http.DataUnavailable, match="1mo bars"):
+        market.get_history("AAPL", 3200)
+    assert "period1" in calls[0] and calls[0]["interval"] == "1d"  # explicit window, never range=max

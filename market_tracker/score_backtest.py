@@ -195,9 +195,11 @@ def evaluate(rows: list[dict], horizons: tuple[int, ...] = (21, 63)) -> dict:
     for r in rows:
         by_date.setdefault(r["date"], []).append(r)
     dates = sorted(by_date)
+    sizes = sorted(len(v) for v in by_date.values())
     out: dict = {"dates": len(dates), "first_date": dates[0] if dates else None,
                  "last_date": dates[-1] if dates else None,
-                 "symbols": len({r["symbol"] for r in rows}), "horizons": {}}
+                 "symbols": len({r["symbol"] for r in rows}),
+                 "median_stocks_per_date": sizes[len(sizes) // 2] if sizes else 0, "horizons": {}}
     for h in horizons:
         key = f"fwd_{h}"
         use_dates = _non_overlapping(dates, h)
@@ -282,7 +284,8 @@ def _fmt(x: float | None, spec: str) -> str:
 
 def report_markdown(result: dict) -> str:
     lines = ["## Score backtest", "",
-             f"{result['symbols']} stocks, {result['dates']} month-ends ({result['first_date']} → {result['last_date']}). "
+             f"{result['symbols']} stocks, {result['dates']} month-ends ({result['first_date']} → {result['last_date']}), "
+             f"median {result.get('median_stocks_per_date', 0)} stocks scored per month. "
              "Each month, stocks are ranked by score using only data public that day; the IC is the rank "
              "correlation between score and next-period return (0 = no edge, +0.05 = small real edge).", ""]
     for h, res in result["horizons"].items():
