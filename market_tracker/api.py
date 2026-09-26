@@ -1836,6 +1836,20 @@ def brokers_paper_reset(body: PaperResetIn):
         return brokers.paper_state(conn)
 
 
+@app.get("/api/advice/record")
+async def advice_record():
+    """The app's advice, scored against just buying VOO."""
+    from . import advice
+
+    def run():
+        with db.connect() as conn:
+            rows = advice.logged(conn)
+        return advice.score(rows, lambda s: [(b.date, b.close) for b in market.get_history(s, 400)], date.today())
+    key = ("advice", _ledger_key(), date.today().isoformat())
+    out = await asyncio.to_thread(_analysis_cache.get, key, run)
+    return dict(out, items=out["items"][:200])
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""

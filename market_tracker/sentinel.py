@@ -195,6 +195,7 @@ class Sentinel:
                 await asyncio.to_thread(offsite_daily)
                 await asyncio.to_thread(health_check)
                 await asyncio.to_thread(settle_orders)
+                await asyncio.to_thread(log_advice_daily)
             except Exception:
                 pass
             await asyncio.sleep(RADAR_SECONDS)
@@ -310,6 +311,23 @@ def settle_orders() -> list[dict]:
                       f"Filled: {a['side']} {a['quantity']:g} {a['symbol']} at ${a['price']:,.2f} ({a['account']})",
                       "Added to your ledger.", "", a["symbol"])
     return added
+
+
+def log_advice_daily(today: date | None = None) -> int:
+    """Once a day, after the market opens: write down the hold plan's actionable advice with prices."""
+    from . import advice, holdplan
+    from .providers import market
+    today = today or date.today()
+    with db.connect() as conn:
+        if db.get_meta(conn, "advice_logged", "") == today.isoformat():
+            return 0
+    if not my_symbols()[0]:
+        return 0
+    plan = holdplan.cached()
+    with db.connect() as conn:
+        n = advice.record(conn, today.isoformat(), advice.from_plan(plan), lambda s: market.get_live_quote(s).price)
+        db.set_meta(conn, "advice_logged", today.isoformat())
+    return n
 
 
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",

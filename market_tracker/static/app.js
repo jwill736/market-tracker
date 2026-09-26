@@ -80,7 +80,7 @@ function selectTab(name) {
   if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
-  if (name === "journal") loadJournal();
+  if (name === "journal") { loadJournal(); loadAdvice(); }
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
   if (name === "home") loadHome();
@@ -2618,4 +2618,22 @@ async function loadBrokers() {
   send("#bk-pub", "/api/brokers/public", (d) => ({ secret: d.secret.trim() }));
   const r = $("#bk-paper-reset");
   if (r) r.addEventListener("click", async () => { if (confirm("Start the paper account over with $10,000?")) { await api("/api/brokers/paper/reset", { method: "POST", body: "{}" }); loadBrokers(); } });
+}
+
+// ---------------------------------------------------------------- the app's own advice, scored
+async function loadAdvice() {
+  $("#adv-verdict").textContent = "Scoring…";
+  try {
+    const r = await api("/api/advice/record");
+    $("#adv-verdict").textContent = r.verdict;
+    const hz = { 30: "1 month", 91: "3 months", 182: "6 months" };
+    $("#adv-out").innerHTML = `<table class="data method-table"><tr><th>After</th><th>Scored</th><th>Helped</th><th>Average vs VOO</th></tr>
+      ${Object.entries(r.horizons).map(([h, x]) => `<tr><td>${hz[h]}</td><td>${x.resolved}${x.enough ? "" : ` <span class="muted">(needs ${r.min_resolved})</span>`}</td>
+        <td>${x.hit_rate == null ? "—" : x.hit_rate + "%"}</td><td class="${cls(x.avg_edge)}">${x.avg_edge == null ? "—" : fmtPct(x.avg_edge)}</td></tr>`).join("")}</table>
+      <h3 class="small mt">Latest advice</h3>
+      <ul class="hp-lines">${r.items.slice(0, 15).map((i) => { const x = i.results[91] || i.results[30];
+        return `<li><b>${esc(i.day)}</b> ${esc(i.action)} ${logoImg(i.symbol, 16)} ${esc(i.symbol)} at ${fmtMoney(i.price, 2)} <span class="muted">(${esc(i.source)}${i.reason ? ": " + esc(i.reason) : ""})</span>
+          ${x ? ` → <span class="${x.helped ? "up" : "down"}">${x.helped ? "helped" : "hurt"} ${fmtPct(x.edge)} vs VOO</span>` : ` <span class="muted">· waiting</span>`}</li>`; }).join("")
+        || `<li class="muted">Nothing logged yet: the first entries appear the day after you have holdings.</li>`}</ul>`;
+  } catch (err) { $("#adv-verdict").textContent = err.message; }
 }
