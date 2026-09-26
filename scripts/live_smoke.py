@@ -378,7 +378,8 @@ def _():
 @check("What funds hold: VOO and SPY (via IVV) from SEC N-PORT")
 def _():
     voo = lookthrough.holdings("VOO", now=time.time() + 10 ** 9)          # far-future 'now' skips any cache
-    assert voo and len(voo["holdings"]) > 400, voo and len(voo["holdings"])
+    # The app keeps a fund's largest 300 holdings; a full S&P 500 filing fills that cap.
+    assert voo and len(voo["holdings"]) == 300, voo and len(voo["holdings"])
     top = voo["holdings"][0]
     assert 0.02 < top["pct"] < 0.2, top
     names = " ".join(h["name"] for h in voo["holdings"][:10]).lower()
