@@ -159,6 +159,16 @@ def gather(today: date | None = None, now: datetime | None = None) -> dict:
             out["lines"].append({"section": "Your data", "text": n["text"], "level": 1, "symbol": ""})
     except Exception:  # noqa: BLE001 - the brief never fails because of this
         pass
+    try:
+        from . import cash, db
+        with db.connect() as conn:
+            accts = cash.load(conn)
+        if accts:
+            v = cash.view(accts, today, *cash.tbill_yield())
+            if v["note"]:
+                out["lines"].append({"section": "Your money", "text": v["note"], "level": 1, "symbol": ""})
+    except Exception:  # noqa: BLE001 - the brief never fails because of this
+        pass
     return out
 
 

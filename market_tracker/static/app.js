@@ -2446,3 +2446,79 @@ $("#tf-form").addEventListener("submit", async (e) => {
     e.target.reset(); loadTransfers(); loadHoldings();
   } catch (err) { $("#tf-msg").className = "small down"; $("#tf-msg").textContent = err.message; }
 });
+
+// ---------------------------------------------------------------- taxes: which shares to sell, and the export
+async function loadTaxes() {
+  try {
+    const m = await api("/api/lots/methods");
+    $("#lp-acct").innerHTML = `<option value="">any account</option>` + m.accounts.map((a) => `<option>${esc(a)}</option>`).join("");
+    $("#lp-methods").innerHTML = m.accounts.map((a) => `<div class="row small">${esc(a)}
+      <select data-lot-acct="${esc(a)}">${Object.entries(m.choices).map(([k, v]) => `<option value="${k}"${(m.methods[a] || "fifo") === k ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></div>`).join("")
+      || `<p class="muted">No accounts yet.</p>`;
+    document.querySelectorAll("[data-lot-acct]").forEach((sel) => sel.addEventListener("change", async () => {
+      await api("/api/lots/methods", { method: "POST", body: JSON.stringify({ account: sel.dataset.lotAcct, method: sel.value }) });
+    }));
+  } catch (err) { $("#lp-methods").textContent = err.message; }
+  const yr = new Date().getFullYear();
+  if (!$("#te-year").options.length) {
+    try {
+      const s = await api(`/api/taxes/export?year=${yr}`);
+      $("#te-year").innerHTML = s.years.map((y) => `<option>${esc(y)}</option>`).join("");
+    } catch { $("#te-year").innerHTML = `<option>${yr}</option>`; }
+  }
+  loadExportSummary();
+}
+async function loadExportSummary() {
+  const y = $("#te-year").value;
+  try {
+    const s = await api(`/api/taxes/export?year=${y}`);
+    const inc = Object.entries(s.income).map(([k, v]) => `${esc(k.replace("_", " "))} ${fmtMoney(v, 2)}`).join(" · ") || "none";
+    $("#te-out").innerHTML = `<table class="data method-table"><tr><th>${esc(y)}</th><th>Proceeds</th><th>Cost</th><th>Wash adj.</th><th>Gain</th></tr>
+      ${["short", "long"].map((t) => `<tr><td>${t === "short" ? "Short-term" : "Long-term"}</td><td>${fmtMoney(s[t].proceeds, 2)}</td><td>${fmtMoney(s[t].cost, 2)}</td>
+        <td>${fmtMoney(s[t].adjustment, 2)}</td><td class="${cls(s[t].gain)}">${fmtMoney(s[t].gain, 2)}</td></tr>`).join("")}</table>
+      <p class="muted">${s.sales} lot${s.sales === 1 ? "" : "s"} sold${s.wash_rows ? `, ${s.wash_rows} with a wash-sale adjustment (code W)` : ""}. Income: ${inc}.</p>`;
+  } catch (err) { $("#te-out").textContent = err.message; }
+}
+$("#te-year").addEventListener("change", loadExportSummary);
+$("#te-form").addEventListener("submit", (e) => { e.preventDefault(); location.href = `/api/taxes/export/sales.csv?year=${$("#te-year").value}`; });
+$("#te-income").addEventListener("click", () => { location.href = `/api/taxes/export/income.csv?year=${$("#te-year").value}`; });
+$("#lp-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = new URLSearchParams({ symbol: $("#lp-sym").value.trim(), quantity: $("#lp-qty").value, account: $("#lp-acct").value });
+  if ($("#lp-price").value) q.set("price", $("#lp-price").value);
+  $("#lp-out").innerHTML = `<p class="muted">Working it out…</p>`;
+  try {
+    const r = await api(`/api/lots/compare?${q}`);
+    const best = r.methods.find((m) => m.method === r.best);
+    $("#lp-out").innerHTML = `${r.short ? `<p class="down">You hold ${fmtShares(r.held)} ${esc(r.symbol)}${r.account ? " in " + esc(r.account) : ""}; this sells ${fmtShares(r.quantity)}.</p>` : ""}
+      <table class="data method-table"><tr><th>Method</th><th>Short-term</th><th>Long-term</th><th>Tax</th></tr>
+      ${r.methods.map((m) => `<tr class="${m.method === r.best ? "best" : ""}"><td>${esc(m.label)}</td><td class="${cls(m.short_term)}">${fmtMoney(m.short_term, 0)}</td>
+        <td class="${cls(m.long_term)}">${fmtMoney(m.long_term, 0)}</td><td>${fmtMoney(m.tax, 0)}</td></tr>`).join("")}</table>
+      <p>${r.saves_vs_fifo > 0 ? `<b>${esc(best.label)}</b> saves about <b>${fmtMoney(r.saves_vs_fifo, 0)}</b> against first in, first out. Before selling, set that at your broker: most let you choose a
+        "cost basis method" in settings or pick specific lots on the sell order (check yours; the default is first in, first out).` : "First in, first out is already the cheapest here."}</p>
+      <details><summary class="small">Lots each method sells</summary>${r.methods.map((m) => `<p><b>${esc(m.label)}</b>: ${m.lots.map((l) => `${fmtShares(l.quantity)} bought ${esc(l.bought)} at ${fmtMoney(l.cost, 2)}${l.long_term ? " (long)" : ""}`).join("; ") || "none"}</p>`).join("")}</details>`;
+  } catch (err) { $("#lp-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- cash waiting in your accounts
+async function loadCash() {
+  let v;
+  try { v = await api("/api/cash/accounts"); } catch (err) { $("#cash-out").textContent = err.message; return; }
+  $("#cash-acct").innerHTML = v.names.map((n) => `<option>${esc(n)}</option>`).join("");
+  $("#cash-out").innerHTML = (v.accounts.length ? `<table class="data method-table"><tr><th>Account</th><th>Cash</th><th>Since</th><th>Earning</th><th>Missed a year</th></tr>
+    ${v.accounts.map((a) => `<tr><td>${esc(a.account)}<div class="muted">${esc(a.source)}</div></td><td>${fmtMoney(a.amount, 2)}</td>
+      <td>${a.days ? `${a.days} days` : "today"}</td><td>${a.apy ? a.apy.toFixed(2) + "%" : "0%"}</td>
+      <td class="${a.idle ? "down" : ""}">${a.idle ? fmtMoney(a.missed_per_year, 0) : "—"}</td></tr>`).join("")}</table>` : `<p class="muted">No cash recorded. Coinbase fills in from its sync; add the others below.</p>`)
+    + `<p class="muted">A Treasury-bill money-market fund pays about ${v.yield.toFixed(2)}% now${v.yield_live ? " (13-week T-bill yield)" : " (couldn't fetch today's rate; a typical figure)"}.</p>`
+    + (v.note ? `<p><b>${esc(v.note)}</b> <button type="button" class="link" id="cash-plan">Open the planner</button></p>` : "");
+  const b = $("#cash-plan");
+  if (b) b.addEventListener("click", () => { selectTab("hold"); setTimeout(() => { const f = $("#nm-form"); if (f) f.scrollIntoView({ block: "center" }); }, 100); });
+}
+$("#cash-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const apy = $("#cash-apy").value;
+  try {
+    await api("/api/cash/accounts", { method: "POST", body: JSON.stringify({ account: $("#cash-acct").value, amount: +$("#cash-amt").value, apy: apy === "" ? null : +apy }) });
+    e.target.reset(); loadCash();
+  } catch (err) { alert(err.message); }
+});

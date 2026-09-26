@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -1125,9 +1126,10 @@ async def trade_preview(body: TradeIn):
         txs = db.ledger(conn)
         cfg = trading.settings(conn)
         spent = trading.spent_today(conn)
+        methods = _lot_methods(conn)
     try:
         plan = holdplan._cache.get("plan", (None, 0, None))[2]
-        return await asyncio.to_thread(trading.preview, body.order(), txs, plan, cfg, spent)
+        return await asyncio.to_thread(functools.partial(trading.preview, body.order(), txs, plan, cfg, spent, methods=methods))
     except trading.TradeError as exc:
         raise HTTPException(400, str(exc))
 
@@ -1529,6 +1531,107 @@ def delete_transfer(leg_id: int):
             raise HTTPException(404, "No such transfer.")
         conn.execute("DELETE FROM transactions WHERE import_key = ?", (f"tr:{leg_id}",))
         db.delete_leg(conn, leg_id)
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ taxes: lot methods and the export
+
+def _lot_methods(conn) -> dict[str, str]:
+    return json.loads(db.get_meta(conn, "lot_methods", "{}") or "{}")
+
+
+@app.get("/api/lots/compare")
+async def lots_compare(symbol: str, quantity: float = Query(gt=0, le=1e12), account: str = "",
+                       price: float | None = Query(default=None, gt=0, le=1e12)):
+    """A sale now under each cost-basis method: the lots it takes and the tax."""
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        cfg = holdplan.settings(conn)
+    if price is None:
+        try:
+            price = (await asyncio.to_thread(market.get_live_quote, sym)).price
+        except http.DataUnavailable as exc:
+            raise HTTPException(502, f"No price for {sym}: {exc}. Enter one.")
+    lots, _ = taxes.lots_and_sales(led)
+    return taxes.compare_methods(lots, sym, quantity, price, date.today(), account, cfg["st_rate"], cfg["lt_rate"])
+
+
+@app.get("/api/lots/methods")
+def get_lot_methods():
+    with db.connect() as conn:
+        accts = sorted({t.get("account") or "" for t in db.list_transactions(conn)} - {""})
+        return {"methods": _lot_methods(conn), "accounts": accts, "choices": taxes.LOT_METHODS}
+
+
+class LotMethodIn(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    method: Literal["fifo", "hifo", "lifo", "min_tax"]
+
+
+@app.post("/api/lots/methods")
+def set_lot_method(body: LotMethodIn):
+    with db.connect() as conn:
+        m = _lot_methods(conn)
+        if body.method == "fifo":
+            m.pop(body.account, None)
+        else:
+            m[body.account] = body.method
+        db.set_meta(conn, "lot_methods", json.dumps(m))
+    holdplan.clear_cache()
+    return {"methods": m}
+
+
+@app.get("/api/taxes/export")
+def tax_export_summary(year: int = Query(ge=2000, le=2100)):
+    """Totals for the year's export (the CSVs have the rows)."""
+    from . import taxexport
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        inc = db.income(conn)
+    years = sorted({t["date"][:4] for t in led if t["side"] == "sell"} | {str(date.today().year)}, reverse=True)
+    sales = taxexport.sales_rows(led, year)
+    return {"year": year, "years": years, **taxexport.summary(sales, taxexport.income_rows(inc, led, year))}
+
+
+@app.get("/api/taxes/export/{kind}.csv")
+def tax_export_csv(kind: Literal["sales", "income"], year: int = Query(ge=2000, le=2100)):
+    from . import taxexport
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        inc = db.income(conn)
+    if kind == "sales":
+        text = taxexport.to_csv(taxexport.sales_rows(led, year), taxexport.SALE_FIELDS)
+    else:
+        text = taxexport.to_csv(taxexport.income_rows(inc, led, year), taxexport.INCOME_FIELDS)
+    return Response(text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="plumbline-{kind}-{year}.csv"'})
+
+
+# ------------------------------------------------------------------ cash waiting in your accounts
+
+@app.get("/api/cash/accounts")
+async def cash_accounts():
+    from . import cash
+    with db.connect() as conn:
+        accts = cash.load(conn)
+        names = sorted(({t.get("account") or "" for t in db.list_transactions(conn)} | set(accts)) - {""})
+    y, live = await asyncio.to_thread(cash.tbill_yield)
+    return dict(cash.view(accts, date.today(), y, live), names=names or ["Robinhood", "Stash", "Coinbase"])
+
+
+class CashAcctIn(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    amount: float = Field(ge=0, le=1e10)
+    apy: float | None = Field(default=None, ge=0, le=20)
+
+
+@app.post("/api/cash/accounts")
+def set_cash_account(body: CashAcctIn):
+    from . import cash
+    with db.connect() as conn:
+        cash.save(conn, body.account.strip(), body.amount, body.apy, date.today())
     holdplan.clear_cache()
     return {"ok": True}
 

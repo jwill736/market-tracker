@@ -137,3 +137,47 @@ def test_sync_diffs_are_remembered_for_suggestions():
                     None, datetime.now(timezone.utc))
     s = TestClient(api.app).get("/api/transfers").json()["suggested"]
     assert s and s[0]["from"] == "Coinbase" and s[0]["to"] == "Robinhood"
+
+
+def test_tax_export_rows_wash_and_income():
+    from market_tracker import taxexport
+    c = TestClient(api.app)
+    add = lambda **k: c.post("/api/transactions", json=k)  # noqa: E731
+    add(symbol="AAPL", side="buy", quantity=10, price=200, date="2024-01-05", account="Robinhood")
+    add(symbol="AAPL", side="sell", quantity=10, price=150, date="2026-02-01", account="Robinhood")   # long-term loss
+    add(symbol="AAPL", side="buy", quantity=10, price=155, date="2026-02-10", account="Stash")        # washes it (other account)
+    add(symbol="NVDA", side="buy", quantity=2, price=100, date="2026-01-02", account="Robinhood")
+    add(symbol="NVDA", side="sell", quantity=1, price=130, date="2026-03-02", account="Robinhood")    # short-term gain
+    with db.connect() as conn:
+        db.add_transaction(conn, "SOL-USD", "buy", 1.5, 20.0, "2026-04-01", note="Coinbase import: staking income",
+                           import_key="cb:s1", account="Coinbase")
+        db.add_income(conn, [{"symbol": "AAPL", "day": "2026-05-15", "amount": 2.4, "kind": "dividend", "account": "Stash",
+                              "import_key": "d1"}])
+    s = c.get("/api/taxes/export", params={"year": 2026}).json()
+    assert s["short"]["gain"] == 30.0 and s["long"]["gain"] == 0.0 and s["long"]["adjustment"] == 500.0
+    assert s["wash_rows"] == 1 and s["income"] == {"dividend": 2.4, "crypto_reward": 30.0}
+    csv_text = c.get("/api/taxes/export/sales.csv", params={"year": 2026}).text
+    lines = csv_text.strip().splitlines()
+    assert lines[0].startswith("term,description,date_acquired") and len(lines) == 3
+    assert "long,10 sh AAPL,2024-01-05,2026-02-01,1500.0,2000.0,W,500.0,0.0,Robinhood,security" in csv_text
+    inc = c.get("/api/taxes/export/income.csv", params={"year": 2026}).text
+    assert "crypto_reward,SOL-USD,30.0,Coinbase" in inc
+    assert taxexport._desc("BTC-USD", 0.5) == "0.5 BTC"
+
+
+def test_lot_compare_endpoint_and_account_methods():
+    c = TestClient(api.app)
+    for d, p in (("2023-01-03", 100), ("2026-06-01", 300)):
+        c.post("/api/transactions", json={"symbol": "MSFT", "side": "buy", "quantity": 5, "price": p, "date": d, "account": "Robinhood"})
+    r = c.get("/api/lots/compare", params={"symbol": "MSFT", "quantity": 5, "price": 250, "account": "Robinhood"}).json()
+    by = {m["method"]: m for m in r["methods"]}
+    assert by["fifo"]["long_term"] == 750.0 and by["hifo"]["short_term"] == -250.0
+    assert r["best"] in ("hifo", "min_tax") and r["saves_vs_fifo"] > 0 and not r["short"]
+    # The account's method changes what the ledger (and taxes) take on a sale.
+    assert c.post("/api/lots/methods", json={"account": "Robinhood", "method": "hifo"}).status_code == 200
+    c.post("/api/transactions", json={"symbol": "MSFT", "side": "sell", "quantity": 5, "price": 250, "date": "2026-09-01",
+                                      "account": "Robinhood"})
+    with db.connect() as conn:
+        _, sales = taxes.lots_and_sales(db.ledger(conn))
+    assert [round(x.cost, 2) for x in sales] == [1500.0]
+    assert c.get("/api/lots/methods").json()["methods"] == {"Robinhood": "hifo"}

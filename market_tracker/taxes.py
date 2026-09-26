@@ -112,6 +112,7 @@ class Realized:
     long_term: bool
     account: str = ""
     lot_tx: int = 0
+    bought: str = ""           # when the lot was bought
 
 
 def _tx_id(t: dict, i: int) -> int:
@@ -207,9 +208,43 @@ def lots_and_sales(transactions: list[dict], methods: dict[str, str] | None = No
             left -= take
             long_term = (date.fromisoformat(tx["date"][:10]) - date.fromisoformat(lot.date)).days > 365
             sales.append(Realized(sym, tx["date"][:10], take, take * price, take * lot.cost,
-                                  take * (price - lot.cost), long_term, acct, lot.tx))
+                                  take * (price - lot.cost), long_term, acct, lot.tx, lot.date))
         lots[sym] = [lt for lt in held if lt.quantity > 1e-9]
     return lots, sales
+
+
+def compare_methods(lots: dict[str, list[Lot]], symbol: str, quantity: float, price: float, today: date,
+                    account: str = "", st_rate: float = ST_RATE, lt_rate: float = LT_RATE) -> dict:
+    """Selling `quantity` of `symbol` now under each cost-basis method: which lots go, the
+    short- and long-term gain, and the federal tax at your rates (a loss shows as tax saved on
+    other gains). Lots come from `account`
+    first (any account when blank), as a sale there would take them."""
+    held = [lt for lt in lots.get(symbol, []) if not account or lt.account == account]
+    have = sum(lt.quantity for lt in held)
+    on = today.isoformat()
+    rows = []
+    for method, label in LOT_METHODS.items():
+        left, st, lt_gain, used = quantity, 0.0, 0.0, []
+        for lot in order_lots(held, method, price, on):
+            if left <= 1e-12:
+                break
+            take = min(left, lot.quantity)
+            gain = (price - lot.cost) * take
+            long_term = (today - date.fromisoformat(lot.date)).days > 365
+            if long_term:
+                lt_gain += gain
+            else:
+                st += gain
+            used.append({"bought": lot.date, "quantity": round(take, 8), "cost": round(lot.cost, 4), "gain": round(gain, 2),
+                         "long_term": long_term, "account": lot.account})
+            left -= take
+        rows.append({"method": method, "label": label, "short_term": round(st, 2), "long_term": round(lt_gain, 2),
+                     "tax": round(st * st_rate + lt_gain * lt_rate, 2), "lots": used})
+    best = min(rows, key=lambda r: (r["tax"], r["short_term"] + r["long_term"]))["method"] if rows else None
+    fifo = next((r["tax"] for r in rows if r["method"] == "fifo"), 0.0)
+    return {"symbol": symbol, "quantity": quantity, "price": price, "account": account, "held": round(have, 8),
+            "short": quantity > have + 1e-9, "methods": rows, "best": best,
+            "saves_vs_fifo": round(fifo - min((r["tax"] for r in rows), default=fifo), 2)}
 
 
 # ------------------------------------------------------------------ wash sales

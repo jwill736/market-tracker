@@ -177,8 +177,14 @@ def add_transaction(conn, symbol: str, side: str, quantity: float, price: float,
 def ledger(conn) -> list[dict]:
     """Every trade plus moves between your own accounts (transfers.with_moves): what each account
     holds and what each lot cost. Use list_transactions for the trades alone."""
+    import json
     from . import transfers
-    return transfers.with_moves(list_transactions(conn), transfers.moves(transfers.from_rows(transfer_legs(conn))))
+    txs = list_transactions(conn)
+    methods = json.loads(get_meta(conn, "lot_methods", "{}") or "{}")
+    if methods:     # each account's cost-basis method, so sales take the lots the broker took
+        txs = [dict(t, lot_method=methods[t.get("account") or ""]) if t["side"] == "sell" and (t.get("account") or "") in methods
+               else t for t in txs]
+    return transfers.with_moves(txs, transfers.moves(transfers.from_rows(transfer_legs(conn))))
 
 
 def transfer_legs(conn) -> list[dict]:

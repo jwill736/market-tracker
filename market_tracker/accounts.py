@@ -87,6 +87,8 @@ def sync_coinbase() -> dict:
             db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
                                import_key=t["import_key"], account="Coinbase")
         cb_qty = account_quantities(db.ledger(conn), "Coinbase")
+        from . import cash
+        cash.save(conn, "Coinbase", sum(bal.get(c, 0.0) for c in ("USD", "USDC")), None, date.today(), "Coinbase sync")
     diffs = coinbase_sync.reconcile(bal, cb_qty)
     return {"new": len(new), "duplicates": len(txs) - len(new), "differences": diffs,
             "by_account": {"Coinbase": [{"symbol": d["coin"] + "-USD", "difference": d["difference"]} for d in diffs]},
@@ -174,11 +176,19 @@ def sync_robinhood_crypto() -> dict:
     try:
         txs = robinhood_crypto.orders_to_transactions(robinhood_crypto.orders())
         held = robinhood_crypto.holdings()
+        try:
+            buying_power = float(robinhood_crypto.account().get("buying_power") or 0)
+        except (TypeError, ValueError, AttributeError):
+            buying_power = None
     except robinhood_crypto.RobinhoodError as exc:
         raise SyncError(502, str(exc))
     fresh, dup = _insert_new(sorted(txs, key=lambda t: t["date"]), "Robinhood Crypto")
     with db.connect() as conn:
         qty = {s: q for s, q in account_quantities(db.ledger(conn), robinhood_crypto.ACCOUNT).items() if s.endswith("-USD")}
+        if buying_power is not None:
+            from . import cash
+            if (cash.load(conn).get(robinhood_crypto.ACCOUNT) or {}).get("source", "Robinhood crypto API") == "Robinhood crypto API":
+                cash.save(conn, robinhood_crypto.ACCOUNT, buying_power, None, date.today(), "Robinhood crypto API")
     diffs = [{"symbol": s, "broker": round(held.get(s, 0.0), 8), "ledger": round(qty.get(s, 0.0), 8),
               "difference": round(held.get(s, 0.0) - qty.get(s, 0.0), 8)}
              for s in sorted(set(held) | {k for k, v in qty.items() if abs(v) > 1e-9})

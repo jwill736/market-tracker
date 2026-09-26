@@ -106,7 +106,8 @@ def held_in(transactions: list[dict], symbol: str, account: str) -> float:
 
 
 def checks(order: Order, usd: float, price: float, transactions: list[dict], plan: dict | None, today: date,
-           st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE) -> tuple[list[str], list[str]]:
+           st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE,
+           methods: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """(warnings, blockers) for an order about to be placed."""
     warn, block = [], []
     account = {"coinbase": "Coinbase", "robinhood": "Robinhood"}.get(order.venue, "")
@@ -128,8 +129,10 @@ def checks(order: Order, usd: float, price: float, transactions: list[dict], pla
             if qty > have * 1.0001:
                 block.append(f"Your ledger shows {have:g} {order.symbol} in {account}; this sells {qty:g}")
         lots, _ = taxes.lots_and_sales(transactions)
+        method = (methods or {}).get(account, "fifo")
         left, gain_st, gain_lt = qty, 0.0, 0.0
-        for lot in [lt for lt in lots.get(order.symbol, []) if not account or lt.account == account]:
+        mine = [lt for lt in lots.get(order.symbol, []) if not account or lt.account == account]
+        for lot in taxes.order_lots(mine, method, price, today.isoformat()):
             if left <= 0:
                 break
             take = min(left, lot.quantity)
@@ -140,6 +143,11 @@ def checks(order: Order, usd: float, price: float, transactions: list[dict], pla
                 gain_st += g
             left -= take
         tax = gain_st * st_rate + gain_lt * lt_rate
+        cmp = taxes.compare_methods(lots, order.symbol, qty, price, today, account, st_rate, lt_rate)
+        best = next((r for r in cmp["methods"] if r["method"] == cmp["best"]), None)
+        if best and best["method"] != method and tax - best["tax"] >= 5:
+            warn.append(f"Choosing lots {best['label'].split(' (')[0].lower()} at your broker would cut the tax on this sale by about "
+                        f"${tax - best['tax']:,.0f} (Portfolio → Taxes → Which shares to sell)")
         if gain_st + gain_lt > 0:
             warn.append(f"Gain of about ${gain_st + gain_lt:,.0f} ({'short' if gain_st >= gain_lt else 'long'}-term): "
                         f"about ${tax:,.0f} in federal tax at your rates")
@@ -203,7 +211,7 @@ def venue_quote(order: Order, cb_send=None, rh_send=None) -> dict:
 
 
 def preview(order: Order, transactions: list[dict], plan: dict | None, cfg: dict, spent: float, *,
-            now: float | None = None, today: date | None = None, quote_fn=None) -> dict:
+            now: float | None = None, today: date | None = None, quote_fn=None, methods: dict[str, str] | None = None) -> dict:
     now = now or time.time()
     today = today or date.today()
     if order.side not in ("buy", "sell"):
@@ -215,7 +223,7 @@ def preview(order: Order, transactions: list[dict], plan: dict | None, cfg: dict
     except (http.DataUnavailable, robinhood_crypto.RobinhoodError, KeyError, ValueError) as exc:
         raise TradeError(f"Couldn't get a price from {order.venue}: {exc}")
     usd = q["usd"] or (order.dollars or 0)
-    warn, block = checks(order, usd, q["price"], transactions, plan, today)
+    warn, block = checks(order, usd, q["price"], transactions, plan, today, methods=methods)
     block += q.get("errors") or []
     if order.venue != "ticket":
         if not cfg["enabled"]:
