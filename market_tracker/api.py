@@ -14,11 +14,11 @@ from urllib.parse import parse_qs
 
 import anthropic
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import (auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, notify, pulse, radar, reading, research, snaptrade,
+from . import (accounts, auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, logos, notify, pulse, radar, reading, research, snaptrade,
                sentinel, service, strategy, taxes)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
@@ -247,15 +247,36 @@ def holdings():
         pos = service.pf.build_positions(txs)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    accounts: dict[str, set[str]] = {}
+    by_acct: dict[str, dict[str, float]] = {}
     for t in txs:
-        accounts.setdefault(t["symbol"].upper(), set()).add(t.get("account") or "")
-    return [{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "cost_basis": p.cost_basis,
-             "accounts": sorted(a for a in accounts.get(p.symbol, ()) if a)}
-            for p in pos.values() if p.quantity > 0]
+        d = by_acct.setdefault(t["symbol"].upper(), {})
+        a = t.get("account") or ""
+        d[a] = d.get(a, 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    out = []
+    for p in pos.values():
+        if p.quantity <= 0:
+            continue
+        held = {a: round(q, 8) for a, q in by_acct.get(p.symbol, {}).items() if q > 1e-9}
+        out.append({"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost, "cost_basis": p.cost_basis,
+                    "accounts": sorted(a for a in held if a), "by_account": held})
+    return out
 
 
 # ------------------------------------------------------------------ smart money
+
+@app.get("/api/logo/{symbol}", include_in_schema=False)
+async def logo_image(symbol: str):
+    """A ticker's logo (fetched once, then served from disk), or a letter on a circle."""
+    data, ctype = await asyncio.to_thread(logos.logo, symbol)
+    return Response(content=data, media_type=ctype, headers={"Cache-Control": "private, max-age=604800"})
+
+
+@app.get("/api/names")
+async def ticker_names(symbols: str = Query("", max_length=4000)):
+    """{symbol: company or coin name} for a comma-separated list."""
+    syms = [s for s in symbols.split(",") if s.strip()]
+    return await asyncio.to_thread(logos.names, syms)
+
 
 @app.get("/api/investors")
 def investors():
@@ -893,35 +914,14 @@ def coinbase_status():
 
 
 @app.post("/api/sync/coinbase")
-def coinbase_sync_now():
+async def coinbase_sync_now():
     """Import new Coinbase fills (read-only key) and compare balances with the ledger."""
-    if not coinbase_sync.configured():
-        raise HTTPException(400, "Add COINBASE_API_KEY_NAME and COINBASE_API_PRIVATE_KEY (a View-only key) to .env first.")
     try:
-        txs = coinbase_sync.fills_to_transactions(coinbase_sync.fills())
-        bal = coinbase_sync.balances()
-    except (http.DataUnavailable, ValueError) as exc:
-        raise HTTPException(502, f"Coinbase: {exc}")
-    res = coinbase_sync.SyncResult()
-    with db.connect() as conn:
-        known = db.import_keys(conn)
-        new = [t for t in txs if t["import_key"] not in known]
-        existing = db.list_transactions(conn)
-        try:
-            positions = service.pf.build_positions(existing + new)
-        except ValueError as exc:
-            raise HTTPException(400, f"{exc}. Coins that arrived by transfer or reward need adding first (Quick add).")
-        for t in new:
-            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
-                               import_key=t["import_key"], account="Coinbase")
-    res.new, res.duplicates = len(new), len(txs) - len(new)
-    cb_qty: dict[str, float] = {}
-    for t in existing + new:
-        if (t.get("account") or "") == "Coinbase":
-            cb_qty[t["symbol"]] = cb_qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
-    res.differences = coinbase_sync.reconcile(bal, cb_qty)
-    return {"new": res.new, "duplicates": res.duplicates, "differences": res.differences,
-            "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
+        out = await asyncio.to_thread(accounts.run_sync, "coinbase")
+    except accounts.SyncError as exc:
+        raise HTTPException(exc.status, str(exc))
+    holdplan.clear_cache()
+    return out
 
 
 @app.get("/api/sync/snaptrade")
@@ -943,60 +943,23 @@ async def snaptrade_connect():
 async def snaptrade_sync_now():
     """Import new trades, reinvested dividends, dividends and interest from every connected
     account, then compare positions with the ledger."""
-    if not snaptrade.configured():
-        raise HTTPException(400, "Add SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY (a personal SnapTrade key) to .env first.")
     try:
-        got = await asyncio.to_thread(snaptrade.fetch_all)
-    except snaptrade.SnapTradeError as exc:
-        raise HTTPException(502, str(exc))
-    if not got:
-        return {"accounts": [], "new": 0, "duplicates": 0, "income_new": 0, "differences": [], "skipped": {},
-                "note": "No broker connected yet: use Connect a broker first."}
-    with db.connect() as conn:
-        existing = db.list_transactions(conn)
-        known = db.import_keys(conn)
-        known_income = db.income_keys(conn)
-        have_income = db.income(conn)
-        new_tx, new_inc, skipped, drip, dup = [], [], {}, set(), 0
-        per_account = []
-        for a in got:
-            acct = a["account"]
-            name = snaptrade.account_name(acct)
-            inst = acct.get("institution_name") or ""
-            txs, inc, sk, dr = snaptrade.to_rows(a["activities"], name, inst)
-            drip |= dr
-            for k, n in sk.items():
-                skipped[k] = skipped.get(k, 0) + n
-            fresh, d = snaptrade.new_only(txs, known, existing, snaptrade.match)
-            dup += d
-            new_tx += fresh
-            new_inc += snaptrade.new_only(inc, known_income, have_income, snaptrade.match_income)[0]
-            per_account.append({"name": name, "institution": inst, "id": acct.get("id"), "trades": len(fresh),
-                                "positions": (a["holdings"] or {}).get("positions") or []})
-        try:
-            service.pf.build_positions(existing + new_tx)
-        except ValueError as exc:
-            raise HTTPException(400, f"{exc}. Shares that arrived by transfer have no purchase in the broker's history: "
-                                     "add them with Stash / other (their original cost), then sync again.")
-        for t in sorted(new_tx, key=lambda t: t["date"]):
-            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
-                               import_key=t["import_key"], account=t["account"])
-        db.add_income(conn, new_inc)
-        if drip:
-            old = set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
-            db.set_meta(conn, "drip_symbols", json.dumps(sorted(old | drip)))
-        db.set_meta(conn, "snaptrade_last_sync", date.today().isoformat())
-        ledger = db.list_transactions(conn)
-    differences = []
-    for a in per_account:
-        qty: dict[str, float] = {}
-        for t in ledger:
-            if (t.get("account") or "") == a["name"]:
-                qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
-        differences += [dict(d, account=a["name"]) for d in snaptrade.reconcile(a["positions"], qty, a["institution"])]
+        out = await asyncio.to_thread(accounts.run_sync, "snaptrade")
+    except accounts.SyncError as exc:
+        raise HTTPException(exc.status, str(exc))
     holdplan.clear_cache()
-    return {"accounts": [{"name": a["name"], "new": a["trades"]} for a in per_account], "new": len(new_tx), "duplicates": dup,
-            "income_new": len(new_inc), "differences": differences, "skipped": skipped}
+    return out
+
+
+@app.get("/api/accounts")
+def accounts_view():
+    """Each account: what's in it, how it reaches this app, and how fresh it is."""
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        inc = db.income(conn)
+    return {"accounts": accounts.overview(txs, inc),
+            "connections": {"coinbase_api": coinbase_sync.configured(), "snaptrade": snaptrade.configured(),
+                            "coinbase_last": accounts.last_sync("coinbase"), "snaptrade_last": accounts.last_sync("snaptrade")}}
 
 
 @app.get("/api/backup")

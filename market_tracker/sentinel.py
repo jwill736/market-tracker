@@ -181,6 +181,11 @@ class Sentinel:
                 await asyncio.to_thread(send_brief_if_due)
             except Exception:
                 pass
+            try:
+                from . import accounts
+                await asyncio.to_thread(accounts.auto_sync, None, raise_headsup)
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:

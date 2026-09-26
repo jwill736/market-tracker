@@ -9,4 +9,5 @@ build/
 dist/
 signal_journal.csv
 plumbline.log
+logo_cache/
 plumbline.pid
