@@ -58,7 +58,7 @@ const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
 const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
-  news: ["mynews", "reading"], portfolio: ["portfolio"] };
+  news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
 document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(lastPage[btn.dataset.group] || GROUP_PAGES[btn.dataset.group][0])));
@@ -76,7 +76,9 @@ function selectTab(name) {
     if (cur && !cur.hidden) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
-  if (name === "portfolio") { loadPortfolio(); loadConnections(); loadSchedules(); }
+  if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
+  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); }
+  if (name === "taxes") loadTaxes();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
@@ -1751,10 +1753,10 @@ function renderAccounts() {
   $("#home-accounts").innerHTML = rows.join("") || `<p class="muted small">No accounts yet: Portfolio → Import your accounts.</p>`;
   $("#home-acct-meta").textContent = acctData.connections.snaptrade ? "SnapTrade connected" : "";
   document.querySelectorAll("[data-acct-import]").forEach((b) => b.addEventListener("click", () => {
-    selectTab("portfolio");
     // Connecting beats re-importing: open the account's connection first.
     const cx = { robinhood: "#cx-email", coinbase: "#cx-coinbase", holdings: "#cx-email" }[b.dataset.acctImport];
     const el = cx && $(cx);
+    selectTab(el ? "accounts" : "portfolio");
     if (el) { el.open = true; setTimeout(() => el.scrollIntoView({ block: "center" }), 50); return; }
     const seg = document.querySelector(`#imp-seg button[data-src="${b.dataset.acctImport}"]`);
     if (seg) { seg.click(); seg.scrollIntoView({ block: "center" }); }
@@ -1901,7 +1903,7 @@ async function setupSending(sym, $$, shares, price) {
   const box = $$("tt-live");
   if (!apiVenues.length) {
     box.hidden = false;
-    box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Connections) to send orders from here."
+    box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Accounts) to send orders from here."
       : "Stocks and funds are placed in Robinhood or Stash (no broker offers individuals a stock API). Open it there; the confirmation email brings the trade in automatically once your email is connected."}</p>`;
     return;
   }
@@ -2382,3 +2384,65 @@ if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(
 if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// ---------------------------------------------------------------- transfers between your accounts
+async function loadTransfers() {
+  let v;
+  try { v = await api("/api/transfers"); } catch (err) { $("#tf-open").textContent = err.message; return; }
+  $("#tf-accts").innerHTML = v.accounts.map((a) => `<option value="${esc(a)}">`).join("");
+  if (!$("#tf-day").value) $("#tf-day").value = localDate();
+  const others = (leg) => v.open.filter((o) => o.symbol === leg.symbol && o.direction !== leg.direction);
+  $("#tf-open").innerHTML = v.open.length ? `<h3 class="small">Needs a decision</h3>` + v.open.map((g) => {
+    const pairs = others(g).map((o) => `<option value="${o.id}">${esc(o.direction === "in" ? "arrived in" : "left")} ${esc(o.account)} ${esc(o.day)} (${fmtShares(o.quantity)})</option>`).join("");
+    const act = g.direction === "in"
+      ? `<form class="inline-form tf-act" data-leg="${g.id}" data-how="bought"><label>paid $<input name="cost" type="number" step="any" min="0" required></label>
+          <label>on <input name="acquired" type="date" required></label><button type="submit" class="small">Save cost</button></form>`
+      : `<form class="inline-form tf-act" data-leg="${g.id}" data-how="wallet"><input name="account" placeholder="My wallet's name" required maxlength="60">
+          <button type="submit" class="small">Moved to my wallet</button></form>
+         <form class="inline-form tf-act" data-leg="${g.id}" data-how="sold"><label>spent at $<input name="price" type="number" step="any" min="0" required></label>
+          <button type="submit" class="small secondary">Spent / sold</button></form>`;
+    return `<div class="tf-item"><p>${logoImg(g.symbol, 16)} ${esc(g.ask)}</p>
+      ${pairs ? `<form class="inline-form tf-act" data-leg="${g.id}" data-how="pair"><select name="other">${pairs}</select><button type="submit" class="small">Same move</button></form>` : ""}
+      ${act}<button type="button" class="link small tf-del" data-leg="${g.id}">Delete</button></div>`;
+  }).join("") : `<p class="muted">Nothing waiting: every send and receive is accounted for.</p>`;
+  $("#tf-suggest").innerHTML = v.suggested.length ? `<h3 class="small mt">Looks like a move</h3>` + v.suggested.map((m, i) =>
+    `<p>${logoImg(m.symbol, 16)} ${esc(m.from)} has ${fmtShares(m.sent)} ${esc(m.symbol)} less than the ledger says and ${esc(m.to)} has ${fmtShares(m.received)} more.
+     <button type="button" class="small tf-accept" data-i="${i}">Record the move</button></p>`).join("") : "";
+  $("#tf-moves").innerHTML = v.moves.map((m) => `<li>${logoImg(m.symbol, 16)} <b>${esc(m.symbol)}</b> ${fmtShares(m.sent)} from ${esc(m.from)} → ${esc(m.to)}
+      ${m.received !== m.sent ? `(${fmtShares(m.received)} arrived)` : ""} · ${esc(m.sent_on)} <button type="button" class="link small tf-del" data-leg="${m.id}">Undo</button></li>`).join("")
+    || `<li class="muted">No moves recorded.</li>`;
+  document.querySelectorAll(".tf-act").forEach((f) => f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f));
+    const body = { how: f.dataset.how };
+    if (d.other) body.other = +d.other;
+    if (d.cost) body.cost = +d.cost;
+    if (d.acquired) body.acquired = d.acquired;
+    if (d.account) body.account = d.account.trim();
+    if (d.price) body.price = +d.price;
+    try { await api(`/api/transfers/${f.dataset.leg}/resolve`, { method: "POST", body: JSON.stringify(body) }); loadTransfers(); loadHoldings(); }
+    catch (err) { alert(err.message); }
+  }));
+  document.querySelectorAll(".tf-del").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Delete this? A cost or sale it added is removed too.")) return;
+    await api(`/api/transfers/${b.dataset.leg}`, { method: "DELETE" }); loadTransfers(); loadHoldings();
+  }));
+  document.querySelectorAll(".tf-accept").forEach((b) => b.addEventListener("click", async () => {
+    const m = v.suggested[+b.dataset.i];
+    try {
+      await api("/api/transfers", { method: "POST", body: JSON.stringify({ symbol: m.symbol, from_account: m.from, to_account: m.to,
+        sent: m.sent, received: m.received, day: $("#tf-day").value || localDate() }) });
+      loadTransfers(); loadHoldings();
+    } catch (err) { alert(err.message); }
+  }));
+}
+$("#tf-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const recv = $("#tf-recv").value;
+  try {
+    await api("/api/transfers", { method: "POST", body: JSON.stringify({ symbol: $("#tf-sym").value.trim(), from_account: $("#tf-from").value.trim(),
+      to_account: $("#tf-to").value.trim(), sent: +$("#tf-sent").value, received: recv ? +recv : null, day: $("#tf-day").value }) });
+    $("#tf-msg").className = "small up"; $("#tf-msg").textContent = "Recorded: the lots moved with their original cost and dates.";
+    e.target.reset(); loadTransfers(); loadHoldings();
+  } catch (err) { $("#tf-msg").className = "small down"; $("#tf-msg").textContent = err.message; }
+});

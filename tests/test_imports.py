@@ -27,7 +27,10 @@ def test_coinbase_new_layout():
     assert got == [("BTC-USD", "buy", 0.01, 40000.0, 5.99), ("ETH-USD", "buy", 0.002, 3000.0, 0.0),
                    ("ETH-USD", "buy", 1.0, 2500.0, 15.0), ("ETH-USD", "sell", 0.5, 2000.0, 0.0),
                    ("USDC-USD", "buy", 1000.0, 1.0, 0.0), ("BTC-USD", "sell", 0.004, 65000.0, 2.0)]
-    assert dict(res.skipped) == {"Send": 1} and not res.errors
+    assert dict(res.skipped) == {} and not res.errors
+    # A Send is one side of a move (paired with where it went under Portfolio → Transfers), not skipped.
+    assert [(g["symbol"], g["direction"], g["quantity"], g["day"], g["account"]) for g in res.transfers] == \
+        [("BTC-USD", "out", 0.001, "2025-05-01", "Coinbase")]
     assert all(t["account"] == "Coinbase" for t in res.transactions)
     assert len({t["import_key"] for t in res.transactions}) == len(res.transactions)
     assert importers.parse_coinbase(CB_NEW).transactions[0]["import_key"] == res.transactions[0]["import_key"]
@@ -64,5 +67,5 @@ def test_import_endpoint_all_sources_and_accounts(monkeypatch):
     assert round(held["BTC-USD"]["quantity"], 6) == 0.016
     over = "ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes\nz,2025-01-01 00:00:00 UTC,Sell,DOGE,100,USD,$0.10,$10,$10,$0,\n"
     bad = c.post("/api/import/coinbase", json={"csv": over})
-    assert bad.status_code == 400 and "Quick add" in bad.json()["detail"]
+    assert bad.status_code == 400 and "Portfolio → Transfers" in bad.json()["detail"]
     assert c.post("/api/import/nope", json={"csv": "x"}).status_code == 422

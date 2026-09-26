@@ -258,8 +258,8 @@ def state_key() -> tuple:
     import json
     from . import db
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
-        return (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
+        txs = db.ledger(conn)
+        return (len(txs), max((t["id"] for t in txs if t.get("transfer") is None), default=0), json.dumps(db.theses(conn), sort_keys=True),
                 db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(settings(conn).items()),
                 date.today().isoformat())
 
@@ -291,7 +291,7 @@ def gather(today: date | None = None) -> dict:
     from . import db, events, fundamentals, http, sentinel, service
     today = today or date.today()
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
         raw = db.theses(conn)
         cash = float(db.get_meta(conn, "cash", "0") or 0)

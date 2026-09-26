@@ -25,10 +25,26 @@ class Position:
 
 def build_positions(transactions: list[dict]) -> dict[str, Position]:
     positions: dict[str, Position] = {}
+    transit: dict = {}
     for tx in sorted(transactions, key=lambda t: (t["date"], t.get("id", 0))):
         sym = tx["symbol"].upper()
         pos = positions.setdefault(sym, Position(sym, 0.0, 0.0, 0.0, 0.0))
         qty, price, fees = float(tx["quantity"]), float(tx["price"]), float(tx.get("fees") or 0)
+        if tx.get("transfer") is not None:
+            # A move between your own accounts: the cost goes with the coins; nothing is realized.
+            if tx["side"] == "sell":
+                take = min(qty, pos.quantity)
+                transit[tx["transfer"]] = (pos.avg_cost * take, take / qty if qty else 0.0)
+                pos.cost_basis -= pos.avg_cost * take
+                pos.quantity -= take
+            else:
+                basis, share = transit.pop(tx["transfer"], (qty * price, 1.0))
+                pos.cost_basis += basis
+                pos.quantity += qty * share      # only what was actually there to send arrives
+            pos.avg_cost = pos.cost_basis / pos.quantity if pos.quantity > 1e-12 else 0.0
+            if pos.quantity < 1e-9:
+                pos.quantity, pos.cost_basis = 0.0, 0.0
+            continue
         if tx["side"] == "buy":
             pos.cost_basis += qty * price + fees
             pos.quantity += qty

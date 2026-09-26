@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (accounts, auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, logos, notify, pulse, radar, reading, research, snaptrade,
-               sentinel, service, strategy, taxes, trading)
+               sentinel, service, strategy, taxes, trading, transfers)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -258,7 +258,7 @@ def set_cash(body: CashIn):
 def holdings():
     """Open positions from the ledger, without prices (cheap; the page fills prices live)."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     try:
         pos = service.pf.build_positions(txs)
     except ValueError as exc:
@@ -361,8 +361,8 @@ def list_transactions():
 def add_transaction(tx: TransactionIn):
     symbol = market.normalize_symbol(tx.symbol)
     with db.connect() as conn:
-        existing = db.list_transactions(conn)
-        candidate = existing + [dict(tx.model_dump(), symbol=symbol, id=10**12)]
+        existing = db.ledger(conn)
+        candidate = existing + [dict(tx.model_dump(), symbol=symbol, id=10**12 - 1)]
         try:
             service.pf.build_positions(candidate)
         except ValueError as exc:
@@ -620,7 +620,7 @@ async def tax_year_end():
     plan = await _holdplan_data()
     with db.connect() as conn:
         cfg = _yearend_settings(conn)
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         drip = {r["symbol"] for r in db.income(conn) if r["kind"] == "reinvested"} | set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
     out = taxes.year_end(plan["tax"], txs, date.today(), st_rate=plan["rules"]["short_term_rate"], lt_rate=plan["rules"]["long_term_rate"],
                          upcoming_dividends=_income_last.get("upcoming"), drip_symbols=drip, **cfg)
@@ -731,7 +731,7 @@ async def strategy_plan(cash: float = Query(0.0, ge=0, le=1e10)):
     """Sell / trim / hold / add for each holding, plus new buys, with shares, reasons and tax
     notes. Each day's first recommendations are logged and returned as `history`."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
     summary = {"positions": [], "total_value": 0.0}
     if txs:
@@ -1122,7 +1122,7 @@ def trade_venues(symbol: str):
 @app.post("/api/trade/preview")
 async def trade_preview(body: TradeIn):
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         cfg = trading.settings(conn)
         spent = trading.spent_today(conn)
     try:
@@ -1297,9 +1297,11 @@ _analysis_cache = sentinel.Cache(1800)
 
 
 def _valued_positions() -> tuple[list[dict], list[dict]]:
+    """(valued positions, your trades): positions include moves between accounts; the trades don't."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
-    return (service.portfolio_summary(txs, False)["positions"] if txs else []), txs
+        led = db.ledger(conn)
+    txs = [t for t in led if t.get("transfer") is None]
+    return (service.portfolio_summary(led, False)["positions"] if txs else []), txs
 
 
 @app.get("/api/benchmark")
@@ -1322,7 +1324,8 @@ def _ledger_key() -> tuple:
     """Changes whenever a trade is added or removed (so cached analyses refresh)."""
     with db.connect() as conn:
         r = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM transactions").fetchone()
-        return (r["n"], r["m"])
+        g = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(pair IS NOT NULL), 0) AS p FROM transfer_legs").fetchone()
+        return (r["n"], r["m"], g["n"], g["p"])
 
 
 @app.get("/api/lookthrough")
@@ -1377,7 +1380,7 @@ def statement_check(body: StatementIn):
     except Exception as exc:  # noqa: BLE001 - any unreadable PDF is the same answer
         raise HTTPException(400, f"Couldn't read that PDF: {str(exc)[:120]}")
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     ledger: dict[str, float] = {}
     for t in txs:
         if (t.get("account") or "") == body.account:
@@ -1411,11 +1414,130 @@ async def snaptrade_sync_now():
     return out
 
 
+# ------------------------------------------------------------------ transfers between your accounts
+
+@app.get("/api/transfers")
+def transfers_view():
+    """Moves between your accounts (paired), legs still waiting for a decision, and moves the
+    latest balance checks suggest (an account short of a coin next to one with extra)."""
+    with db.connect() as conn:
+        legs = transfers.from_rows(db.transfer_legs(conn))
+    return {"moves": transfers.moves(legs), **transfers.open_items(legs),
+            "suggested": transfers.suggest_from_differences(accounts.balance_differences(), legs, date.today().isoformat()),
+            "accounts": sorted({lg.account for lg in legs} | {"Coinbase", "Robinhood", "Stash"})}
+
+
+class MoveIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    from_account: str = Field(min_length=1, max_length=60)
+    to_account: str = Field(min_length=1, max_length=60)
+    sent: float = Field(gt=0, le=1e12)
+    received: float | None = Field(default=None, gt=0, le=1e12)
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    arrived: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.post("/api/transfers", status_code=201)
+def add_move(body: MoveIn):
+    """Record a move you made (both sides at once)."""
+    if body.from_account.strip() == body.to_account.strip():
+        raise HTTPException(400, "The two accounts are the same.")
+    received = body.received or body.sent
+    if received > body.sent * (1 + 1e-9):
+        raise HTTPException(400, "More arrived than was sent.")
+    sym = market.normalize_symbol(body.symbol)
+    with db.connect() as conn:
+        had = accounts.account_quantities([t for t in db.ledger(conn) if t["date"][:10] <= body.day], body.from_account.strip())
+        if had.get(sym, 0.0) < body.sent * (1 - 1e-9):
+            raise HTTPException(400, f"Your ledger shows {had.get(sym, 0.0):g} {sym} in {body.from_account.strip()} on "
+                                     f"{body.day}; this sends {body.sent:g}.")
+        o = db.add_leg(conn, sym, "out", body.sent, body.day, body.from_account.strip(), note="Recorded by hand")
+        i = db.add_leg(conn, sym, "in", received, body.arrived or body.day, body.to_account.strip(), note="Recorded by hand")
+        db.pair_legs(conn, o, i)
+        try:
+            service.pf.build_positions(db.ledger(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"out": o, "in": i}
+
+
+class ResolveIn(BaseModel):
+    how: Literal["pair", "bought", "wallet", "sold", "ignore"]
+    other: int | None = None                    # pair: the other leg's id
+    cost: float | None = Field(default=None, ge=0, le=1e12)          # bought: price per unit originally paid
+    acquired: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")   # bought: when
+    account: str | None = Field(default=None, max_length=60)        # wallet: the wallet's name
+    price: float | None = Field(default=None, ge=0, le=1e12)         # sold: price per unit
+
+
+@app.post("/api/transfers/{leg_id}/resolve")
+def resolve_transfer(leg_id: int, body: ResolveIn):
+    """Decide what an unpaired leg was: the other side of a move, coins bought elsewhere (their
+    original cost and date), a move to a wallet of yours, or spent / sold."""
+    with db.connect() as conn:
+        rows = {r["id"]: r for r in db.transfer_legs(conn)}
+        leg = rows.get(leg_id)
+        if not leg:
+            raise HTTPException(404, "No such transfer.")
+        if leg["pair"] is not None or leg["resolved"]:
+            raise HTTPException(400, "Already decided; delete it first to change it.")
+        if body.how == "pair":
+            other = rows.get(body.other or -1)
+            if not other or other["direction"] == leg["direction"] or other["symbol"] != leg["symbol"] or other["pair"] is not None:
+                raise HTTPException(400, "Pick an unpaired leg of the same coin going the other way.")
+            o, i = (leg, other) if leg["direction"] == "out" else (other, leg)
+            if i["quantity"] > o["quantity"] * (1 + 1e-9):
+                raise HTTPException(400, "More arrived than was sent.")
+            db.pair_legs(conn, o["id"], i["id"])
+        elif body.how == "bought":
+            if leg["direction"] != "in" or body.cost is None or not body.acquired:
+                raise HTTPException(400, "Coins that arrived need what you paid per unit and the date you bought them.")
+            db.add_transaction(conn, leg["symbol"], "buy", leg["quantity"], body.cost, body.acquired, 0.0,
+                               f"Bought elsewhere; arrived in {leg['account']} {leg['day']}", import_key=f"tr:{leg_id}",
+                               account=leg["account"])
+            db.resolve_leg(conn, leg_id, "bought")
+        elif body.how == "wallet":
+            name = (body.account or "").strip()
+            if leg["direction"] != "out" or not name:
+                raise HTTPException(400, "Name the wallet the coins went to.")
+            i = db.add_leg(conn, leg["symbol"], "in", leg["quantity"], leg["day"], name, note="Own wallet")
+            db.pair_legs(conn, leg_id, i)
+        elif body.how == "sold":
+            if leg["direction"] != "out" or body.price is None:
+                raise HTTPException(400, "Enter the price per unit they were spent or sold at.")
+            db.add_transaction(conn, leg["symbol"], "sell", leg["quantity"], body.price, leg["day"], 0.0,
+                               f"Spent / sold after leaving {leg['account']}", import_key=f"tr:{leg_id}", account=leg["account"])
+            db.resolve_leg(conn, leg_id, "sold")
+        else:
+            db.resolve_leg(conn, leg_id, "ignore")
+        try:
+            service.pf.build_positions(db.ledger(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/transfers/{leg_id}")
+def delete_transfer(leg_id: int):
+    with db.connect() as conn:
+        row = conn.execute("SELECT import_key, resolved FROM transfer_legs WHERE id = ?", (leg_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "No such transfer.")
+        conn.execute("DELETE FROM transactions WHERE import_key = ?", (f"tr:{leg_id}",))
+        db.delete_leg(conn, leg_id)
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         inc = db.income(conn)
     return {"accounts": accounts.overview(txs, inc),
             "connections": {"coinbase_api": coinbase_sync.configured(), "snaptrade": snaptrade.configured(),
@@ -1455,7 +1577,7 @@ def restore(body: RestoreIn):
             keys.add(key)
             added += 1
         try:
-            service.pf.build_positions(db.list_transactions(conn))
+            service.pf.build_positions(db.ledger(conn))
         except ValueError as exc:
             conn.rollback()
             raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
@@ -1487,8 +1609,8 @@ class ImportIn(BaseModel):
 IMPORT_HINTS = {
     "robinhood": "The file probably starts after some of these shares were bought: export the full history, "
                  "or record the earlier buys first.",
-    "coinbase": "Coins received from another wallet or exchange have no purchase in this file: add them with "
-                "Quick add (their original cost), then import again.",
+    "coinbase": "Coins received from another wallet or exchange have no purchase in this file: pair them with the account "
+                "they came from, or enter their original cost, under Portfolio → Transfers, then import again.",
     "holdings": "",
 }
 
@@ -1503,18 +1625,26 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
         res = importers.parse_coinbase(body.csv)
     else:
         res = importers.parse_holdings_list(body.csv, body.account.strip() or "Other", date.today().isoformat())
-    if res.errors and not (res.transactions or res.income):
+    if res.errors and not (res.transactions or res.income or res.transfers):
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
-        existing = db.list_transactions(conn)
         known = db.import_keys(conn)
         new = [t for t in res.transactions if t["import_key"] not in known]
-        try:
-            positions = service.pf.build_positions(existing + new)
-        except ValueError as exc:
-            raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
+        known_legs = {r["import_key"] for r in db.transfer_legs(conn)}
+        new_legs = [g for g in res.transfers if g["import_key"] not in known_legs]
         known_income = db.income_keys(conn)
         new_income = [r for r in res.income if r["import_key"] not in known_income]
+        if body.commit:
+            for g in new_legs:
+                db.add_leg(conn, g["symbol"], g["direction"], g["quantity"], g["day"], g["account"], g["import_key"], g["note"])
+            paired = db.auto_pair(conn)
+        else:
+            paired = 0
+        try:
+            positions = service.pf.build_positions(db.ledger(conn) + new)
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
         if body.commit:
             for t in new:
                 db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
@@ -1522,6 +1652,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
             db.add_income(conn, new_income)
     touched = {t["symbol"] for t in res.transactions}
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
+            "transfers_new": len(new_legs), "transfers_paired": paired,
             "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
@@ -1532,7 +1663,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
 @app.get("/api/portfolio")
 def portfolio(risk: bool = True):
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     try:
         return service.portfolio_summary(txs, with_risk=risk)
     except ValueError as exc:

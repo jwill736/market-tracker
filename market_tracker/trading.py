@@ -127,9 +127,9 @@ def checks(order: Order, usd: float, price: float, transactions: list[dict], pla
             have = held_in(transactions, order.symbol, account)
             if qty > have * 1.0001:
                 block.append(f"Your ledger shows {have:g} {order.symbol} in {account}; this sells {qty:g}")
-        lots, _ = taxes.lots_and_sales([t for t in transactions if not account or (t.get("account") or "") == account])
+        lots, _ = taxes.lots_and_sales(transactions)
         left, gain_st, gain_lt = qty, 0.0, 0.0
-        for lot in lots.get(order.symbol, []):
+        for lot in [lt for lt in lots.get(order.symbol, []) if not account or lt.account == account]:
             if left <= 0:
                 break
             take = min(left, lot.quantity)

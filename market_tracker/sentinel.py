@@ -31,7 +31,7 @@ PUSH_PRIORITY = {3: 5, 2: 4, 1: 3}
 def my_symbols() -> tuple[list[str], list[str]]:
     """(held, watched) symbols from the ledger and the watchlist."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
     try:
         held = [p.symbol for p in pf.build_positions(txs).values() if p.quantity > 0]

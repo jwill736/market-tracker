@@ -154,7 +154,7 @@ def gather(today: date | None = None, now: datetime | None = None) -> dict:
     try:
         from . import accounts, db
         with db.connect() as conn:
-            rows = accounts.overview(db.list_transactions(conn), db.income(conn), today)
+            rows = accounts.overview(db.ledger(conn), db.income(conn), today)
         for n in accounts.stale_notes(rows, today):
             out["lines"].append({"section": "Your data", "text": n["text"], "level": 1, "symbol": ""})
     except Exception:  # noqa: BLE001 - the brief never fails because of this

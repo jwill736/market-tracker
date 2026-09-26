@@ -50,6 +50,9 @@
     <button data-tab="journal" data-group="discover">Track record</button>
     <button data-tab="mynews" data-group="news">Your news</button>
     <button data-tab="reading" data-group="news">Reading room</button>
+    <button data-tab="portfolio" data-group="portfolio">Holdings</button>
+    <button data-tab="accounts" data-group="portfolio">Accounts</button>
+    <button data-tab="taxes" data-group="portfolio">Taxes</button>
   </nav>
   <form id="quick-form" class="quick" role="search">
     <input id="quick-input" placeholder="Search a symbol" aria-label="Open a symbol" autocomplete="off">
@@ -600,6 +603,41 @@
     </div>
     <div class="grid two">
       <div class="card">
+        <h2>What your funds really hold</h2>
+        <p class="muted small">Your money in each company, directly and through your funds (from each fund's latest SEC holdings report).</p>
+        <div id="lt-out" class="small"><button type="button" class="secondary small" id="lt-load">Look through my funds</button></div>
+        <h2 class="mt">What your funds cost</h2>
+        <div id="fe-out" class="small"><button type="button" class="secondary small" id="fe-load">Check my fund fees</button></div>
+        <h2 class="mt">Auto-invest schedules</h2>
+        <p class="muted small">For Stash's Auto-Stash or Robinhood recurring buys: the app records each buy at that day's close
+          (skipped when an email or import already has it).</p>
+        <form class="inline-form" id="sc-form"><select id="sc-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
+          <input id="sc-sym" placeholder="Symbol" required maxlength="20"><label>$<input id="sc-amt" type="number" min="1" step="any" required></label>
+          <select id="sc-every"><option value="week">every week</option><option value="2weeks">every 2 weeks</option><option value="month">every month</option></select>
+          <select id="sc-day"></select><label>from <input id="sc-start" type="date" required></label><button type="submit">Add</button></form>
+        <ul class="hp-lines small" id="sc-list"></ul>
+        <h2 class="mt">Check a statement</h2>
+        <form class="inline-form" id="st-form"><select id="st-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
+          <input type="file" id="st-file" accept="application/pdf,.pdf" required><button type="submit">Compare</button></form>
+        <div id="st-out" class="small"></div>
+      </div>
+    </div>
+    <div class="card">
+        <h2>Backup</h2>
+        <p class="muted small">Everything you've entered (trades, accounts, watchlist, cash, topics, follows) in one file. Use it to move
+          to a server or another computer; restoring twice adds nothing twice.</p>
+        <div class="row"><button type="button" id="bk-download" class="secondary">Download backup</button>
+          <label class="button-secondary bk-restore">Restore a backup<input type="file" id="bk-file" accept=".json,application/json" hidden></label></div>
+        <p class="muted small" id="bk-status"></p>
+        <h2 class="mt">Ledger</h2>
+        <table class="data" id="tx-table"></table>
+    </div>
+  </section>
+
+  <!-- Accounts: connections, transfers, cash, brokers, backup -->
+  <section id="tab-accounts" class="tab" hidden>
+    <div class="grid two">
+      <div class="card">
         <h2 id="connections">Connections</h2>
         <p class="muted small">Free ways to keep your accounts current without CSVs. Each one is read-only unless you switch on trading below.</p>
         <div class="conn-list">
@@ -640,34 +678,103 @@
         <ul class="hp-lines small" id="tr-log"></ul>
       </div>
       <div class="card">
-        <h2>What your funds really hold</h2>
-        <p class="muted small">Your money in each company, directly and through your funds (from each fund's latest SEC holdings report).</p>
-        <div id="lt-out" class="small"><button type="button" class="secondary small" id="lt-load">Look through my funds</button></div>
-        <h2 class="mt">What your funds cost</h2>
-        <div id="fe-out" class="small"><button type="button" class="secondary small" id="fe-load">Check my fund fees</button></div>
-        <h2 class="mt">Auto-invest schedules</h2>
-        <p class="muted small">For Stash's Auto-Stash or Robinhood recurring buys: the app records each buy at that day's close
-          (skipped when an email or import already has it).</p>
-        <form class="inline-form" id="sc-form"><select id="sc-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
-          <input id="sc-sym" placeholder="Symbol" required maxlength="20"><label>$<input id="sc-amt" type="number" min="1" step="any" required></label>
-          <select id="sc-every"><option value="week">every week</option><option value="2weeks">every 2 weeks</option><option value="month">every month</option></select>
-          <select id="sc-day"></select><label>from <input id="sc-start" type="date" required></label><button type="submit">Add</button></form>
-        <ul class="hp-lines small" id="sc-list"></ul>
-        <h2 class="mt">Check a statement</h2>
-        <form class="inline-form" id="st-form"><select id="st-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
-          <input type="file" id="st-file" accept="application/pdf,.pdf" required><button type="submit">Compare</button></form>
-        <div id="st-out" class="small"></div>
+        <h2 id="transfers">Transfers between your accounts</h2>
+        <p class="muted small">Moving coins or shares between your own accounts isn't a sale: they keep what you paid and when you bought
+          them. Sends and receives from Coinbase's CSV, and balance checks after each sync, show up here to pair.</p>
+        <div id="tf-open" class="small"></div>
+        <div id="tf-suggest" class="small"></div>
+        <details class="mt"><summary class="small"><b>Record a move</b></summary>
+          <form class="inline-form" id="tf-form"><input id="tf-sym" placeholder="Symbol" required maxlength="20">
+            <label>from <input id="tf-from" list="tf-accts" required maxlength="60" placeholder="Coinbase"></label>
+            <label>to <input id="tf-to" list="tf-accts" required maxlength="60" placeholder="Robinhood"></label>
+            <label>sent <input id="tf-sent" type="number" step="any" min="0" required></label>
+            <label>arrived <input id="tf-recv" type="number" step="any" min="0" placeholder="same"></label>
+            <input id="tf-day" type="date" required><button type="submit">Record</button></form>
+          <datalist id="tf-accts"></datalist><p class="small" id="tf-msg"></p></details>
+        <h3 class="mt small">Recorded moves</h3>
+        <ul class="hp-lines small" id="tf-moves"></ul>
       </div>
     </div>
-    <div class="card">
-        <h2>Backup</h2>
-        <p class="muted small">Everything you've entered (trades, accounts, watchlist, cash, topics, follows) in one file. Use it to move
-          to a server or another computer; restoring twice adds nothing twice.</p>
-        <div class="row"><button type="button" id="bk-download" class="secondary">Download backup</button>
-          <label class="button-secondary bk-restore">Restore a backup<input type="file" id="bk-file" accept=".json,application/json" hidden></label></div>
-        <p class="muted small" id="bk-status"></p>
-        <h2 class="mt">Ledger</h2>
-        <table class="data" id="tx-table"></table>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="cash">Cash waiting in your accounts</h2>
+        <p class="muted small">Uninvested cash in each account, how long it has sat there, and what it would earn at today's
+          money-market rate instead.</p>
+        <div id="cash-out" class="small"></div>
+        <form class="inline-form" id="cash-form"><select id="cash-acct"></select>
+          <label>$<input id="cash-amt" type="number" min="0" step="any" required></label>
+          <label>earning <input id="cash-apy" type="number" min="0" max="20" step="0.01" placeholder="0"></label>%
+          <button type="submit">Save</button></form>
+      </div>
+      <div class="card">
+        <h2 id="brokers">Brokers the app can trade through</h2>
+        <p class="muted small">The app's own order engine: every order gets a preview, your limits and a one-time confirm. Paper trading
+          fills at live prices with pretend money; Alpaca and Public.com are real brokers with free APIs for individuals.
+          Robinhood and Stash offer no stock API, so stock orders there open your broker's app.</p>
+        <div id="bk-brokers" class="small"></div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="offsite">Off-site backup</h2>
+        <p class="muted small">A nightly copy of your ledger, encrypted with a passphrase only you know, saved outside this computer.
+          If this machine dies, restoring the file brings everything back.</p>
+        <div id="os-status" class="small"></div>
+        <form class="stack" id="os-form">
+          <label class="small">Passphrase (at least 12 characters; not stored in plain text: lose it and the backups can't be opened)
+            <input id="os-pass" type="password" autocomplete="new-password" minlength="12"></label>
+          <label class="small">Save to a folder (a synced folder such as Google Drive, iCloud or Dropbox works)
+            <input id="os-dir" placeholder="/Users/you/Google Drive/Plumbline"></label>
+          <label class="small">…and/or a private GitHub repository (owner/name) with a token that can write to it
+            <input id="os-repo" placeholder="you/plumbline-backup"></label>
+          <input id="os-token" type="password" placeholder="GitHub token (fine-grained, Contents: write on that repo only)" autocomplete="off">
+          <div class="row"><button type="submit">Save and back up now</button>
+            <button type="button" class="secondary" id="os-restore-btn">Restore from an encrypted file</button>
+            <input type="file" id="os-file" accept=".plb,application/octet-stream" hidden></div>
+        </form>
+        <p class="small" id="os-msg"></p>
+      </div>
+      <div class="card">
+        <h2 id="health">Connection health</h2>
+        <p class="muted small">Pushes to your phone when a sync keeps failing, or when a scheduled buy's confirmation never arrives,
+          so a quiet problem doesn't turn into months of wrong numbers.</p>
+        <ul class="hp-lines small" id="hl-list"></ul>
+        <h2 class="mt" id="live">Live prices</h2>
+        <div id="lv-status" class="small"></div>
+        <form class="inline-form" id="lv-form"><input id="lv-key" placeholder="Finnhub API key (free at finnhub.io)" autocomplete="off">
+          <button type="submit">Use it</button></form>
+        <p class="small" id="lv-msg"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Taxes: lots and the export -->
+  <section id="tab-taxes" class="tab" hidden>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="lots">Which shares to sell</h2>
+        <p class="muted small">Selling part of a holding, the shares you pick decide the tax. The same sale under each method, in
+          dollars, and which your broker should use.</p>
+        <form class="inline-form" id="lp-form"><input id="lp-sym" placeholder="Symbol" required maxlength="20">
+          <select id="lp-acct"><option value="">any account</option></select>
+          <label>shares <input id="lp-qty" type="number" step="any" min="0" required></label>
+          <label>at $<input id="lp-price" type="number" step="any" min="0" placeholder="live"></label>
+          <button type="submit">Compare</button></form>
+        <div id="lp-out" class="small"></div>
+        <h3 class="mt small">Each account's method</h3>
+        <p class="muted small">Set this to what the account uses, so the app's gains match your 1099. Robinhood and most brokers
+          default to first in, first out.</p>
+        <div id="lp-methods" class="small"></div>
+      </div>
+      <div class="card">
+        <h2 id="taxexport">Tax export</h2>
+        <p class="muted small">Every sale across all your accounts in one file laid out like IRS Form 8949 (short- and long-term, with
+          wash-sale adjustments), plus crypto rewards and dividends as income. Check it against each broker's 1099-B.</p>
+        <form class="inline-form" id="te-form"><select id="te-year"></select>
+          <button type="submit">Download sales (CSV)</button>
+          <button type="button" class="secondary" id="te-income">Download income (CSV)</button></form>
+        <div id="te-out" class="small"></div>
+      </div>
     </div>
   </section>
 

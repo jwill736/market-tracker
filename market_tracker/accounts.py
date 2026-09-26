@@ -38,6 +38,28 @@ class SyncError(Exception):
         self.status = status
 
 
+def account_quantities(ledger: list[dict], account: str) -> dict[str, float]:
+    """What the ledger (moves included) says one account holds."""
+    qty: dict[str, float] = {}
+    for t in ledger:
+        if (t.get("account") or "") == account:
+            qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    return qty
+
+
+def balance_differences() -> dict[str, list[dict]]:
+    """The latest balance check per account ({account: [{symbol, difference}]}), from the last syncs."""
+    out: dict[str, list[dict]] = {}
+    with db.connect() as conn:
+        for kind in SYNCS:
+            raw = db.get_meta(conn, f"sync_diff:{kind}", "")
+            try:
+                out.update(json.loads(raw) if raw else {})
+            except ValueError:
+                continue
+    return out
+
+
 def source_of(import_key: str | None) -> str:
     return (import_key or "").split(":", 1)[0] if import_key and ":" in import_key else ""
 
@@ -56,19 +78,18 @@ def sync_coinbase() -> dict:
     with db.connect() as conn:
         known = db.import_keys(conn)
         new = [t for t in txs if t["import_key"] not in known]
-        existing = db.list_transactions(conn)
         try:
-            positions = service.pf.build_positions(existing + new)
+            positions = service.pf.build_positions(db.ledger(conn) + new)
         except ValueError as exc:
-            raise SyncError(400, f"{exc}. Coins that arrived by transfer or reward need adding first (Quick add).")
+            raise SyncError(400, f"{exc}. Coins that arrived by transfer need pairing with where they came from, or their "
+                                 "original cost (Portfolio → Transfers).")
         for t in new:
             db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
                                import_key=t["import_key"], account="Coinbase")
-    cb_qty: dict[str, float] = {}
-    for t in existing + new:
-        if (t.get("account") or "") == "Coinbase":
-            cb_qty[t["symbol"]] = cb_qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
-    return {"new": len(new), "duplicates": len(txs) - len(new), "differences": coinbase_sync.reconcile(bal, cb_qty),
+        cb_qty = account_quantities(db.ledger(conn), "Coinbase")
+    diffs = coinbase_sync.reconcile(bal, cb_qty)
+    return {"new": len(new), "duplicates": len(txs) - len(new), "differences": diffs,
+            "by_account": {"Coinbase": [{"symbol": d["coin"] + "-USD", "difference": d["difference"]} for d in diffs]},
             "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
 
 
@@ -106,10 +127,10 @@ def sync_snaptrade() -> dict:
             per_account.append({"name": name, "institution": inst, "id": acct.get("id"), "trades": len(fresh),
                                 "positions": (a["holdings"] or {}).get("positions") or []})
         try:
-            service.pf.build_positions(existing + new_tx)
+            service.pf.build_positions(db.ledger(conn) + new_tx)
         except ValueError as exc:
-            raise SyncError(400, f"{exc}. Shares that arrived by transfer have no purchase in the broker's history: "
-                                 "add them with Stash / other (their original cost), then sync again.")
+            raise SyncError(400, f"{exc}. Shares that arrived by transfer have no purchase in the broker's history: pair "
+                                 "them with the account they came from, or enter their original cost (Portfolio → Transfers).")
         for t in sorted(new_tx, key=lambda t: t["date"]):
             db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"], t["note"],
                                import_key=t["import_key"], account=t["account"])
@@ -118,16 +139,16 @@ def sync_snaptrade() -> dict:
             old = set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
             db.set_meta(conn, "drip_symbols", json.dumps(sorted(old | drip)))
         db.set_meta(conn, "snaptrade_last_sync", date.today().isoformat())
-        ledger = db.list_transactions(conn)
+        ledger = db.ledger(conn)
     differences = []
     for a in per_account:
-        qty: dict[str, float] = {}
-        for t in ledger:
-            if (t.get("account") or "") == a["name"]:
-                qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
-        differences += [dict(d, account=a["name"]) for d in snaptrade.reconcile(a["positions"], qty, a["institution"])]
+        differences += [dict(d, account=a["name"]) for d in
+                        snaptrade.reconcile(a["positions"], account_quantities(ledger, a["name"]), a["institution"])]
+    by_account: dict[str, list] = {}
+    for d in differences:
+        by_account.setdefault(d["account"], []).append({"symbol": d["symbol"], "difference": d["difference"]})
     return {"accounts": [{"name": a["name"], "new": a["trades"]} for a in per_account], "new": len(new_tx), "duplicates": dup,
-            "income_new": len(new_inc), "differences": differences, "skipped": skipped}
+            "income_new": len(new_inc), "differences": differences, "by_account": by_account, "skipped": skipped}
 
 
 def _insert_new(txs: list[dict], label: str) -> tuple[list[dict], int]:
@@ -136,9 +157,10 @@ def _insert_new(txs: list[dict], label: str) -> tuple[list[dict], int]:
         existing = db.list_transactions(conn)
         fresh, dup = snaptrade.new_only(txs, db.import_keys(conn), existing, snaptrade.match)
         try:
-            service.pf.build_positions(existing + fresh)
+            service.pf.build_positions(db.ledger(conn) + fresh)
         except ValueError as exc:
-            raise SyncError(400, f"{label}: {exc}. Add the missing earlier purchase (Stash / other), then it syncs again.")
+            raise SyncError(400, f"{label}: {exc}. Add the missing earlier purchase (Stash / other), or pair a transfer "
+                                 "(Portfolio → Transfers), then it syncs again.")
         for t in fresh:
             db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t.get("fees", 0.0),
                                t.get("note"), import_key=t["import_key"], account=t["account"])
@@ -156,16 +178,13 @@ def sync_robinhood_crypto() -> dict:
         raise SyncError(502, str(exc))
     fresh, dup = _insert_new(sorted(txs, key=lambda t: t["date"]), "Robinhood Crypto")
     with db.connect() as conn:
-        ledger = db.list_transactions(conn)
-    qty: dict[str, float] = {}
-    for t in ledger:
-        if (t.get("account") or "") == robinhood_crypto.ACCOUNT and t["symbol"].endswith("-USD"):
-            qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+        qty = {s: q for s, q in account_quantities(db.ledger(conn), robinhood_crypto.ACCOUNT).items() if s.endswith("-USD")}
     diffs = [{"symbol": s, "broker": round(held.get(s, 0.0), 8), "ledger": round(qty.get(s, 0.0), 8),
               "difference": round(held.get(s, 0.0) - qty.get(s, 0.0), 8)}
              for s in sorted(set(held) | {k for k, v in qty.items() if abs(v) > 1e-9})
              if abs(held.get(s, 0.0) - qty.get(s, 0.0)) > 1e-6 * max(1.0, held.get(s, 0.0))]
-    return {"new": len(fresh), "duplicates": dup, "differences": diffs}
+    return {"new": len(fresh), "duplicates": dup, "differences": diffs,
+            "by_account": {robinhood_crypto.ACCOUNT: [{"symbol": d["symbol"], "difference": d["difference"]} for d in diffs]}}
 
 
 def sync_email() -> dict:
@@ -196,6 +215,8 @@ LABELS = {"coinbase": "Coinbase", "robinhood_crypto": "Robinhood Crypto", "email
 
 def record(kind: str, result: dict | None, error: str | None, now: datetime) -> None:
     with db.connect() as conn:
+        if result is not None and "by_account" in result:
+            db.set_meta(conn, f"sync_diff:{kind}", json.dumps(result["by_account"]))
         db.set_meta(conn, f"sync:{kind}", json.dumps({"at": now.isoformat(timespec="seconds"), "ok": error is None,
                                                       "new": (result or {}).get("new", 0),
                                                       "income_new": (result or {}).get("income_new", 0),
@@ -306,15 +327,15 @@ def advice(a: dict, today: date) -> str:
             return f"The last automatic sync failed: {last['error']}"
         if a["auto"].get("partial"):
             return ("Crypto syncs automatically; stock trades still need the CSV, or connect your email "
-                    "(Settings → Connections) so confirmations bring them in.")
+                    "(Portfolio → Accounts) so confirmations bring them in.")
         return "Kept up to date automatically."
     age = (today - date.fromisoformat(a["last_trade"])).days if a["last_trade"] else None
     srcs = set(a["sources"])
     if a["name"] == "Robinhood" or "Robinhood CSV" in srcs:
-        return ("New trades aren't here until you import the CSV again. Connect your email (Portfolio → Connections) and "
+        return ("New trades aren't here until you import the CSV again. Connect your email (Portfolio → Accounts) and "
                 "each trade's confirmation brings it in within minutes.")
     if a["name"] == "Coinbase":
-        return "From a CSV. Connect Coinbase (Portfolio → Connections, free View key) and it syncs every 5 minutes."
+        return "From a CSV. Connect Coinbase (Portfolio → Accounts, free View key) and it syncs every 5 minutes."
     if "Typed in" in srcs or a["name"] == "Stash":
         stale = f" Last change {age} days ago." if age is not None and age > STALE_DAYS else ""
         return ("Typed in by hand (Stash has no export or API). Connect your email so Stash's confirmations come in, or add your "
@@ -341,5 +362,5 @@ def stale_notes(overview_rows: list[dict], today: date | None = None, days: int 
         how = ("import the Robinhood CSV again, or connect your email" if a["name"] == "Robinhood" else
                "check it against your latest statement, or connect your email / set its auto-invest schedule" if a["name"] == "Stash" else
                "update it")
-        out.append({"account": a["name"], "text": f"{a['name']} hasn't changed in {age} days: {how} (Portfolio → Connections)"})
+        out.append({"account": a["name"], "text": f"{a['name']} hasn't changed in {age} days: {how} (Portfolio → Accounts)"})
     return out

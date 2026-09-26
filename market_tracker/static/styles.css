@@ -506,3 +506,15 @@ button.small { font-size: 12px; padding: 3px 8px; }
 .bm-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: baseline; font-variant-numeric: tabular-nums; }
 .bm-row > :nth-child(n+2) { text-align: right; }
 tr.warn-row td { background: color-mix(in srgb, var(--warn-bg, #fff4d6) 60%, transparent); }
+
+/* Accounts and Taxes pages */
+button.link { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font: inherit; }
+button.link:hover { color: var(--accent); }
+.tf-item { border-top: 1px solid var(--grid); padding: 8px 0; }
+.tf-item p { margin: 0 0 6px; }
+.tf-item .inline-form { margin: 4px 0; }
+.method-table td, .method-table th { padding: 4px 8px; text-align: right; }
+.method-table td:first-child, .method-table th:first-child { text-align: left; }
+.method-table tr.best td { font-weight: 700; }
+.broker-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; border-top: 1px solid var(--grid); padding: 8px 0; }
+.broker-row .grow { flex: 1 1 240px; }

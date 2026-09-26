@@ -122,6 +122,18 @@ CREATE TABLE IF NOT EXISTS buy_targets (
     note TEXT NOT NULL DEFAULT '',
     added TEXT NOT NULL DEFAULT (date('now'))
 );
+CREATE TABLE IF NOT EXISTS transfer_legs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('out', 'in')),
+    quantity REAL NOT NULL CHECK (quantity > 0),
+    day TEXT NOT NULL,
+    account TEXT NOT NULL,
+    pair INTEGER,
+    resolved TEXT NOT NULL DEFAULT '',
+    import_key TEXT UNIQUE,
+    note TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -160,6 +172,54 @@ def add_transaction(conn, symbol: str, side: str, quantity: float, price: float,
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (symbol.upper(), side, quantity, price, fees, date, note, import_key, account or ""))
     return cur.lastrowid
+
+
+def ledger(conn) -> list[dict]:
+    """Every trade plus moves between your own accounts (transfers.with_moves): what each account
+    holds and what each lot cost. Use list_transactions for the trades alone."""
+    from . import transfers
+    return transfers.with_moves(list_transactions(conn), transfers.moves(transfers.from_rows(transfer_legs(conn))))
+
+
+def transfer_legs(conn) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM transfer_legs ORDER BY day, id")]
+
+
+def add_leg(conn, symbol: str, direction: str, quantity: float, day: str, account: str,
+            import_key: str | None = None, note: str = "", pair: int | None = None, resolved: str = "") -> int | None:
+    """Add one side of a move. Returns its id, or None when that import key is already there."""
+    cur = conn.execute("INSERT OR IGNORE INTO transfer_legs (symbol, direction, quantity, day, account, import_key, note, pair, "
+                       "resolved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       (symbol.upper(), direction, quantity, day, account, import_key, note, pair, resolved))
+    return cur.lastrowid if cur.rowcount else None
+
+
+def pair_legs(conn, out_id: int, in_id: int) -> None:
+    conn.execute("UPDATE transfer_legs SET pair = ?, resolved = 'paired' WHERE id = ?", (in_id, out_id))
+    conn.execute("UPDATE transfer_legs SET pair = ?, resolved = 'paired' WHERE id = ?", (out_id, in_id))
+
+
+def resolve_leg(conn, leg_id: int, how: str) -> None:
+    conn.execute("UPDATE transfer_legs SET resolved = ? WHERE id = ?", (how, leg_id))
+
+
+def delete_leg(conn, leg_id: int) -> bool:
+    row = conn.execute("SELECT pair FROM transfer_legs WHERE id = ?", (leg_id,)).fetchone()
+    if not row:
+        return False
+    if row["pair"] is not None:
+        conn.execute("UPDATE transfer_legs SET pair = NULL, resolved = '' WHERE id = ?", (row["pair"],))
+    conn.execute("DELETE FROM transfer_legs WHERE id = ?", (leg_id,))
+    return True
+
+
+def auto_pair(conn) -> int:
+    """Pair legs that fit together (same coin, different accounts, amounts and days line up)."""
+    from . import transfers
+    pairs = transfers.match(transfers.from_rows(transfer_legs(conn)))
+    for o, i in pairs:
+        pair_legs(conn, o, i)
+    return len(pairs)
 
 
 def import_keys(conn) -> set[str]:
