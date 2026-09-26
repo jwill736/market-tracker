@@ -476,6 +476,17 @@
     </div>
     <div class="card"><div class="card-head"><h2>News</h2><span id="sym-news-pill" class="pill"></span></div>
       <div id="sym-news-terms" class="terms"></div><ul id="sym-news" class="news"></ul></div>
+    <div class="card" id="sym-ask">
+      <h2>Ask the company's filings</h2>
+      <p class="muted small">Answered only from its latest annual (10-K) or quarterly (10-Q) report, with the passages quoted. Uses your
+        Anthropic API credits: roughly $0.50-0.75 for the first question on a report, a few cents for follow-ups within a few minutes.</p>
+      <form class="stack" id="ask-form">
+        <input id="ask-q" maxlength="600" required placeholder="e.g. How much revenue comes from China, and what do they say about tariffs?" aria-label="Question">
+        <div class="row"><label class="check"><input type="checkbox" id="ask-10k" checked> Annual report (10-K)</label>
+          <label class="check"><input type="checkbox" id="ask-10q"> Latest quarter (10-Q)</label><button type="submit">Ask</button></div>
+      </form>
+      <div id="ask-out" class="small"></div>
+    </div>
   </section>
 
   <!-- Analyze -->

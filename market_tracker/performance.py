@@ -15,12 +15,19 @@ benefit, of your sales), and each holding's contribution in dollars this year an
 first trade. Moves between your own accounts are neither flows nor trades here.
 
 Prices are daily closes (split- and dividend-adjusted for stocks), so dividends count as
-return; the result is an estimate to a percent or so, not an audited figure.
+return in the holdings' figure. Your dollars' figure counts the dividends and interest paid to
+you (Income tab) as money coming back. Crypto rewards and staking are growth, not money you put
+in. The holdings' return values each trade at that day's close, so the gap between your fill
+and the close (and the dividend adjustment) isn't counted as the holdings' performance. An
+estimate to a percent or so, not an audited figure.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
+
+REWARD = re.compile(r":.*(reward|staking|income|earn|airdrop)", re.I)      # crypto received, not bought
 
 
 def _series(bars: list[tuple[str, float]], days: list[str]) -> dict[str, float]:
@@ -62,8 +69,9 @@ def xirr(flows: list[tuple[str, float]], guess: float = 0.1) -> float | None:
     return (lo + hi) / 2
 
 
-def analyze(transactions: list[dict], history_fn, today: date, start: date | None = None) -> dict:
-    """transactions: your trades (no move rows). history_fn(symbol, days) -> [(date, close)]."""
+def analyze(transactions: list[dict], history_fn, today: date, start: date | None = None, income: list[dict] | None = None) -> dict:
+    """transactions: your trades (no move rows). history_fn(symbol, days) -> [(date, close)].
+    income: Income-tab rows (dividends and interest paid to you count as money coming back)."""
     txs = sorted((t for t in transactions if t.get("transfer") is None), key=lambda t: (t["date"], t.get("id", 0)))
     if not txs:
         return {"empty": True}
@@ -90,20 +98,28 @@ def analyze(transactions: list[dict], history_fn, today: date, start: date | Non
     twr, prev_value = 1.0, None
     flows = []
     values = {}
+    paid = {}
+    for r in income or []:
+        if r.get("kind") in ("dividend", "interest") and r.get("amount"):
+            paid[r["day"][:10]] = paid.get(r["day"][:10], 0.0) + float(r["amount"])
     for d in days:
         flow = 0.0
         for t in by_day.get(d, []):
             amt = t["quantity"] * t["price"] + (t.get("fees") or 0) * (1 if t["side"] == "buy" else -1)
+            reward = t["side"] == "buy" and bool(REWARD.search(t.get("note") or ""))
+            at_close = t["quantity"] * closes[t["symbol"]].get(d, t["price"])     # the holdings' view: traded at the close
             if t["side"] == "buy":
                 qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + t["quantity"]
                 kept[t["symbol"]] = kept.get(t["symbol"], 0.0) + t["quantity"]
-                flow += amt
+                flow += 0.0 if reward else at_close
             else:
                 qty[t["symbol"]] = qty.get(t["symbol"], 0.0) - t["quantity"]
-                flow -= amt
+                flow -= at_close
             last_trade_px[t["symbol"]] = t["price"]
-            if d >= start.isoformat():
+            if d >= start.isoformat() and not reward:
                 flows.append((d, -amt if t["side"] == "buy" else amt))
+        if paid.get(d) and d >= start.isoformat():
+            flows.append((d, paid[d]))
         value = sum(q * closes[s].get(d, last_trade_px.get(s, 0.0)) for s, q in qty.items() if q > 1e-12)
         values[d] = value
         if d >= start.isoformat():
@@ -125,11 +141,12 @@ def analyze(transactions: list[dict], history_fn, today: date, start: date | Non
     mwr = xirr(flows)
     # Never sold anything: every share bought, at today's price.
     held_value = sum(q * closes[s].get(days[-1], last_trade_px.get(s, 0.0)) for s, q in kept.items())
-    taken_out = sum(a for d, a in flows[:-1] if a > 0)
+    received = sum(a for d, a in paid.items() if d >= start.isoformat())
+    taken_out = sum(a for d, a in flows[:-1] if a > 0) - received
     put_in = -sum(a for d, a in flows[:-1] if a < 0)
     sales_effect = (end_value + taken_out) - held_value
     return {"start": start.isoformat(), "end": today.isoformat(), "put_in": round(put_in, 2), "taken_out": round(taken_out, 2),
-            "value": round(end_value, 2), "gain": round(end_value + taken_out - put_in, 2),
+            "income": round(received, 2), "value": round(end_value, 2), "gain": round(end_value + taken_out + received - put_in, 2),
             "time_weighted": round(twr_total * 100, 2), "time_weighted_annual": round(twr_annual * 100, 2) if twr_annual is not None else None,
             "money_weighted_annual": round(mwr * 100, 2) if mwr is not None else None,
             "timing_gap": round((mwr - twr_annual) * 100, 2) if (mwr is not None and twr_annual is not None) else None,

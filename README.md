@@ -466,6 +466,32 @@ the gain.
   on the same index where one exists (switching means selling, so check the tax first).
 - **Auto-invest schedules and statement check** (Portfolio): see the accounts table above.
 
+## Setup and "checked against your brokers"
+
+Portfolio → Accounts opens with **Setup**: the backup, phone alerts (ntfy, with a test push), each account's feed, a
+statement check for Robinhood stocks and Stash, live prices, and a paper trade. Each step is done only when its **Test
+now** passes. Home shows **Checked against your brokers**: the share of your money (by value) that matched a broker's
+own balance in the last day (Coinbase, Robinhood crypto, SnapTrade) or a statement in the last 35 days, per account,
+with the list of things to fix (balances that differ, transfers waiting, unread broker emails, failing syncs).
+
+## Review (Plan → Review)
+
+- **What your timing cost:** your dollars' return (money-weighted, counting dividends paid to you) against the holdings'
+  own return (time-weighted, what a fund reports). The gap is your timing. Also what you'd have if you'd never sold, and
+  each holding's contribution in dollars, since your first trade or this year.
+- **If a past crash happened today:** today's holdings through 2008, 2020 and 2022 (holdings too young use their beta
+  times the S&P 500, or Bitcoin's 2022 fall for coins before 2014; labelled as stand-ins).
+- **Holdings that move together:** a year of daily correlations; pairs above 0.8 flagged.
+- **What changed in their annual reports:** each company's latest 10-K against last year's, Risk Factors and Legal
+  Proceedings: share of new text, similarity, and the new sentences (after "Lazy Prices", Cohen, Malloy & Nguyen 2020).
+
+**Home → What moved today:** today's change in dollars by holding with the news desk's likely reason; a move over twice
+the holding's usual daily move (and 3%+) pushes to your phone once a day, saying whether news explains it.
+
+**Ask the company's filings** (any stock's page): a question answered from its latest 10-K and/or 10-Q with the passages
+quoted (Claude with citations; uses your Anthropic key: roughly $0.50-0.75 for the first question on a report, cents for
+follow-ups while it's cached).
+
 ## Taxes (Portfolio → Taxes)
 
 - **Which shares to sell**: a sale under each cost-basis method (first in first out, highest cost, last in first out,

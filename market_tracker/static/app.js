@@ -2741,7 +2741,7 @@ async function loadPerformance() {
     $("#pf-verdict").textContent = r.verdict;
     const row = (k, v, c = "") => `<tr><td>${k}</td><td class="${c}">${v}</td></tr>`;
     $("#pf-out").innerHTML = `<table class="data method-table">
-      ${row("Put in", fmtMoney(r.put_in, 0))}${row("Taken out", fmtMoney(r.taken_out, 0))}${row("Worth now", fmtMoney(r.value, 0))}
+      ${row("Put in", fmtMoney(r.put_in, 0))}${row("Taken out", fmtMoney(r.taken_out, 0))}${r.income ? row("Dividends and interest paid to you", fmtMoney(r.income, 0)) : ""}${row("Worth now", fmtMoney(r.value, 0))}
       ${row("Gain", fmtMoney(r.gain, 0), cls(r.gain))}
       ${row("Holdings' return (time-weighted)", fmtPct(r.time_weighted) + (r.time_weighted_annual != null ? ` · ${fmtPct(r.time_weighted_annual)}/yr` : ""), cls(r.time_weighted))}
       ${row("Your dollars' return (money-weighted)", r.money_weighted_annual != null ? fmtPct(r.money_weighted_annual) + "/yr" : "—", cls(r.money_weighted_annual))}
@@ -2825,4 +2825,22 @@ $("#tk-load").addEventListener("click", async () => {
     }).join("") || `<p class="muted">No company stocks to compare (funds and coins don't file 10-Ks).</p>`)
       + (r.errors.length ? `<p class="muted">Couldn't read: ${esc(r.errors.join("; "))}</p>` : "");
   } catch (err) { $("#tk-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- ask the company's filings
+$("#ask-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const which = [...($("#ask-10k").checked ? ["10-K"] : []), ...($("#ask-10q").checked ? ["10-Q"] : [])];
+  if (!which.length) { $("#ask-out").innerHTML = `<p class="down">Pick at least one report.</p>`; return; }
+  const sym = symState.sym;
+  $("#ask-out").innerHTML = `<p class="muted">Reading ${esc(sym)}'s ${esc(which.join(" and "))} (about a minute)…</p>`;
+  try {
+    const r = await api("/api/ask-filing", { method: "POST", body: JSON.stringify({ symbol: sym, question: $("#ask-q").value, filings: which }) });
+    if (sym !== symState.sym) return;
+    const text = r.segments.map((g) => esc(g.text) + g.cites.map((n) => `<sup class="cite">[${n}]</sup>`).join("")).join("");
+    $("#ask-out").innerHTML = `<div class="ask-answer">${text.replace(/\n\n/g, "<br><br>")}</div>
+      ${r.sources.length ? `<ol class="ask-sources">${r.sources.map((x) => `<li value="${x.n}"><span class="muted">${esc(x.document)}:</span> “${esc(x.quote)}”</li>`).join("")}</ol>` : `<p class="muted">No passages cited: treat this answer with care.</p>`}
+      <p class="muted">${r.filings.map((f) => `<a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(f.form)} filed ${esc(f.filed)}</a>`).join(" · ")}
+        · ${Math.round((r.usage.input + r.usage.cache_read + r.usage.cache_write) / 1000)}k tokens read${r.usage.cache_read ? " (mostly from cache)" : ""}</p>`;
+  } catch (err) { $("#ask-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
 });

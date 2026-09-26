@@ -553,3 +553,6 @@ table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-varian
 .tk-level { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .tk-big .tk-level { color: var(--bad); }
 .tk-some .tk-level { color: var(--s2); }
+.ask-answer { line-height: 1.55; margin: 8px 0; white-space: pre-wrap; }
+sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
+.ask-sources { padding-left: 22px; display: grid; gap: 6px; }

@@ -47,3 +47,19 @@ def test_selling_early_versus_never_selling_and_ytd_contribution():
 
 def test_empty():
     assert performance.analyze([], lambda s, n: [], date(2026, 1, 1)) == {"empty": True}
+
+
+def test_fill_price_vs_adjusted_close_isnt_counted_as_performance_and_income_counts():
+    # A flat stock whose adjusted history sits 5% under the price actually paid (dividend adjustment),
+    # paying $10 a quarter in cash dividends.
+    flat = bars([(o, 95.0) for o in range(0, 800)])
+    txs = [{"symbol": "KO", "side": "buy", "quantity": 10, "price": 100.0, "date": "2025-01-01", "id": 1},
+           {"symbol": "SOL-USD", "side": "buy", "quantity": 1, "price": 95.0, "date": "2025-01-01", "id": 2,
+            "note": "Coinbase import: staking income"}]
+    income = [{"day": flat[i][0], "amount": 10.0, "kind": "dividend"} for i in (90, 180, 270, 360, 450, 540, 630, 720)]
+    today = date.fromisoformat(flat[799][0])
+    r = performance.analyze(txs, lambda s, n: flat, today, None, income)
+    assert abs(r["time_weighted"]) < 0.01                      # flat holding: 0%, not -5%
+    assert r["put_in"] == 1000.0                               # the staking reward isn't money put in
+    assert r["income"] == 80.0 and r["taken_out"] == 0.0
+    assert r["gain"] == round(10 * 95 + 95 + 80 - 1000, 2)

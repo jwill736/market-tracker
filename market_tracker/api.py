@@ -1963,7 +1963,8 @@ async def performance_view(period: Literal["ytd", "all"] = "all"):
     def run():
         with db.connect() as conn:
             txs = db.list_transactions(conn)
-        r = performance.analyze(txs, _closes, today, date(today.year, 1, 1) if period == "ytd" else None)
+            inc = db.income(conn)
+        r = performance.analyze(txs, _closes, today, date(today.year, 1, 1) if period == "ytd" else None, inc)
         return dict(r, verdict=performance.verdict(r), period=period)
     key = ("performance", period, _ledger_key(), today.isoformat())
     try:
@@ -2041,6 +2042,38 @@ async def tenk_view():
         return {"companies": out, "errors": errors, "skipped": [s for s in syms if s not in {r["symbol"] for r in out}]}
     key = ("tenk", _ledger_key(), date.today().isoformat())
     return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+class AskIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    question: str = Field(min_length=3, max_length=600)
+    filings: list[Literal["10-K", "10-Q"]] = Field(default_factory=lambda: ["10-K"], min_length=1, max_length=2)
+
+
+@app.post("/api/ask-filing")
+async def ask_filing(body: AskIn):
+    """A question answered from the company's own 10-K / 10-Q, with the passages cited."""
+    from . import askfiling
+    sym = market.normalize_symbol(body.symbol)
+    if market.asset_class(sym) == "crypto":
+        raise HTTPException(400, "Coins don't file reports with the SEC.")
+    try:
+        out = await asyncio.to_thread(askfiling.ask, sym, body.question.strip(), list(dict.fromkeys(body.filings)))
+    except anthropic.AuthenticationError:
+        raise HTTPException(400, "No working Anthropic API key: add ANTHROPIC_API_KEY to .env (the deep dive uses the same key).")
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "Anthropic's rate limit: try again in a minute.")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(502, f"Claude API error {exc.status_code}: {exc.message}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(502, "Couldn't reach the Claude API.")
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"SEC: {exc}")
+    if out.get("error"):
+        raise HTTPException(404, out["error"])
+    if out.get("refused"):
+        raise HTTPException(400, "Claude declined to answer that question.")
+    return out
 
 
 @app.get("/api/accounts")
