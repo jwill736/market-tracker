@@ -2804,3 +2804,25 @@ async function loadMoved() {
         ${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}</div>`).join("");
   } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 }
+
+// ---------------------------------------------------------------- review: what changed in the annual reports
+$("#tk-load").addEventListener("click", async () => {
+  $("#tk-out").innerHTML = `<p class="muted">Reading each company's last two annual reports from the SEC (a minute the first time)…</p>`;
+  try {
+    const r = await api("/api/tenk");
+    const LV = { big: "Changed a lot: read the new parts", some: "Some new text", little: "Mostly the same as last year" };
+    $("#tk-out").innerHTML = (r.companies.map((c) => {
+      if (c.error) return `<div class="tk-item"><b>${esc(c.symbol)}</b> <span class="muted">${esc(c.error)}</span></div>`;
+      const sec = c.sections.risk, leg = c.sections.legal;
+      const pct = (x) => x == null ? "—" : Math.round(x * 100) + "%";
+      return `<div class="tk-item tk-${esc(c.level)}"><div class="row">${logoImg(c.symbol, 18)} <b>${esc(c.symbol)}</b> <span class="tk-level">${esc(LV[c.level] || "")}</span>
+          <span class="muted">${esc(c.current.form)} filed ${esc(c.current.filed)} vs ${esc(c.previous.filed)} ·
+          <a href="${esc(c.current.url)}" target="_blank" rel="noopener noreferrer">this year's</a> · <a href="${esc(c.previous.url)}" target="_blank" rel="noopener noreferrer">last year's</a></span></div>
+        <div class="muted">Risk Factors: ${pct(sec.new_share)} new (${sec.new_count || 0} new sentences, ${sec.removed_count || 0} dropped), similarity ${sec.similarity == null ? "—" : sec.similarity.toFixed(2)} ·
+          Legal Proceedings: ${pct(leg.new_share)} new</div>
+        ${sec.new && sec.new.length ? `<details${c.level === "big" ? " open" : ""}><summary class="small">What's new in Risk Factors</summary><ul class="hp-lines">${sec.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+        ${leg.new && leg.new.length ? `<details><summary class="small">What's new in Legal Proceedings</summary><ul class="hp-lines">${leg.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
+    }).join("") || `<p class="muted">No company stocks to compare (funds and coins don't file 10-Ks).</p>`)
+      + (r.errors.length ? `<p class="muted">Couldn't read: ${esc(r.errors.join("; "))}</p>` : "");
+  } catch (err) { $("#tk-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});

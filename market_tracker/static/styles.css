@@ -549,3 +549,7 @@ table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-varian
 .mv-row { padding: 6px 0; border-top: 1px solid var(--grid); display: grid; gap: 2px; }
 .mv-row:first-child { border-top: 0; }
 .mv-flag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--s2); }
+.tk-item { border-top: 1px solid var(--grid); padding: 8px 0; display: grid; gap: 4px; }
+.tk-level { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tk-big .tk-level { color: var(--bad); }
+.tk-some .tk-level { color: var(--s2); }

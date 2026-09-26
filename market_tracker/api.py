@@ -2014,6 +2014,35 @@ async def moved_view():
         raise HTTPException(502, str(exc))
 
 
+@app.get("/api/tenk")
+async def tenk_view():
+    """Each held company's latest 10-K against last year's: how much of Risk Factors and Legal
+    Proceedings is new, and the new sentences."""
+    from . import filings
+
+    def run():
+        positions, _ = _valued_positions()
+        syms = [p["symbol"] for p in sorted(positions, key=lambda p: -(p.get("market_value") or 0)) if market.asset_class(p["symbol"]) == "stock"][:15]
+        out, errors = [], []
+
+        def one(sym):
+            try:
+                return filings.tenk_changes(sym), None
+            except (http.DataUnavailable, KeyError, ValueError) as exc:
+                return None, f"{sym}: {exc}"
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            for r, err in pool.map(one, syms):
+                if err:
+                    errors.append(err)
+                elif r:
+                    out.append(r)
+        order = {"big": 0, "some": 1, "little": 2}
+        out.sort(key=lambda r: (order.get(r.get("level"), 3), -(((r.get("sections") or {}).get("risk") or {}).get("new_share") or 0)))
+        return {"companies": out, "errors": errors, "skipped": [s for s in syms if s not in {r["symbol"] for r in out}]}
+    key = ("tenk", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""
