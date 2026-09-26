@@ -57,7 +57,7 @@ const hideTip = () => { tooltip.hidden = true; };
 const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
-const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
+const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
   news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
@@ -79,6 +79,7 @@ function selectTab(name) {
   if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
   if (name === "accounts") { loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
+  if (name === "review") loadPerformance();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") { loadJournal(); loadAdvice(); }
   if (name === "pulse") loadPulse();
@@ -2728,3 +2729,60 @@ async function loadConfidence() {
 }
 $("#conf-setup").addEventListener("click", () => goTo("setup-top"));
 GO["setup-top"] = ["accounts", "#setup"];
+
+// ---------------------------------------------------------------- review: timing and contribution
+let pfPeriod = "all";
+async function loadPerformance() {
+  $("#pf-verdict").textContent = "Working it out from your trades and daily prices…";
+  try {
+    const r = await api(`/api/performance?period=${pfPeriod}`);
+    if (r.empty) { $("#pf-verdict").textContent = "No trades yet."; $("#pf-out").innerHTML = ""; $("#pf-contrib").innerHTML = ""; return; }
+    $("#pf-verdict").textContent = r.verdict;
+    const row = (k, v, c = "") => `<tr><td>${k}</td><td class="${c}">${v}</td></tr>`;
+    $("#pf-out").innerHTML = `<table class="data method-table">
+      ${row("Put in", fmtMoney(r.put_in, 0))}${row("Taken out", fmtMoney(r.taken_out, 0))}${row("Worth now", fmtMoney(r.value, 0))}
+      ${row("Gain", fmtMoney(r.gain, 0), cls(r.gain))}
+      ${row("Holdings' return (time-weighted)", fmtPct(r.time_weighted) + (r.time_weighted_annual != null ? ` · ${fmtPct(r.time_weighted_annual)}/yr` : ""), cls(r.time_weighted))}
+      ${row("Your dollars' return (money-weighted)", r.money_weighted_annual != null ? fmtPct(r.money_weighted_annual) + "/yr" : "—", cls(r.money_weighted_annual))}
+      ${row("If you'd never sold anything", fmtMoney(r.never_sold_value, 0))}
+      ${row("What your sales did", fmtMoney(r.sales_effect, 0), cls(r.sales_effect))}</table>
+      ${r.unpriced.length ? `<p class="muted">No price history for ${esc(r.unpriced.join(", "))}: valued at trade prices.</p>` : ""}`;
+    const max = Math.max(...r.contribution.map((c) => Math.abs(c.gain)), 1);
+    $("#pf-contrib").innerHTML = r.contribution.slice(0, 15).map((c) => `<div class="ct-row">${logoImg(c.symbol, 18)}<b>${esc(c.symbol)}</b>
+        <span class="ct-bar"><i class="${c.gain >= 0 ? "pos" : "neg"}" style="width:${Math.abs(c.gain) / max * 100}%"></i></span>
+        <span class="${cls(c.gain)}">${fmtMoney(c.gain, 0)}</span></div>`).join("") || `<p class="muted">Nothing yet.</p>`;
+  } catch (err) { $("#pf-verdict").textContent = err.message; }
+}
+document.querySelectorAll("#pf-period button").forEach((b) => b.addEventListener("click", () => {
+  pfPeriod = b.dataset.p;
+  document.querySelectorAll("#pf-period button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadPerformance();
+}));
+
+// ---------------------------------------------------------------- review: crises and overlap
+$("#cr-load").addEventListener("click", async () => {
+  $("#cr-out").innerHTML = `<p class="muted">Fetching prices back to 2007…</p>`;
+  try {
+    const r = await api("/api/crises");
+    $("#cr-out").innerHTML = r.crises.map((c) => `<div class="cr-item"><div class="row"><b>${esc(c.name)}</b>
+        <span class="muted">${esc(c.start)} to ${esc(c.end)} · S&P 500 ${c.market_pct == null ? "—" : fmtPct(c.market_pct)} · back to the peak in ${esc(c.recovery)}</span></div>
+        <div class="cr-big ${cls(c.change)}">${fmtMoney(c.change, 0)} <span class="small">(${fmtPct(c.change_pct)} of ${fmtMoney(r.total, 0)})</span></div>
+        <details><summary class="small">By holding${c.stand_ins ? ` · ${c.stand_ins} use a stand-in` : ""}</summary>
+          <ul class="hp-lines">${c.holdings.map((h) => `<li>${logoImg(h.symbol, 16)} <b>${esc(h.symbol)}</b> <span class="${cls(h.change)}">${fmtPct(h.change_pct)} (${fmtMoney(h.change, 0)})</span>
+            <span class="muted">${esc(h.how)}</span></li>`).join("")}</ul></details></div>`).join("")
+      + `<p class="muted">Write down now what you'll do if this happens: buy more, hold, or trim. Past falls aren't a forecast of the next one.</p>`;
+  } catch (err) { $("#cr-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+$("#ov-load").addEventListener("click", async () => {
+  $("#ov-out").innerHTML = `<p class="muted">Comparing a year of daily moves…</p>`;
+  try {
+    const r = await api("/api/overlap");
+    if (r.symbols.length < 2) { $("#ov-out").innerHTML = `<p class="muted">Needs two or more holdings with a year of prices.</p>`; return; }
+    const shade = (v) => v == null ? "" : `background: color-mix(in srgb, var(--${v >= 0 ? "neg" : "pos"}) ${Math.round(Math.abs(v) * 70)}%, transparent)`;
+    $("#ov-out").innerHTML = `<p>${r.pairs.length ? `<b>${r.pairs.length} pair${r.pairs.length === 1 ? "" : "s"} move almost as one:</b> ${r.pairs.slice(0, 6).map((p) => `${esc(p.a)} & ${esc(p.b)} (${p.rho.toFixed(2)})`).join(", ")}.`
+      : "No pair moves almost as one (all below 0.8)."} Average correlation ${r.average == null ? "—" : r.average.toFixed(2)}.</p>
+      <div class="table-scroll"><table class="data corr"><tr><th></th>${r.symbols.map((s) => `<th>${esc(s.replace(/-USD$/, ""))}</th>`).join("")}</tr>
+      ${r.symbols.map((a) => `<tr><th>${esc(a.replace(/-USD$/, ""))}</th>${r.symbols.map((b) => { const v = (r.matrix[a] || {})[b];
+        return `<td style="${a === b ? "" : shade(v)}">${a === b ? "" : v == null ? "—" : v.toFixed(2)}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
+  } catch (err) { $("#ov-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});

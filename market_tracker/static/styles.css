@@ -536,3 +536,13 @@ button.link:hover { color: var(--accent); }
 .conf-row { display: grid; grid-template-columns: 90px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
 .conf-bar { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
 .conf-bar i { display: block; height: 100%; background: var(--good); }
+.ct-row { display: grid; grid-template-columns: 18px 64px 1fr 80px; gap: 8px; align-items: center; margin: 4px 0; }
+.ct-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.ct-bar { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.ct-bar i { display: block; height: 100%; }
+.ct-bar i.pos { background: var(--good); }
+.ct-bar i.neg { background: var(--bad); }
+.cr-item { border-top: 1px solid var(--grid); padding: 8px 0; }
+.cr-big { font: 400 26px/1.2 "Instrument Serif", Georgia, serif; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-variant-numeric: tabular-nums; font-size: 12px; }

@@ -39,6 +39,7 @@
     <button data-tab="hold" data-group="plan">Hold plan</button>
     <button data-tab="income" data-group="plan">Income</button>
     <button data-tab="plan" data-group="plan">Strategy</button>
+    <button data-tab="review" data-group="plan">Review</button>
     <button data-tab="pulse" data-group="discover">Pulse</button>
     <button data-tab="early" data-group="discover">Early wire</button>
     <button data-tab="people" data-group="discover">People</button>
@@ -643,6 +644,45 @@
         <p class="muted small" id="bk-status"></p>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
+    </div>
+  </section>
+
+  <!-- Review: how you've done and how it could go -->
+  <section id="tab-review" class="tab" hidden>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><h2>What your timing cost (or earned)</h2>
+          <div class="seg" id="pf-period" role="group" aria-label="Period"><button data-p="all" aria-pressed="true">Since your first trade</button><button data-p="ytd" aria-pressed="false">This year</button></div></div>
+        <p class="muted small">Two returns: how the holdings did (time-weighted, what a fund reports) and how your dollars did (money-weighted,
+          counting when you added and took out). The gap is your timing.</p>
+        <p class="verdict-line" id="pf-verdict"></p>
+        <div id="pf-out" class="small"></div>
+      </div>
+      <div class="card">
+        <h2>What made the return</h2>
+        <p class="muted small">Each holding's gain or loss in dollars over the same period: price change, plus sales, minus purchases.</p>
+        <div id="pf-contrib" class="small"></div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="crises">If a past crash happened today</h2>
+        <p class="muted small">Today's holdings run through 2008, 2020 and 2022. Holdings too young for a crisis use a fund that behaves like
+          them. Decide now what you'd do at the bottom; that's the point.</p>
+        <div id="cr-out" class="small"><button type="button" class="secondary small" id="cr-load">Run the crises</button></div>
+      </div>
+      <div class="card">
+        <h2 id="overlap">Holdings that move together</h2>
+        <p class="muted small">Daily moves over the last year. Pairs above 0.8 move almost as one: owning both is less diversification than it looks.</p>
+        <div id="ov-out" class="small"><button type="button" class="secondary small" id="ov-load">Check overlap</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="tenk">What changed in their annual reports</h2>
+      <p class="muted small">Each company's latest 10-K against the year before: how much of the Risk Factors and Legal Proceedings text is new.
+        Research found companies whose reports change a lot tend to do worse afterwards, and the market is slow to notice (Cohen,
+        Malloy &amp; Nguyen, "Lazy Prices", 2020).</p>
+      <div id="tk-out" class="small"><button type="button" class="secondary small" id="tk-load">Compare the reports</button></div>
     </div>
   </section>
 

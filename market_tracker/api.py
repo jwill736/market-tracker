@@ -1947,6 +1947,64 @@ async def setup_test(key: str):
     raise HTTPException(404, "No test for that step.")
 
 
+# ------------------------------------------------------------------ review: timing, contribution, crises, overlap
+
+def _closes(sym: str, days: int) -> list[tuple[str, float]]:
+    return [(b.date, b.close) for b in market.get_history(sym, days)]
+
+
+@app.get("/api/performance")
+async def performance_view(period: Literal["ytd", "all"] = "all"):
+    """Your timing (money- against time-weighted return), what never selling would be worth,
+    and each holding's contribution in dollars."""
+    from . import performance
+    today = date.today()
+
+    def run():
+        with db.connect() as conn:
+            txs = db.list_transactions(conn)
+        r = performance.analyze(txs, _closes, today, date(today.year, 1, 1) if period == "ytd" else None)
+        return dict(r, verdict=performance.verdict(r), period=period)
+    key = ("performance", period, _ledger_key(), today.isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/crises")
+async def crises_view():
+    """Today's holdings through the 2008, 2020 and 2022 falls (stand-ins where a holding is younger)."""
+    from . import stress
+    days = (date.today() - date(2007, 9, 1)).days
+
+    def run():
+        positions, _ = _valued_positions()
+        return {"crises": stress.replay(positions, lambda s: _closes(s, days)),
+                "total": round(sum(p.get("market_value") or 0 for p in positions), 2)}
+    key = ("crises", _ledger_key(), date.today().isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/overlap")
+async def overlap_view():
+    """Correlations of daily moves between your holdings over the last year."""
+    from . import stress
+
+    def run():
+        positions, _ = _valued_positions()
+        syms = [p["symbol"] for p in sorted(positions, key=lambda p: -(p.get("market_value") or 0))][:15]
+        return stress.correlations(syms, lambda s: _closes(s, 400))
+    key = ("overlap", _ledger_key(), date.today().isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""
