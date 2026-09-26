@@ -56,3 +56,15 @@ def test_light_edits_are_not_new_text():
     c = filings.compare(prev, cur)
     assert c["new_count"] == 1 and c["new"][0].startswith("A cybersecurity breach")
     assert c["removed_count"] == 0 and c["new_share"] < 0.35
+
+
+def test_split_sentences_and_abbreviations_are_not_new():
+    prev = ("The Company's products and services are offered in highly competitive global markets characterized by aggressive "
+            "price competition, frequent introduction of new products, short product life cycles and evolving industry standards. "
+            "A case is pending before the U.S. District Court for the District of Columbia (D.C. Circuit) about app store rules.")
+    cur = ("The Company's products and services are offered in highly competitive global markets. "
+           "These markets are characterized by aggressive price competition and frequent introduction of new products. "
+           "A case is pending before the U.S. District Court for the District of Columbia (D.C. Circuit) about app store rules.")
+    assert len(filings.sentences(cur)) == 3
+    c = filings.compare(prev, cur)
+    assert c["new_count"] == 0, c["new"]

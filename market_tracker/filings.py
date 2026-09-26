@@ -55,8 +55,14 @@ def section(text: str, key: str) -> str:
     return best.strip()
 
 
+STOP = frozenset("""the and for that with are this from not our may could its which have has any other such can been
+will would these their they them than more also into including were was all but has had there those under each only
+some such within about over upon both through between while where when what who whom whose""".split())
+
+
 def _words(text: str) -> Counter:
-    return Counter(w for w in re.findall(r"[a-z]{3,}", text.lower()))
+    """Content words only: with "the" and "and" in, every pair of long reports scores about 1.0."""
+    return Counter(w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in STOP)
 
 
 def cosine(a: str, b: str) -> float:
@@ -66,8 +72,12 @@ def cosine(a: str, b: str) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+_SPLIT = re.compile(r"(?<=[.;])(?<![A-Z]\.[A-Z]\.)(?<!\b[A-Z]\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bNo\.)(?<!\bvs\.)(?<!\bSt\.)\s+(?=[A-Z(“\"])")
+
+
 def sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.;])\s+(?=[A-Z(])", re.sub(r"\s+", " ", text))
+    """Sentences, not split after abbreviations like U.S., D.C., Inc. or No."""
+    parts = _SPLIT.split(re.sub(r"\s+", " ", text))
     return [p.strip() for p in parts if len(p.strip()) >= 40]
 
 
@@ -76,7 +86,7 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z#]+", " ", s).strip()
 
 
-SAME = 0.7      # a sentence sharing 70%+ of its words with one from last year is an edit, not new text
+SAME = 0.75     # a sentence whose words are 75%+ inside one of last year's is an edit or a split, not new text
 
 
 def _tokens(s: str) -> frozenset:
@@ -84,17 +94,16 @@ def _tokens(s: str) -> frozenset:
 
 
 def _closest(tok: frozenset, pool: list[frozenset], index: dict[str, list[int]]) -> float:
-    """Best word-overlap (Jaccard) with any sentence in pool, via the words they share."""
+    """The largest share of this sentence's words found inside a single sentence of pool.
+    Containment rather than overlap: companies often split one long sentence into several, and
+    each piece is then almost entirely inside the old sentence."""
+    if not tok:
+        return 1.0
     seen: dict[int, int] = {}
     for w in tok:
         for i in index.get(w, ()):
             seen[i] = seen.get(i, 0) + 1
-    best = 0.0
-    for i, shared in seen.items():
-        union = len(tok) + len(pool[i]) - shared
-        if union:
-            best = max(best, shared / union)
-    return best
+    return max(seen.values(), default=0) / len(tok)
 
 
 def _unmatched(a: list[str], b: list[str]) -> list[str]:
