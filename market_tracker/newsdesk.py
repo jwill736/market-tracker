@@ -7,8 +7,8 @@ each company or coin you own, this reads several independent kinds of source:
   Finnhub (with a free key), Nasdaq's per-symbol feed;
 - newsrooms read directly: CNBC, the Wall Street Journal, MarketWatch, Bloomberg (headlines);
 - press-release wires: PR Newswire, Business Wire, GlobeNewswire;
-- regulators: the SEC (press releases, litigation, trading suspensions), FDA, the Justice
-  Department, the FTC; plus the SEC filing radar (8-Ks, going-concern language);
+- regulators: SEC press releases (enforcement actions are announced there), the FDA, the FTC;
+  plus the SEC filing radar (8-Ks, going-concern language);
 - crypto: CoinDesk, Cointelegraph, Decrypt, The Block;
 - GDELT, a free index of world news, to count how many distinct outlets carry a story.
 
@@ -55,10 +55,7 @@ MARKET_FEEDS = {
     "Business Wire": ("wire", "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJcFVJYWQ=="),
     "GlobeNewswire": ("wire", "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"),
     "SEC press releases": ("regulator", "https://www.sec.gov/news/pressreleases.rss"),
-    "SEC litigation": ("regulator", "https://www.sec.gov/rss/litigation/litreleases.xml"),
-    "SEC trading suspensions": ("regulator", "https://www.sec.gov/rss/litigation/suspensions.xml"),
     "FDA": ("regulator", "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml"),
-    "Justice Department": ("regulator", "https://www.justice.gov/news/rss/1664"),
     "FTC": ("regulator", "https://www.ftc.gov/feeds/press-release.xml"),
 }
 CRYPTO_FEEDS = {
@@ -107,7 +104,8 @@ EVENTS = [   # (type, tier, pattern) — the first match wins, so the specific c
     ("exec_exit", "A", r"\b(ceo|cfo|chief executive|chief financial)\b.{0,40}\b(resign|steps? down|ousted|fired|depart|exit|leav)"),
     ("fda_setback", "A", r"complete response letter|\bcrl\b|clinical hold|fda (rejects|declines)|fails? (phase|trial)"),
     ("crypto_hack", "A", r"\b(hack(ed)?|exploit(ed)?|drained|stolen)\b"),
-    ("deal", "B", r"to (acquire|buy|merge)|acquisition|merger|takeover|buyout|in talks to|bid for"),
+    ("deal", "B", r"(agrees?|plans?|deal|offers?|bids?|moves?|set|nears? deal) to (acquire|buy|merge with) \w|to acquire|acquisition of|acquires|"
+                  r"merger|takeover|buyout|in talks to (acquire|buy|merge)|bid for"),
     ("guidance_raise", "B", r"(raises|lifts|boosts) (its )?(guidance|outlook|forecast)"),
     ("earnings", "B", r"earnings|quarterly results|\bq[1-4]\b|beats|misses|revenue (rises|falls|jumps|drops)"),
     ("analyst", "B", r"downgrade|upgrade|price target|initiat(es|ed) coverage"),

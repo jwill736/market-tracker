@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -405,6 +405,31 @@ def _():
     cb = httpx.post("https://api.coinbase.com/api/v3/brokerage/orders/preview", json={}, timeout=20)
     assert cb.status_code in (401, 403), cb.status_code
     return f"Robinhood {rh.status_code} (asks for x-api-key/x-signature/x-timestamp); Coinbase preview {cb.status_code} without a key"
+
+
+@check("News desk: sources answer and Apple's stories cluster")
+def _():
+    newsdesk.FEED_STATUS.clear()
+    desk = newsdesk.build(["AAPL", "BTC-USD"], {"AAPL": "Apple"}, {}, [], crypto_names={"BTC-USD": "Bitcoin"})
+    feeds = newsdesk.FEED_STATUS
+    ok = sorted(k for k, v in feeds.items() if v["ok"] and v["items"])
+    down = sorted(k for k, v in feeds.items() if not v["ok"])
+    assert len(ok) >= 12, (ok, down)
+    assert desk["AAPL"]["items"] >= 20 and desk["AAPL"]["stories"], desk["AAPL"]["items"]
+    top = desk["AAPL"]["stories"][0]
+    return (f"{len(ok)}/{len(feeds)} sources with items" + (f" (down: {', '.join(down)})" if down else "")
+            + f"; AAPL {desk['AAPL']['items']} headlines → {len(desk['AAPL']['stories'])} stories, top: {top['tier']}/{top['event']} "
+              f"from {top['sources']} outlets")
+
+
+@check("Stock brokers reachable: Alpaca and Public.com refuse requests without a key")
+def _():
+    import httpx
+    alp = httpx.get("https://paper-api.alpaca.markets/v2/account", timeout=20)
+    assert alp.status_code in (401, 403), alp.status_code
+    pub = httpx.get("https://api.public.com/userapigateway/trading/account", timeout=20)
+    assert pub.status_code in (401, 403), pub.status_code
+    return f"Alpaca {alp.status_code}, Public.com {pub.status_code}"
 
 
 def main() -> int:

@@ -1,6 +1,4 @@
 import json
-import time
-from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient

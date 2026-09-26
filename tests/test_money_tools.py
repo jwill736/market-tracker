@@ -38,7 +38,7 @@ def test_cash_endpoints(monkeypatch):
 
 def test_offsite_roundtrip_folder_and_restore(tmp_path, monkeypatch):
     import base64
-    from market_tracker import config, offsite
+    from market_tracker import offsite
     from datetime import datetime, timezone
     for k in ("OFFSITE_DIR", "OFFSITE_REPO", "OFFSITE_GITHUB_TOKEN", "OFFSITE_KEY", "OFFSITE_SALT"):
         monkeypatch.delenv(k, raising=False)
