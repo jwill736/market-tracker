@@ -123,8 +123,8 @@ def check_holding(pos: dict, base: float, thesis: Thesis | None, radar: list[dic
     for a in radar:
         if (a.get("filed") or a.get("when") or "")[:10] < since or a.get("level", 0) < 2:
             continue
-        lvl = "sell" if a["level"] >= 3 else "review"
-        trig.append(Trigger("filing", lvl, f"{a.get('headline') or a.get('label')} ({(a.get('filed') or a.get('when') or '')[:10]})"))
+        lvl = "sell" if a["level"] >= 3 and a.get("kind") != "news" else "review"      # news alone never says sell
+        trig.append(Trigger("news" if a.get("kind") == "news" else "filing", lvl, f"{a.get('headline') or a.get('label')} ({(a.get('filed') or a.get('when') or '')[:10]})"))
 
     for c in (fund or {}).get("checks", []):
         trig.append(Trigger("fundamentals", c["level"], c["text"]))
@@ -258,8 +258,8 @@ def state_key() -> tuple:
     import json
     from . import db
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
-        return (len(txs), max((t["id"] for t in txs), default=0), json.dumps(db.theses(conn), sort_keys=True),
+        txs = db.ledger(conn)
+        return (len(txs), max((t["id"] for t in txs if t.get("transfer") is None), default=0), json.dumps(db.theses(conn), sort_keys=True),
                 db.get_meta(conn, "cash", "0"), tuple(db.watchlist(conn)), tuple(settings(conn).items()),
                 date.today().isoformat())
 
@@ -291,7 +291,7 @@ def gather(today: date | None = None) -> dict:
     from . import db, events, fundamentals, http, sentinel, service
     today = today or date.today()
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
         raw = db.theses(conn)
         cash = float(db.get_meta(conn, "cash", "0") or 0)
@@ -308,6 +308,13 @@ def gather(today: date | None = None) -> dict:
                 radar_by.setdefault(a.symbol, []).append(a.to_dict())
     except (http.DataUnavailable, ValueError) as exc:
         radar_errors = [str(exc)]
+    # Confirmed, serious news from several sources (the news desk, refreshed in the background)
+    # puts a holding under review, the same way a serious filing does. Never a sell on its own.
+    from . import newsdesk
+    desk = sentinel.newsdesk_cache.peek(tuple(sorted(held)), 3600) if held else None
+    if desk:
+        for sym, alerts in newsdesk.reviews(desk["desk"]).items():
+            radar_by.setdefault(sym, []).extend(alerts)
     try:
         cal = events.build(positions, today)
     except (http.DataUnavailable, ValueError, KeyError) as exc:

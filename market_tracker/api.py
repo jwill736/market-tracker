@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -19,7 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (accounts, auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, logos, notify, pulse, radar, reading, research, snaptrade,
-               sentinel, service, strategy, taxes, trading)
+               sentinel, service, strategy, taxes, trading, transfers)
+from . import config
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -258,7 +260,7 @@ def set_cash(body: CashIn):
 def holdings():
     """Open positions from the ledger, without prices (cheap; the page fills prices live)."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     try:
         pos = service.pf.build_positions(txs)
     except ValueError as exc:
@@ -361,8 +363,8 @@ def list_transactions():
 def add_transaction(tx: TransactionIn):
     symbol = market.normalize_symbol(tx.symbol)
     with db.connect() as conn:
-        existing = db.list_transactions(conn)
-        candidate = existing + [dict(tx.model_dump(), symbol=symbol, id=10**12)]
+        existing = db.ledger(conn)
+        candidate = existing + [dict(tx.model_dump(), symbol=symbol, id=10**12 - 1)]
         try:
             service.pf.build_positions(candidate)
         except ValueError as exc:
@@ -620,7 +622,7 @@ async def tax_year_end():
     plan = await _holdplan_data()
     with db.connect() as conn:
         cfg = _yearend_settings(conn)
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         drip = {r["symbol"] for r in db.income(conn) if r["kind"] == "reinvested"} | set(json.loads(db.get_meta(conn, "drip_symbols", "[]") or "[]"))
     out = taxes.year_end(plan["tax"], txs, date.today(), st_rate=plan["rules"]["short_term_rate"], lt_rate=plan["rules"]["long_term_rate"],
                          upcoming_dividends=_income_last.get("upcoming"), drip_symbols=drip, **cfg)
@@ -731,7 +733,7 @@ async def strategy_plan(cash: float = Query(0.0, ge=0, le=1e10)):
     """Sell / trim / hold / add for each holding, plus new buys, with shares, reasons and tax
     notes. Each day's first recommendations are logged and returned as `history`."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
     summary = {"positions": [], "total_value": 0.0}
     if txs:
@@ -1100,7 +1102,7 @@ async def _sync_now(kind: str):
 # ------------------------------------------------------------------ trading
 
 class TradeIn(BaseModel):
-    venue: Literal["coinbase", "robinhood", "ticket"]
+    venue: Literal["coinbase", "robinhood", "paper", "alpaca", "public", "ticket"]
     symbol: str = Field(..., min_length=1, max_length=20)
     side: Literal["buy", "sell"]
     dollars: float | None = Field(None, gt=0, le=1_000_000)
@@ -1122,12 +1124,13 @@ def trade_venues(symbol: str):
 @app.post("/api/trade/preview")
 async def trade_preview(body: TradeIn):
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         cfg = trading.settings(conn)
         spent = trading.spent_today(conn)
+        methods = _lot_methods(conn)
     try:
         plan = holdplan._cache.get("plan", (None, 0, None))[2]
-        return await asyncio.to_thread(trading.preview, body.order(), txs, plan, cfg, spent)
+        return await asyncio.to_thread(functools.partial(trading.preview, body.order(), txs, plan, cfg, spent, methods=methods))
     except trading.TradeError as exc:
         raise HTTPException(400, str(exc))
 
@@ -1144,7 +1147,9 @@ async def trade_place(body: TradeIn):
         out = await asyncio.to_thread(run)
     except trading.TradeError as exc:
         raise HTTPException(400, str(exc))
-    kind = {"coinbase": "coinbase", "robinhood": "robinhood_crypto"}[body.venue]
+    kind = {"coinbase": "coinbase", "robinhood": "robinhood_crypto"}.get(body.venue)
+    if not kind:
+        return out
 
     async def later():
         await asyncio.sleep(8)
@@ -1297,9 +1302,11 @@ _analysis_cache = sentinel.Cache(1800)
 
 
 def _valued_positions() -> tuple[list[dict], list[dict]]:
+    """(valued positions, your trades): positions include moves between accounts; the trades don't."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
-    return (service.portfolio_summary(txs, False)["positions"] if txs else []), txs
+        led = db.ledger(conn)
+    txs = [t for t in led if t.get("transfer") is None]
+    return (service.portfolio_summary(led, False)["positions"] if txs else []), txs
 
 
 @app.get("/api/benchmark")
@@ -1322,7 +1329,8 @@ def _ledger_key() -> tuple:
     """Changes whenever a trade is added or removed (so cached analyses refresh)."""
     with db.connect() as conn:
         r = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM transactions").fetchone()
-        return (r["n"], r["m"])
+        g = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(pair IS NOT NULL), 0) AS p FROM transfer_legs").fetchone()
+        return (r["n"], r["m"], g["n"], g["p"])
 
 
 @app.get("/api/lookthrough")
@@ -1377,7 +1385,7 @@ def statement_check(body: StatementIn):
     except Exception as exc:  # noqa: BLE001 - any unreadable PDF is the same answer
         raise HTTPException(400, f"Couldn't read that PDF: {str(exc)[:120]}")
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     ledger: dict[str, float] = {}
     for t in txs:
         if (t.get("account") or "") == body.account:
@@ -1411,11 +1419,458 @@ async def snaptrade_sync_now():
     return out
 
 
+# ------------------------------------------------------------------ transfers between your accounts
+
+@app.get("/api/transfers")
+def transfers_view():
+    """Moves between your accounts (paired), legs still waiting for a decision, and moves the
+    latest balance checks suggest (an account short of a coin next to one with extra)."""
+    with db.connect() as conn:
+        legs = transfers.from_rows(db.transfer_legs(conn))
+    return {"moves": transfers.moves(legs), **transfers.open_items(legs),
+            "suggested": transfers.suggest_from_differences(accounts.balance_differences(), legs, date.today().isoformat()),
+            "accounts": sorted({lg.account for lg in legs} | {"Coinbase", "Robinhood", "Stash"})}
+
+
+class MoveIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    from_account: str = Field(min_length=1, max_length=60)
+    to_account: str = Field(min_length=1, max_length=60)
+    sent: float = Field(gt=0, le=1e12)
+    received: float | None = Field(default=None, gt=0, le=1e12)
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    arrived: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.post("/api/transfers", status_code=201)
+def add_move(body: MoveIn):
+    """Record a move you made (both sides at once)."""
+    if body.from_account.strip() == body.to_account.strip():
+        raise HTTPException(400, "The two accounts are the same.")
+    received = body.received or body.sent
+    if received > body.sent * (1 + 1e-9):
+        raise HTTPException(400, "More arrived than was sent.")
+    sym = market.normalize_symbol(body.symbol)
+    with db.connect() as conn:
+        had = accounts.account_quantities([t for t in db.ledger(conn) if t["date"][:10] <= body.day], body.from_account.strip())
+        if had.get(sym, 0.0) < body.sent * (1 - 1e-9):
+            raise HTTPException(400, f"Your ledger shows {had.get(sym, 0.0):g} {sym} in {body.from_account.strip()} on "
+                                     f"{body.day}; this sends {body.sent:g}.")
+        o = db.add_leg(conn, sym, "out", body.sent, body.day, body.from_account.strip(), note="Recorded by hand")
+        i = db.add_leg(conn, sym, "in", received, body.arrived or body.day, body.to_account.strip(), note="Recorded by hand")
+        db.pair_legs(conn, o, i)
+        try:
+            service.pf.build_positions(db.ledger(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"out": o, "in": i}
+
+
+class ResolveIn(BaseModel):
+    how: Literal["pair", "bought", "wallet", "sold", "ignore"]
+    other: int | None = None                    # pair: the other leg's id
+    cost: float | None = Field(default=None, ge=0, le=1e12)          # bought: price per unit originally paid
+    acquired: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")   # bought: when
+    account: str | None = Field(default=None, max_length=60)        # wallet: the wallet's name
+    price: float | None = Field(default=None, ge=0, le=1e12)         # sold: price per unit
+
+
+@app.post("/api/transfers/{leg_id}/resolve")
+def resolve_transfer(leg_id: int, body: ResolveIn):
+    """Decide what an unpaired leg was: the other side of a move, coins bought elsewhere (their
+    original cost and date), a move to a wallet of yours, or spent / sold."""
+    with db.connect() as conn:
+        rows = {r["id"]: r for r in db.transfer_legs(conn)}
+        leg = rows.get(leg_id)
+        if not leg:
+            raise HTTPException(404, "No such transfer.")
+        if leg["pair"] is not None or leg["resolved"]:
+            raise HTTPException(400, "Already decided; delete it first to change it.")
+        if body.how == "pair":
+            other = rows.get(body.other or -1)
+            if not other or other["direction"] == leg["direction"] or other["symbol"] != leg["symbol"] or other["pair"] is not None:
+                raise HTTPException(400, "Pick an unpaired leg of the same coin going the other way.")
+            o, i = (leg, other) if leg["direction"] == "out" else (other, leg)
+            if i["quantity"] > o["quantity"] * (1 + 1e-9):
+                raise HTTPException(400, "More arrived than was sent.")
+            db.pair_legs(conn, o["id"], i["id"])
+        elif body.how == "bought":
+            if leg["direction"] != "in" or body.cost is None or not body.acquired:
+                raise HTTPException(400, "Coins that arrived need what you paid per unit and the date you bought them.")
+            db.add_transaction(conn, leg["symbol"], "buy", leg["quantity"], body.cost, body.acquired, 0.0,
+                               f"Bought elsewhere; arrived in {leg['account']} {leg['day']}", import_key=f"tr:{leg_id}",
+                               account=leg["account"])
+            db.resolve_leg(conn, leg_id, "bought")
+        elif body.how == "wallet":
+            name = (body.account or "").strip()
+            if leg["direction"] != "out" or not name:
+                raise HTTPException(400, "Name the wallet the coins went to.")
+            i = db.add_leg(conn, leg["symbol"], "in", leg["quantity"], leg["day"], name, note="Own wallet")
+            db.pair_legs(conn, leg_id, i)
+        elif body.how == "sold":
+            if leg["direction"] != "out" or body.price is None:
+                raise HTTPException(400, "Enter the price per unit they were spent or sold at.")
+            db.add_transaction(conn, leg["symbol"], "sell", leg["quantity"], body.price, leg["day"], 0.0,
+                               f"Spent / sold after leaving {leg['account']}", import_key=f"tr:{leg_id}", account=leg["account"])
+            db.resolve_leg(conn, leg_id, "sold")
+        else:
+            db.resolve_leg(conn, leg_id, "ignore")
+        try:
+            service.pf.build_positions(db.ledger(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/transfers/{leg_id}")
+def delete_transfer(leg_id: int):
+    with db.connect() as conn:
+        row = conn.execute("SELECT import_key, resolved FROM transfer_legs WHERE id = ?", (leg_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "No such transfer.")
+        conn.execute("DELETE FROM transactions WHERE import_key = ?", (f"tr:{leg_id}",))
+        db.delete_leg(conn, leg_id)
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ taxes: lot methods and the export
+
+def _lot_methods(conn) -> dict[str, str]:
+    return json.loads(db.get_meta(conn, "lot_methods", "{}") or "{}")
+
+
+@app.get("/api/lots/compare")
+async def lots_compare(symbol: str, quantity: float = Query(gt=0, le=1e12), account: str = "",
+                       price: float | None = Query(default=None, gt=0, le=1e12)):
+    """A sale now under each cost-basis method: the lots it takes and the tax."""
+    sym = market.normalize_symbol(symbol)
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        cfg = holdplan.settings(conn)
+    if price is None:
+        try:
+            price = (await asyncio.to_thread(market.get_live_quote, sym)).price
+        except http.DataUnavailable as exc:
+            raise HTTPException(502, f"No price for {sym}: {exc}. Enter one.")
+    lots, _ = taxes.lots_and_sales(led)
+    return taxes.compare_methods(lots, sym, quantity, price, date.today(), account, cfg["st_rate"], cfg["lt_rate"])
+
+
+@app.get("/api/lots/methods")
+def get_lot_methods():
+    with db.connect() as conn:
+        accts = sorted({t.get("account") or "" for t in db.list_transactions(conn)} - {""})
+        return {"methods": _lot_methods(conn), "accounts": accts, "choices": taxes.LOT_METHODS}
+
+
+class LotMethodIn(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    method: Literal["fifo", "hifo", "lifo", "min_tax"]
+
+
+@app.post("/api/lots/methods")
+def set_lot_method(body: LotMethodIn):
+    with db.connect() as conn:
+        m = _lot_methods(conn)
+        if body.method == "fifo":
+            m.pop(body.account, None)
+        else:
+            m[body.account] = body.method
+        db.set_meta(conn, "lot_methods", json.dumps(m))
+    holdplan.clear_cache()
+    return {"methods": m}
+
+
+@app.get("/api/taxes/export")
+def tax_export_summary(year: int = Query(ge=2000, le=2100)):
+    """Totals for the year's export (the CSVs have the rows)."""
+    from . import taxexport
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        inc = db.income(conn)
+    years = sorted({t["date"][:4] for t in led if t["side"] == "sell"} | {str(date.today().year)}, reverse=True)
+    sales = taxexport.sales_rows(led, year)
+    return {"year": year, "years": years, **taxexport.summary(sales, taxexport.income_rows(inc, led, year))}
+
+
+@app.get("/api/taxes/export/{kind}.csv")
+def tax_export_csv(kind: Literal["sales", "income"], year: int = Query(ge=2000, le=2100)):
+    from . import taxexport
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        inc = db.income(conn)
+    if kind == "sales":
+        text = taxexport.to_csv(taxexport.sales_rows(led, year), taxexport.SALE_FIELDS)
+    else:
+        text = taxexport.to_csv(taxexport.income_rows(inc, led, year), taxexport.INCOME_FIELDS)
+    return Response(text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="plumbline-{kind}-{year}.csv"'})
+
+
+# ------------------------------------------------------------------ cash waiting in your accounts
+
+@app.get("/api/cash/accounts")
+async def cash_accounts():
+    from . import cash
+    with db.connect() as conn:
+        accts = cash.load(conn)
+        names = sorted(({t.get("account") or "" for t in db.list_transactions(conn)} | set(accts)) - {""})
+    y, live = await asyncio.to_thread(cash.tbill_yield)
+    return dict(cash.view(accts, date.today(), y, live), names=names or ["Robinhood", "Stash", "Coinbase"])
+
+
+class CashAcctIn(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    amount: float = Field(ge=0, le=1e10)
+    apy: float | None = Field(default=None, ge=0, le=20)
+
+
+@app.post("/api/cash/accounts")
+def set_cash_account(body: CashAcctIn):
+    from . import cash
+    with db.connect() as conn:
+        cash.save(conn, body.account.strip(), body.amount, body.apy, date.today())
+    holdplan.clear_cache()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ off-site backup
+
+@app.get("/api/offsite")
+def offsite_view():
+    from . import offsite
+    c = offsite.config()
+    with db.connect() as conn:
+        last = json.loads(db.get_meta(conn, "offsite_last", "null") or "null")
+    return {"configured": offsite.configured(), "has_key": bool(c["key"]), "dir": c["dir"], "repo": c["repo"],
+            "has_token": bool(c["token"]), "last": last}
+
+
+class OffsiteIn(BaseModel):
+    passphrase: str | None = Field(default=None, max_length=500)
+    dir: str | None = Field(default=None, max_length=500)
+    repo: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=500)
+
+
+def _offsite_run() -> dict:
+    from . import offsite
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    try:
+        out = offsite.run(config.settings.db_path, now)
+        rec = {"at": out["at"], "ok": True, "to": out["to"], "errors": out["errors"]}
+    except offsite.BackupError as exc:
+        rec = {"at": now.isoformat(timespec="seconds"), "ok": False, "error": str(exc)}
+    with db.connect() as conn:
+        db.set_meta(conn, "offsite_last", json.dumps(rec))
+    return rec
+
+
+@app.post("/api/offsite")
+async def offsite_setup(body: OffsiteIn):
+    """Save the passphrase (as a derived key) and destinations, then back up once."""
+    from . import offsite
+    vals: dict[str, str] = {}
+    try:
+        if body.passphrase:
+            vals.update(await asyncio.to_thread(offsite.new_key, body.passphrase))
+        if body.dir is not None:
+            d = body.dir.strip()
+            if d and not Path(d).expanduser().is_dir():
+                raise offsite.BackupError(f"The folder {d} doesn't exist on this computer.")
+            vals["OFFSITE_DIR"] = d
+        if body.repo is not None:
+            vals["OFFSITE_REPO"] = body.repo.strip()
+        if body.token:
+            vals["OFFSITE_GITHUB_TOKEN"] = body.token.strip()
+        repo = vals.get("OFFSITE_REPO", offsite.config()["repo"])
+        token = vals.get("OFFSITE_GITHUB_TOKEN", offsite.config()["token"])
+        if repo and token:
+            await asyncio.to_thread(offsite.check_private, repo, token)
+    except offsite.BackupError as exc:
+        raise HTTPException(400, str(exc))
+    if vals:
+        _save_env(vals)
+    if not offsite.configured():
+        return {"saved": True, "backup": None}
+    return {"saved": True, "backup": await asyncio.to_thread(_offsite_run)}
+
+
+class OffsiteRestoreIn(BaseModel):
+    file_base64: str = Field(min_length=10, max_length=200_000_000)
+    passphrase: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/offsite/restore")
+async def offsite_restore(body: OffsiteRestoreIn):
+    """Replace this app's data with an encrypted backup's (the current data is kept beside it)."""
+    import base64
+    from . import offsite
+    try:
+        kept = await asyncio.to_thread(offsite.restore, base64.b64decode(body.file_base64), body.passphrase,
+                                       config.settings.db_path)
+    except (offsite.BackupError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"restored": True, "previous_kept_as": kept}
+
+
+@app.get("/api/health")
+def health_view():
+    from . import health
+    return {"checks": health.status()}
+
+
+@app.get("/api/live/status")
+def live_status():
+    return livefeed.hub.status()
+
+
+class FinnhubIn(BaseModel):
+    key: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.post("/api/live/finnhub")
+async def live_finnhub(body: FinnhubIn):
+    """Check a free Finnhub key with one quote, save it, and switch stocks to its live trade stream."""
+    import httpx
+
+    def check() -> int:
+        r = httpx.get("https://finnhub.io/api/v1/quote", params={"symbol": "AAPL", "token": body.key}, timeout=15)
+        return r.status_code if r.status_code != 200 else (200 if (r.json() or {}).get("c") else 204)
+    try:
+        code = await asyncio.to_thread(check)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Couldn't reach Finnhub: {exc}")
+    if code == 401 or code == 403:
+        raise HTTPException(400, "Finnhub didn't accept that key.")
+    if code not in (200, 204):
+        raise HTTPException(502, f"Finnhub answered {code}; try again in a minute.")
+    _save_env({"FINNHUB_API_KEY": body.key})
+    await livefeed.hub.restart()
+    return livefeed.hub.status()
+
+
+# ------------------------------------------------------------------ brokers for the order engine
+
+@app.get("/api/brokers")
+async def brokers_view():
+    from . import brokers
+    with db.connect() as conn:
+        rows = brokers.overview(conn)
+        paper = brokers.paper_state(conn)
+    alpaca = None
+    if brokers.alpaca_configured():
+        try:
+            alpaca = await asyncio.to_thread(brokers.alpaca_account)
+        except brokers.BrokerError as exc:
+            alpaca = {"error": str(exc)}
+    return {"brokers": rows, "paper": paper, "alpaca": alpaca}
+
+
+class AlpacaIn(BaseModel):
+    key_id: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9]+$")
+    secret: str = Field(min_length=8, max_length=200)
+    live: bool = False
+
+
+@app.post("/api/brokers/alpaca")
+async def brokers_alpaca(body: AlpacaIn):
+    """Check the key against the account, then save it."""
+    import os
+    from . import brokers
+    old = {k: os.environ.get(k) for k in ("ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "ALPACA_LIVE")}
+    os.environ.update({"ALPACA_KEY_ID": body.key_id, "ALPACA_SECRET_KEY": body.secret.strip(), "ALPACA_LIVE": "1" if body.live else ""})
+    try:
+        acct = await asyncio.to_thread(brokers.alpaca_account)
+    except brokers.BrokerError as exc:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        raise HTTPException(400, f"{exc}. {'Live' if body.live else 'Paper'} keys only work in {'live' if body.live else 'paper'} mode.")
+    _save_env({"ALPACA_KEY_ID": body.key_id, "ALPACA_SECRET_KEY": body.secret.strip(), "ALPACA_LIVE": "1" if body.live else ""})
+    return {"ok": True, "account": acct}
+
+
+class PublicIn(BaseModel):
+    secret: str = Field(min_length=8, max_length=500)
+
+
+@app.post("/api/brokers/public")
+async def brokers_public(body: PublicIn):
+    import os
+    from . import brokers
+    old = os.environ.get("PUBLIC_API_SECRET")
+    os.environ["PUBLIC_API_SECRET"] = body.secret.strip()
+    brokers._public_token.clear()
+    os.environ.pop("PUBLIC_ACCOUNT_ID", None)
+    try:
+        acct = await asyncio.to_thread(brokers.public_account_id)
+    except brokers.BrokerError as exc:
+        if old is None:
+            os.environ.pop("PUBLIC_API_SECRET", None)
+        else:
+            os.environ["PUBLIC_API_SECRET"] = old
+        raise HTTPException(400, str(exc))
+    _save_env({"PUBLIC_API_SECRET": body.secret.strip(), "PUBLIC_ACCOUNT_ID": acct})
+    return {"ok": True}
+
+
+class PaperResetIn(BaseModel):
+    start: float = Field(default=10_000, ge=100, le=10_000_000)
+
+
+@app.post("/api/brokers/paper/reset")
+def brokers_paper_reset(body: PaperResetIn):
+    from . import brokers
+    with db.connect() as conn:
+        brokers.paper_reset(conn, body.start)
+        return brokers.paper_state(conn)
+
+
+@app.get("/api/advice/record")
+async def advice_record():
+    """The app's advice, scored against just buying VOO."""
+    from . import advice
+
+    def run():
+        with db.connect() as conn:
+            rows = advice.logged(conn)
+        return advice.score(rows, lambda s: [(b.date, b.close) for b in market.get_history(s, 400)], date.today())
+    key = ("advice", _ledger_key(), date.today().isoformat())
+    out = await asyncio.to_thread(_analysis_cache.get, key, run)
+    return dict(out, items=out["items"][:200])
+
+
+@app.get("/api/newsdesk")
+async def newsdesk_view(refresh: bool = False):
+    """Your holdings' news, clustered into stories, with sources counted and weighed, the event
+    type, and what (if anything) it changes in the plan."""
+    held = sorted(sentinel.my_symbols()[0])
+    if not held:
+        return {"desk": {}, "feeds": {}, "at": None}
+    key = tuple(held)
+    if refresh:
+        sentinel.newsdesk_cache.clear()
+    try:
+        return await asyncio.to_thread(sentinel.newsdesk_cache.get, key, lambda: sentinel.build_newsdesk(held))
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         inc = db.income(conn)
     return {"accounts": accounts.overview(txs, inc),
             "connections": {"coinbase_api": coinbase_sync.configured(), "snaptrade": snaptrade.configured(),
@@ -1455,7 +1910,7 @@ def restore(body: RestoreIn):
             keys.add(key)
             added += 1
         try:
-            service.pf.build_positions(db.list_transactions(conn))
+            service.pf.build_positions(db.ledger(conn))
         except ValueError as exc:
             conn.rollback()
             raise HTTPException(400, f"Restoring would leave an impossible ledger: {exc}")
@@ -1487,8 +1942,8 @@ class ImportIn(BaseModel):
 IMPORT_HINTS = {
     "robinhood": "The file probably starts after some of these shares were bought: export the full history, "
                  "or record the earlier buys first.",
-    "coinbase": "Coins received from another wallet or exchange have no purchase in this file: add them with "
-                "Quick add (their original cost), then import again.",
+    "coinbase": "Coins received from another wallet or exchange have no purchase in this file: pair them with the account "
+                "they came from, or enter their original cost, under Portfolio → Transfers, then import again.",
     "holdings": "",
 }
 
@@ -1503,18 +1958,26 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
         res = importers.parse_coinbase(body.csv)
     else:
         res = importers.parse_holdings_list(body.csv, body.account.strip() or "Other", date.today().isoformat())
-    if res.errors and not (res.transactions or res.income):
+    if res.errors and not (res.transactions or res.income or res.transfers):
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
-        existing = db.list_transactions(conn)
         known = db.import_keys(conn)
         new = [t for t in res.transactions if t["import_key"] not in known]
-        try:
-            positions = service.pf.build_positions(existing + new)
-        except ValueError as exc:
-            raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
+        known_legs = {r["import_key"] for r in db.transfer_legs(conn)}
+        new_legs = [g for g in res.transfers if g["import_key"] not in known_legs]
         known_income = db.income_keys(conn)
         new_income = [r for r in res.income if r["import_key"] not in known_income]
+        if body.commit:
+            for g in new_legs:
+                db.add_leg(conn, g["symbol"], g["direction"], g["quantity"], g["day"], g["account"], g["import_key"], g["note"])
+            paired = db.auto_pair(conn)
+        else:
+            paired = 0
+        try:
+            positions = service.pf.build_positions(db.ledger(conn) + new)
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
         if body.commit:
             for t in new:
                 db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t["fees"],
@@ -1522,6 +1985,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
             db.add_income(conn, new_income)
     touched = {t["symbol"] for t in res.transactions}
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
+            "transfers_new": len(new_legs), "transfers_paired": paired,
             "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
@@ -1532,7 +1996,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
 @app.get("/api/portfolio")
 def portfolio(risk: bool = True):
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
     try:
         return service.portfolio_summary(txs, with_risk=risk)
     except ValueError as exc:

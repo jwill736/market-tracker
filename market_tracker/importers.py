@@ -35,6 +35,7 @@ ROBINHOOD_INCOME = {"CDIV": "dividend", "MDIV": "dividend", "QDIV": "dividend", 
 class ImportResult:
     transactions: list[dict] = field(default_factory=list)
     income: list[dict] = field(default_factory=list)
+    transfers: list[dict] = field(default_factory=list)     # legs of moves: {symbol, direction, quantity, day, account, import_key}
     skipped: Counter = field(default_factory=Counter)
     errors: list[str] = field(default_factory=list)
 
@@ -130,6 +131,9 @@ def parse_robinhood(text: str) -> ImportResult:
 COINBASE_BUYS = {"buy", "advanced trade buy", "recurring buy"}
 COINBASE_SELLS = {"sell", "advanced trade sell"}
 # Crypto received as income: its value on the day is the cost basis (and taxable income).
+COINBASE_SENDS = {"send", "withdrawal", "crypto withdrawal"}
+COINBASE_RECEIVES = {"receive", "deposit", "crypto deposit"}
+FIAT = {"USD", "EUR", "GBP", "CAD"}      # cash moving in or out, not a holding
 COINBASE_INCOME = {"rewards income", "staking income", "learning reward", "coinbase earn", "inflation reward",
                    "incentives rewards payout", "reward income"}
 _CONVERT = re.compile(r"Converted\s+([\d.,]+)\s+(\S+)\s+to\s+([\d.,]+)\s+(\S+)", re.I)
@@ -193,6 +197,11 @@ def parse_coinbase(text: str) -> ImportResult:
         elif kind in COINBASE_SELLS:
             res.transactions.append(dict(base, symbol=sym, side="sell", quantity=qty, price=price or 0.0, fees=fees,
                                          import_key=key))
+        elif (kind in COINBASE_SENDS or kind in COINBASE_RECEIVES) and asset not in FIAT:
+            # One side of a move: paired with the other side (another account) under Portfolio → Transfers.
+            res.transfers.append({"symbol": sym, "direction": "out" if kind in COINBASE_SENDS else "in", "quantity": qty,
+                                  "day": base["date"], "account": "Coinbase", "import_key": key,
+                                  "note": (row.get("Notes") or "")[:120]})
         elif kind == "convert":
             m = _CONVERT.search(row.get("Notes", ""))
             if not m or price is None:

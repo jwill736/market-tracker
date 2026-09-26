@@ -29,7 +29,8 @@ def _close_on(bars: list[tuple[str, float]], day: str) -> float | None:
 def compare(transactions: list[dict], bench_bars: list[tuple[str, float]], prices: dict[str, float],
             bench_price: float | None = None, account: str | None = None) -> dict | None:
     """transactions: the ledger; bench_bars: [(date, close)] oldest first; prices: symbol -> price now."""
-    txs = sorted((t for t in transactions if account is None or (t.get("account") or "") == account), key=lambda t: t["date"])
+    txs = sorted((t for t in transactions if t.get("transfer") is None and (account is None or (t.get("account") or "") == account)),
+                 key=lambda t: t["date"])
     if not txs or not bench_bars:
         return None
     bench_now = bench_price or bench_bars[-1][1]

@@ -58,7 +58,7 @@ const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
 const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
-  news: ["mynews", "reading"], portfolio: ["portfolio"] };
+  news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
 document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(lastPage[btn.dataset.group] || GROUP_PAGES[btn.dataset.group][0])));
@@ -76,9 +76,11 @@ function selectTab(name) {
     if (cur && !cur.hidden) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
-  if (name === "portfolio") { loadPortfolio(); loadConnections(); loadSchedules(); }
+  if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
+  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
+  if (name === "taxes") loadTaxes();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
-  if (name === "journal") loadJournal();
+  if (name === "journal") { loadJournal(); loadAdvice(); }
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
   if (name === "home") loadHome();
@@ -86,7 +88,7 @@ function selectTab(name) {
   if (name === "people") { loadPeople(); loadPickers(); }
   if (name === "hold") { loadHold(); loadTargets(); loadGoal(); }
   if (name === "income") loadIncome();
-  if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
+  if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
@@ -1751,10 +1753,10 @@ function renderAccounts() {
   $("#home-accounts").innerHTML = rows.join("") || `<p class="muted small">No accounts yet: Portfolio → Import your accounts.</p>`;
   $("#home-acct-meta").textContent = acctData.connections.snaptrade ? "SnapTrade connected" : "";
   document.querySelectorAll("[data-acct-import]").forEach((b) => b.addEventListener("click", () => {
-    selectTab("portfolio");
     // Connecting beats re-importing: open the account's connection first.
     const cx = { robinhood: "#cx-email", coinbase: "#cx-coinbase", holdings: "#cx-email" }[b.dataset.acctImport];
     const el = cx && $(cx);
+    selectTab(el ? "accounts" : "portfolio");
     if (el) { el.open = true; setTimeout(() => el.scrollIntoView({ block: "center" }), 50); return; }
     const seg = document.querySelector(`#imp-seg button[data-src="${b.dataset.acctImport}"]`);
     if (seg) { seg.click(); seg.scrollIntoView({ block: "center" }); }
@@ -1893,7 +1895,7 @@ function openTradeTicket(sym, side = "buy") {
 }
 
 // Sending the order from the app (Coinbase, Robinhood crypto): preview, then confirm.
-const VENUE_NAME = { coinbase: "Coinbase", robinhood: "Robinhood (crypto)", ticket: "your broker's app" };
+const VENUE_NAME = { coinbase: "Coinbase", robinhood: "Robinhood (crypto)", paper: "Paper account (pretend money)", alpaca: "Alpaca", public: "Public.com", ticket: "your broker app" };
 async function setupSending(sym, $$, shares, price) {
   let info;
   try { info = await api("/api/trade/venues/" + encodeURIComponent(sym)); } catch { return; }
@@ -1901,15 +1903,15 @@ async function setupSending(sym, $$, shares, price) {
   const box = $$("tt-live");
   if (!apiVenues.length) {
     box.hidden = false;
-    box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Connections) to send orders from here."
-      : "Stocks and funds are placed in Robinhood or Stash (no broker offers individuals a stock API). Open it there; the confirmation email brings the trade in automatically once your email is connected."}</p>`;
+    box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Accounts) to send orders from here."
+      : "Robinhood and Stash have no stock API: open it there, and the confirmation email brings the trade in. To trade stocks from here, connect Alpaca or Public.com (Portfolio → Accounts → Brokers)."}</p>`;
     return;
   }
   box.hidden = false;
   box.innerHTML = `<div class="tt-send"><label>Send with <select id="tt-venue">${apiVenues.map((v) => `<option value="${v}">${VENUE_NAME[v]}</option>`).join("")}<option value="ticket">Open in the app myself</option></select></label>
       <button type="button" id="tt-preview">Preview order</button></div>
     <div id="tt-pv"></div>
-    ${info.settings.enabled ? "" : `<p class="small down">Trading from the app is off. Switch it on in Portfolio → Trading (you can preview without it).</p>`}`;
+    ${info.settings.enabled ? "" : `<p class="small muted">Real-money trading from the app is off (Portfolio → Accounts → Trading); the paper account works without it.</p>`}`;
   let timer = null;
   $$("tt-preview").addEventListener("click", async () => {
     const venue = $$("tt-venue").value, out = $$("tt-pv");
@@ -1929,7 +1931,7 @@ async function setupSending(sym, $$, shares, price) {
         ${e.note ? `<p class="muted small">${esc(e.note)}</p>` : ""}
         ${pv.warnings.map((w) => `<p class="small warn-line">⚠ ${esc(w)}</p>`).join("")}
         ${pv.blockers.map((w) => `<p class="small down">✕ ${esc(w)}</p>`).join("")}
-        <p class="muted small">Today: ${fmtMoney(pv.spent_today, 2)} of your ${fmtMoney(pv.limits.daily_limit, 0)} daily limit.</p>
+        ${venue === "paper" ? "" : `<p class="muted small">Today: ${fmtMoney(pv.spent_today, 2)} of your ${fmtMoney(pv.limits.daily_limit, 0)} daily limit.</p>`}
         ${pv.token ? `<button type="button" id="tt-place" class="tt-place">Confirm: ${tradeState.side} on ${esc(e.broker)} <span id="tt-count"></span></button>` : ""}</div>`;
       if (!pv.token) return;
       let left = pv.expires_in;
@@ -2382,3 +2384,286 @@ if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(
 if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// ---------------------------------------------------------------- transfers between your accounts
+async function loadTransfers() {
+  let v;
+  try { v = await api("/api/transfers"); } catch (err) { $("#tf-open").textContent = err.message; return; }
+  $("#tf-accts").innerHTML = v.accounts.map((a) => `<option value="${esc(a)}">`).join("");
+  if (!$("#tf-day").value) $("#tf-day").value = localDate();
+  const others = (leg) => v.open.filter((o) => o.symbol === leg.symbol && o.direction !== leg.direction);
+  $("#tf-open").innerHTML = v.open.length ? `<h3 class="small">Needs a decision</h3>` + v.open.map((g) => {
+    const pairs = others(g).map((o) => `<option value="${o.id}">${esc(o.direction === "in" ? "arrived in" : "left")} ${esc(o.account)} ${esc(o.day)} (${fmtShares(o.quantity)})</option>`).join("");
+    const act = g.direction === "in"
+      ? `<form class="inline-form tf-act" data-leg="${g.id}" data-how="bought"><label>paid $<input name="cost" type="number" step="any" min="0" required></label>
+          <label>on <input name="acquired" type="date" required></label><button type="submit" class="small">Save cost</button></form>`
+      : `<form class="inline-form tf-act" data-leg="${g.id}" data-how="wallet"><input name="account" placeholder="My wallet's name" required maxlength="60">
+          <button type="submit" class="small">Moved to my wallet</button></form>
+         <form class="inline-form tf-act" data-leg="${g.id}" data-how="sold"><label>spent at $<input name="price" type="number" step="any" min="0" required></label>
+          <button type="submit" class="small secondary">Spent / sold</button></form>`;
+    return `<div class="tf-item"><p>${logoImg(g.symbol, 16)} ${esc(g.ask)}</p>
+      ${pairs ? `<form class="inline-form tf-act" data-leg="${g.id}" data-how="pair"><select name="other">${pairs}</select><button type="submit" class="small">Same move</button></form>` : ""}
+      ${act}<button type="button" class="link small tf-del" data-leg="${g.id}">Delete</button></div>`;
+  }).join("") : `<p class="muted">Nothing waiting: every send and receive is accounted for.</p>`;
+  $("#tf-suggest").innerHTML = v.suggested.length ? `<h3 class="small mt">Looks like a move</h3>` + v.suggested.map((m, i) =>
+    `<p>${logoImg(m.symbol, 16)} ${esc(m.from)} has ${fmtShares(m.sent)} ${esc(m.symbol)} less than the ledger says and ${esc(m.to)} has ${fmtShares(m.received)} more.
+     <button type="button" class="small tf-accept" data-i="${i}">Record the move</button></p>`).join("") : "";
+  $("#tf-moves").innerHTML = v.moves.map((m) => `<li>${logoImg(m.symbol, 16)} <b>${esc(m.symbol)}</b> ${fmtShares(m.sent)} from ${esc(m.from)} → ${esc(m.to)}
+      ${m.received !== m.sent ? `(${fmtShares(m.received)} arrived)` : ""} · ${esc(m.sent_on)} <button type="button" class="link small tf-del" data-leg="${m.id}">Undo</button></li>`).join("")
+    || `<li class="muted">No moves recorded.</li>`;
+  document.querySelectorAll(".tf-act").forEach((f) => f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f));
+    const body = { how: f.dataset.how };
+    if (d.other) body.other = +d.other;
+    if (d.cost) body.cost = +d.cost;
+    if (d.acquired) body.acquired = d.acquired;
+    if (d.account) body.account = d.account.trim();
+    if (d.price) body.price = +d.price;
+    try { await api(`/api/transfers/${f.dataset.leg}/resolve`, { method: "POST", body: JSON.stringify(body) }); loadTransfers(); loadHoldings(); }
+    catch (err) { alert(err.message); }
+  }));
+  document.querySelectorAll(".tf-del").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Delete this? A cost or sale it added is removed too.")) return;
+    await api(`/api/transfers/${b.dataset.leg}`, { method: "DELETE" }); loadTransfers(); loadHoldings();
+  }));
+  document.querySelectorAll(".tf-accept").forEach((b) => b.addEventListener("click", async () => {
+    const m = v.suggested[+b.dataset.i];
+    try {
+      await api("/api/transfers", { method: "POST", body: JSON.stringify({ symbol: m.symbol, from_account: m.from, to_account: m.to,
+        sent: m.sent, received: m.received, day: $("#tf-day").value || localDate() }) });
+      loadTransfers(); loadHoldings();
+    } catch (err) { alert(err.message); }
+  }));
+}
+$("#tf-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const recv = $("#tf-recv").value;
+  try {
+    await api("/api/transfers", { method: "POST", body: JSON.stringify({ symbol: $("#tf-sym").value.trim(), from_account: $("#tf-from").value.trim(),
+      to_account: $("#tf-to").value.trim(), sent: +$("#tf-sent").value, received: recv ? +recv : null, day: $("#tf-day").value }) });
+    $("#tf-msg").className = "small up"; $("#tf-msg").textContent = "Recorded: the lots moved with their original cost and dates.";
+    e.target.reset(); loadTransfers(); loadHoldings();
+  } catch (err) { $("#tf-msg").className = "small down"; $("#tf-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- taxes: which shares to sell, and the export
+async function loadTaxes() {
+  try {
+    const m = await api("/api/lots/methods");
+    $("#lp-acct").innerHTML = `<option value="">any account</option>` + m.accounts.map((a) => `<option>${esc(a)}</option>`).join("");
+    $("#lp-methods").innerHTML = m.accounts.map((a) => `<div class="row small">${esc(a)}
+      <select data-lot-acct="${esc(a)}">${Object.entries(m.choices).map(([k, v]) => `<option value="${k}"${(m.methods[a] || "fifo") === k ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></div>`).join("")
+      || `<p class="muted">No accounts yet.</p>`;
+    document.querySelectorAll("[data-lot-acct]").forEach((sel) => sel.addEventListener("change", async () => {
+      await api("/api/lots/methods", { method: "POST", body: JSON.stringify({ account: sel.dataset.lotAcct, method: sel.value }) });
+    }));
+  } catch (err) { $("#lp-methods").textContent = err.message; }
+  const yr = new Date().getFullYear();
+  if (!$("#te-year").options.length) {
+    try {
+      const s = await api(`/api/taxes/export?year=${yr}`);
+      $("#te-year").innerHTML = s.years.map((y) => `<option>${esc(y)}</option>`).join("");
+    } catch { $("#te-year").innerHTML = `<option>${yr}</option>`; }
+  }
+  loadExportSummary();
+}
+async function loadExportSummary() {
+  const y = $("#te-year").value;
+  try {
+    const s = await api(`/api/taxes/export?year=${y}`);
+    const inc = Object.entries(s.income).map(([k, v]) => `${esc(k.replace("_", " "))} ${fmtMoney(v, 2)}`).join(" · ") || "none";
+    $("#te-out").innerHTML = `<table class="data method-table"><tr><th>${esc(y)}</th><th>Proceeds</th><th>Cost</th><th>Wash adj.</th><th>Gain</th></tr>
+      ${["short", "long"].map((t) => `<tr><td>${t === "short" ? "Short-term" : "Long-term"}</td><td>${fmtMoney(s[t].proceeds, 2)}</td><td>${fmtMoney(s[t].cost, 2)}</td>
+        <td>${fmtMoney(s[t].adjustment, 2)}</td><td class="${cls(s[t].gain)}">${fmtMoney(s[t].gain, 2)}</td></tr>`).join("")}</table>
+      <p class="muted">${s.sales} lot${s.sales === 1 ? "" : "s"} sold${s.wash_rows ? `, ${s.wash_rows} with a wash-sale adjustment (code W)` : ""}. Income: ${inc}.</p>`;
+  } catch (err) { $("#te-out").textContent = err.message; }
+}
+$("#te-year").addEventListener("change", loadExportSummary);
+$("#te-form").addEventListener("submit", (e) => { e.preventDefault(); location.href = `/api/taxes/export/sales.csv?year=${$("#te-year").value}`; });
+$("#te-income").addEventListener("click", () => { location.href = `/api/taxes/export/income.csv?year=${$("#te-year").value}`; });
+$("#lp-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = new URLSearchParams({ symbol: $("#lp-sym").value.trim(), quantity: $("#lp-qty").value, account: $("#lp-acct").value });
+  if ($("#lp-price").value) q.set("price", $("#lp-price").value);
+  $("#lp-out").innerHTML = `<p class="muted">Working it out…</p>`;
+  try {
+    const r = await api(`/api/lots/compare?${q}`);
+    const best = r.methods.find((m) => m.method === r.best);
+    $("#lp-out").innerHTML = `${r.short ? `<p class="down">You hold ${fmtShares(r.held)} ${esc(r.symbol)}${r.account ? " in " + esc(r.account) : ""}; this sells ${fmtShares(r.quantity)}.</p>` : ""}
+      <table class="data method-table"><tr><th>Method</th><th>Short-term</th><th>Long-term</th><th>Tax</th></tr>
+      ${r.methods.map((m) => `<tr class="${m.method === r.best ? "best" : ""}"><td>${esc(m.label)}</td><td class="${cls(m.short_term)}">${fmtMoney(m.short_term, 0)}</td>
+        <td class="${cls(m.long_term)}">${fmtMoney(m.long_term, 0)}</td><td>${fmtMoney(m.tax, 0)}</td></tr>`).join("")}</table>
+      <p>${r.saves_vs_fifo > 0 ? `<b>${esc(best.label)}</b> saves about <b>${fmtMoney(r.saves_vs_fifo, 0)}</b> against first in, first out. Before selling, set that at your broker: most let you choose a
+        "cost basis method" in settings or pick specific lots on the sell order (check yours; the default is first in, first out).` : "First in, first out is already the cheapest here."}</p>
+      <details><summary class="small">Lots each method sells</summary>${r.methods.map((m) => `<p><b>${esc(m.label)}</b>: ${m.lots.map((l) => `${fmtShares(l.quantity)} bought ${esc(l.bought)} at ${fmtMoney(l.cost, 2)}${l.long_term ? " (long)" : ""}`).join("; ") || "none"}</p>`).join("")}</details>`;
+  } catch (err) { $("#lp-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- cash waiting in your accounts
+async function loadCash() {
+  let v;
+  try { v = await api("/api/cash/accounts"); } catch (err) { $("#cash-out").textContent = err.message; return; }
+  $("#cash-acct").innerHTML = v.names.map((n) => `<option>${esc(n)}</option>`).join("");
+  $("#cash-out").innerHTML = (v.accounts.length ? `<table class="data method-table"><tr><th>Account</th><th>Cash</th><th>Since</th><th>Earning</th><th>Missed a year</th></tr>
+    ${v.accounts.map((a) => `<tr><td>${esc(a.account)}<div class="muted">${esc(a.source)}</div></td><td>${fmtMoney(a.amount, 2)}</td>
+      <td>${a.days ? `${a.days} days` : "today"}</td><td>${a.apy ? a.apy.toFixed(2) + "%" : "0%"}</td>
+      <td class="${a.idle ? "down" : ""}">${a.idle ? fmtMoney(a.missed_per_year, 0) : "—"}</td></tr>`).join("")}</table>` : `<p class="muted">No cash recorded. Coinbase fills in from its sync; add the others below.</p>`)
+    + `<p class="muted">A Treasury-bill money-market fund pays about ${v.yield.toFixed(2)}% now${v.yield_live ? " (13-week T-bill yield)" : " (couldn't fetch today's rate; a typical figure)"}.</p>`
+    + (v.note ? `<p><b>${esc(v.note)}</b> <button type="button" class="link" id="cash-plan">Open the planner</button></p>` : "");
+  const b = $("#cash-plan");
+  if (b) b.addEventListener("click", () => { selectTab("hold"); setTimeout(() => { const f = $("#nm-form"); if (f) f.scrollIntoView({ block: "center" }); }, 100); });
+}
+$("#cash-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const apy = $("#cash-apy").value;
+  try {
+    await api("/api/cash/accounts", { method: "POST", body: JSON.stringify({ account: $("#cash-acct").value, amount: +$("#cash-amt").value, apy: apy === "" ? null : +apy }) });
+    e.target.reset(); loadCash();
+  } catch (err) { alert(err.message); }
+});
+
+// ---------------------------------------------------------------- off-site backup and connection health
+async function loadOffsite() {
+  try {
+    const o = await api("/api/offsite");
+    $("#os-dir").value = o.dir || ""; $("#os-repo").value = o.repo || "";
+    $("#os-token").placeholder = o.has_token ? "GitHub token saved (enter a new one to replace it)" : "GitHub token (fine-grained, Contents: write on that repo only)";
+    $("#os-pass").placeholder = o.has_key ? "Passphrase set (enter a new one to change it)" : "";
+    const l = o.last;
+    $("#os-status").innerHTML = !o.configured ? `<p class="muted">Not set up yet.</p>`
+      : l ? `<p class="${l.ok ? "up" : "down"}">${l.ok ? "Last copy" : "Last try failed"} ${esc(l.at.slice(0, 16).replace("T", " "))} UTC${l.ok ? " → " + esc(l.to.join(", ")) : ": " + esc(l.error)}</p>`
+      : `<p class="muted">Set up: the first copy runs tonight after 2am (or press the button).</p>`;
+  } catch (err) { $("#os-status").textContent = err.message; }
+}
+$("#os-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { dir: $("#os-dir").value, repo: $("#os-repo").value };
+  if ($("#os-pass").value) body.passphrase = $("#os-pass").value;
+  if ($("#os-token").value) body.token = $("#os-token").value;
+  $("#os-msg").className = "small muted"; $("#os-msg").textContent = "Saving and backing up…";
+  try {
+    const r = await api("/api/offsite", { method: "POST", body: JSON.stringify(body) });
+    $("#os-pass").value = ""; $("#os-token").value = "";
+    const b = r.backup;
+    $("#os-msg").className = "small " + (b && !b.ok ? "down" : "up");
+    $("#os-msg").textContent = !b ? "Saved. Add a passphrase and a folder or repository to start backing up." : b.ok ? `Backed up to ${b.to.join(" and ")}.${b.errors.length ? " " + b.errors.join(" ") : ""}` : b.error;
+    loadOffsite();
+  } catch (err) { $("#os-msg").className = "small down"; $("#os-msg").textContent = err.message; }
+});
+$("#os-restore-btn").addEventListener("click", () => $("#os-file").click());
+$("#os-file").addEventListener("change", async () => {
+  const f = $("#os-file").files[0];
+  if (!f) return;
+  const pass = prompt("The passphrase for this backup:");
+  if (!pass) return;
+  if (!confirm("Replace everything in this app with the backup's contents? (Today's data is kept beside it as a file.)")) return;
+  const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(f); });
+  try {
+    const r = await api("/api/offsite/restore", { method: "POST", body: JSON.stringify({ file_base64: b64, passphrase: pass }) });
+    alert(`Restored. The previous data was kept as ${r.previous_kept_as}.`); location.reload();
+  } catch (err) { alert(err.message); }
+  $("#os-file").value = "";
+});
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    $("#hl-list").innerHTML = h.checks.map((c) => `<li class="${c.ok ? "" : "down"}">${c.ok ? "●" : "▲"} ${esc(c.text)}</li>`).join("")
+      || `<li class="muted">Nothing connected yet: connect an account above.</li>`;
+  } catch (err) { $("#hl-list").textContent = err.message; }
+}
+async function loadLive() {
+  try {
+    const s = await api("/api/live/status");
+    const ago = s.last_stock_tick ? Math.round((Date.now() - Date.parse(s.last_stock_tick)) / 1000) : null;
+    $("#lv-status").innerHTML = s.mode === "finnhub"
+      ? `<p class="up">Stocks: live trade stream (Finnhub)${ago != null ? `, last trade ${ago < 120 ? ago + "s" : Math.round(ago / 60) + " min"} ago` : ""}. Crypto: live from Coinbase.</p>`
+      : `<p>Stocks: checked every few seconds (Yahoo)${ago != null ? `, last price ${ago < 120 ? ago + "s" : Math.round(ago / 60) + " min"} ago` : ""}. Crypto: live from Coinbase, tick by tick.</p>
+         <p class="muted">For every stock trade as it happens, add a free Finnhub key: sign up at
+         <a href="https://finnhub.io/register" target="_blank" rel="noopener noreferrer">finnhub.io</a>, copy the API key from the dashboard, paste it here.</p>`;
+    $("#lv-form").hidden = s.mode === "finnhub";
+  } catch (err) { $("#lv-status").textContent = err.message; }
+}
+$("#lv-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#lv-msg").className = "small muted"; $("#lv-msg").textContent = "Checking the key…";
+  try { await api("/api/live/finnhub", { method: "POST", body: JSON.stringify({ key: $("#lv-key").value.trim() }) });
+    $("#lv-key").value = ""; $("#lv-msg").className = "small up"; $("#lv-msg").textContent = "Switched: stock prices now stream live."; loadLive(); }
+  catch (err) { $("#lv-msg").className = "small down"; $("#lv-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- brokers for the order engine
+async function loadBrokers() {
+  let b;
+  try { b = await api("/api/brokers"); } catch (err) { $("#bk-brokers").textContent = err.message; return; }
+  const pos = Object.entries(b.paper.positions);
+  $("#bk-brokers").innerHTML = b.brokers.map((x) => `<div class="broker-row"><b>${esc(x.name)}</b>
+      <span class="${x.ready ? "up" : "muted"}">${x.ready ? "● ready" : "○ not connected"}</span>
+      <span class="grow muted">${esc(x.text)}</span>
+      ${x.key === "alpaca" && !x.ready ? `<form class="inline-form" id="bk-alp"><input name="key_id" placeholder="API key ID" required>
+        <input name="secret" type="password" placeholder="Secret key" required autocomplete="off">
+        <label class="check"><input type="checkbox" name="live"> live (real money)</label><button type="submit" class="small">Connect</button></form>` : ""}
+      ${x.key === "public" && !x.ready ? `<form class="inline-form" id="bk-pub"><input name="secret" type="password" placeholder="Public API secret" required autocomplete="off">
+        <button type="submit" class="small">Connect</button></form>` : ""}
+      ${x.key === "paper" ? `<button type="button" class="link small" id="bk-paper-reset">Reset to $10,000</button>` : ""}</div>`).join("")
+    + (pos.length ? `<p class="muted">Paper holdings: ${pos.map(([s, p]) => `${esc(s)} ${fmtShares(p.quantity)}`).join(", ")}</p>` : "")
+    + (b.alpaca && !b.alpaca.error ? `<p class="muted">Alpaca: ${fmtMoney(b.alpaca.cash, 2)} cash, ${fmtMoney(b.alpaca.value, 2)} total.</p>` : b.alpaca ? `<p class="down">${esc(b.alpaca.error)}</p>` : "")
+    + `<p class="muted">Orders go from any stock's page: Trade → Send with. Each one is previewed and needs your confirm.</p><p class="small" id="bk-msg"></p>`;
+  const send = (id, path, body) => { const f = $(id); if (!f) return; f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await api(path, { method: "POST", body: JSON.stringify(body(Object.fromEntries(new FormData(f)), f)) }); loadBrokers(); }
+    catch (err) { $("#bk-msg").className = "small down"; $("#bk-msg").textContent = err.message; }
+  }); };
+  send("#bk-alp", "/api/brokers/alpaca", (d, f) => ({ key_id: d.key_id.trim(), secret: d.secret.trim(), live: f.live.checked }));
+  send("#bk-pub", "/api/brokers/public", (d) => ({ secret: d.secret.trim() }));
+  const r = $("#bk-paper-reset");
+  if (r) r.addEventListener("click", async () => { if (confirm("Start the paper account over with $10,000?")) { await api("/api/brokers/paper/reset", { method: "POST", body: "{}" }); loadBrokers(); } });
+}
+
+// ---------------------------------------------------------------- the app's own advice, scored
+async function loadAdvice() {
+  $("#adv-verdict").textContent = "Scoring…";
+  try {
+    const r = await api("/api/advice/record");
+    $("#adv-verdict").textContent = r.verdict;
+    const hz = { 30: "1 month", 91: "3 months", 182: "6 months" };
+    $("#adv-out").innerHTML = `<table class="data method-table"><tr><th>After</th><th>Scored</th><th>Helped</th><th>Average vs VOO</th></tr>
+      ${Object.entries(r.horizons).map(([h, x]) => `<tr><td>${hz[h]}</td><td>${x.resolved}${x.enough ? "" : ` <span class="muted">(needs ${r.min_resolved})</span>`}</td>
+        <td>${x.hit_rate == null ? "—" : x.hit_rate + "%"}</td><td class="${cls(x.avg_edge)}">${x.avg_edge == null ? "—" : fmtPct(x.avg_edge)}</td></tr>`).join("")}</table>
+      <h3 class="small mt">Latest advice</h3>
+      <ul class="hp-lines">${r.items.slice(0, 15).map((i) => { const x = i.results[91] || i.results[30];
+        return `<li><b>${esc(i.day)}</b> ${esc(i.action)} ${logoImg(i.symbol, 16)} ${esc(i.symbol)} at ${fmtMoney(i.price, 2)} <span class="muted">(${esc(i.source)}${i.reason ? ": " + esc(i.reason) : ""})</span>
+          ${x ? ` → <span class="${x.helped ? "up" : "down"}">${x.helped ? "helped" : "hurt"} ${fmtPct(x.edge)} vs VOO</span>` : ` <span class="muted">· waiting</span>`}</li>`; }).join("")
+        || `<li class="muted">Nothing logged yet: the first entries appear the day after you have holdings.</li>`}</ul>`;
+  } catch (err) { $("#adv-verdict").textContent = err.message; }
+}
+
+// ---------------------------------------------------------------- news desk
+const TIER_LABEL = { A: "Serious", B: "Worth a look", C: "Noise" };
+const ACTION_LABEL = { review: "Review", watch: "Unconfirmed", note: "Note", ignore: "No action" };
+async function loadNewsDesk(refresh = false) {
+  $("#nd-out").innerHTML = `<p class="muted">Reading the sources…</p>`;
+  try {
+    const r = await api("/api/newsdesk" + (refresh ? "?refresh=true" : ""));
+    const syms = Object.keys(r.desk);
+    if (!syms.length) { $("#nd-out").innerHTML = `<p class="muted">No holdings yet.</p>`; return; }
+    $("#nd-meta").textContent = r.at ? `checked ${new Date(r.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+    const rank = (d) => Math.min(...d.stories.map((s) => ({ review: 0, watch: 1, note: 2, ignore: 3 }[s.action])), 4);
+    syms.sort((a, b) => rank(r.desk[a]) - rank(r.desk[b]));
+    $("#nd-out").innerHTML = syms.map((sym) => {
+      const d = r.desk[sym];
+      const shown = d.stories.filter((s) => s.action !== "ignore").slice(0, 4);
+      const quiet = d.stories.length - shown.length;
+      return `<div class="nd-sym"><div class="row">${logoImg(sym, 20)} <b>${esc(sym)}</b> <span class="muted">${d.items} headlines${d.outlets_3d ? ` · ${d.outlets_3d} outlets in 3 days (GDELT)` : ""}</span></div>
+        ${shown.map((st) => `<div class="nd-story nd-${st.action}"><span class="nd-badge">${ACTION_LABEL[st.action]}</span>
+          <b>${esc(st.title)}</b>
+          <div class="muted">${esc(TIER_LABEL[st.tier])} · ${esc(st.event.replace(/_/g, " "))} · ${st.sources} independent source${st.sources === 1 ? "" : "s"}
+            (${esc(st.outlets.slice(0, 5).join(", "))}) · confidence ${Math.round(st.confidence * 100)}%${st.rumor ? " · rumor wording" : ""}${st.stale ? " · seen before (stale)" : ""}</div>
+          <div>${esc(st.action_text)}</div>
+          <div class="muted">${st.items.slice(0, 3).map((i) => `<a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.outlet)}</a>`).join(" · ")}</div></div>`).join("")}
+        ${quiet > 0 ? `<p class="muted">${quiet} more stor${quiet === 1 ? "y" : "ies"} with no bearing on the plan.</p>` : ""}</div>`;
+    }).join("");
+    $("#nd-feeds").innerHTML = `<ul class="hp-lines">${Object.entries(r.feeds).sort().map(([k, v]) => `<li class="${v.ok ? "" : "down"}">${v.ok ? "●" : "▲"} ${esc(k)}: ${v.ok ? v.items + " items" : esc(v.error || "down")}</li>`).join("")}</ul>`;
+  } catch (err) { $("#nd-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+}
+$("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));

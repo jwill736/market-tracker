@@ -58,6 +58,12 @@ class Client:
         self.queue: asyncio.Queue[Tick] = asyncio.Queue(maxsize=QUEUE_SIZE)
 
 
+def finnhub_key() -> str | None:
+    """Set in .env (FINNHUB_API_KEY) or from Portfolio → Accounts → Live prices."""
+    import os
+    return os.environ.get("FINNHUB_API_KEY") or settings.finnhub_api_key
+
+
 class PriceHub:
     def __init__(self, min_gap: float = MIN_GAP, clock: Callable[[], float] = time.monotonic):
         self.latest: dict[str, Tick] = {}
@@ -122,10 +128,24 @@ class PriceHub:
         if self._tasks:
             return
         self._tasks.append(asyncio.create_task(run_forever(self, coinbase_session, self.crypto)))
-        if settings.finnhub_api_key:
+        if finnhub_key():
+            self.mode = "finnhub"
             self._tasks.append(asyncio.create_task(run_forever(self, finnhub_session, self.stocks)))
         else:
+            self.mode = "poll"
             self._tasks.append(asyncio.create_task(poll_stocks(self)))
+
+    async def restart(self) -> None:
+        """Pick up a new streaming key without restarting the app."""
+        await self.stop()
+        self.start()
+
+    def status(self) -> dict:
+        """How stock prices are arriving and how fresh the last one is."""
+        stock = [t for t in self.latest.values() if market.asset_class(t.symbol) != "crypto"]
+        last = max(stock, key=lambda t: t.ts, default=None)
+        return {"mode": getattr(self, "mode", "off"), "key_set": bool(finnhub_key()), "last_stock_tick": last.ts if last else None,
+                "last_source": last.source if last else None, "watching": len(self.stocks())}
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -203,7 +223,7 @@ async def coinbase_session(hub: PriceHub, connect=_connect) -> None:
 
 
 async def finnhub_session(hub: PriceHub, connect=_connect) -> None:
-    ws = await connect(FINNHUB_WS.format(key=settings.finnhub_api_key))
+    ws = await connect(FINNHUB_WS.format(key=finnhub_key()))
     try:
         async def send(ws, add, remove):
             for s in sorted(add):

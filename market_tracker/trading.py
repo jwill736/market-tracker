@@ -3,8 +3,10 @@
 Where orders can go (all free, official APIs):
 - Coinbase: any coin, with a Coinbase key that has the Trade permission.
 - Robinhood: crypto only, with a Robinhood Crypto API key.
-- Stocks and funds (Robinhood, Stash): no broker offers individuals an API, so the app builds
-  the order and opens it in the broker's app; the confirmation email then brings the trade in.
+- Paper: the app's own simulated account (stocks and crypto, pretend money, live prices).
+- Alpaca and Public.com: stocks and funds at brokers with free APIs for individuals
+  (brokers.py). Robinhood and Stash have no stock API, so for shares held there the app builds
+  the order and opens it in the broker's app; the confirmation email brings the trade in.
 
 Safety, in order:
 1. Trading is off until you switch it on (Settings), and each order is previewed first: the
@@ -28,7 +30,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from . import coinbase_sync, db, http, robinhood_crypto, taxes
+from . import brokers, coinbase_sync, db, http, robinhood_crypto, taxes
 from .providers import market
 
 SEAL_SECONDS = 90
@@ -44,7 +46,7 @@ class TradeError(Exception):
 
 @dataclass
 class Order:
-    venue: str               # coinbase / robinhood / ticket
+    venue: str               # coinbase / robinhood / paper / alpaca / public / ticket
     symbol: str
     side: str                # buy / sell
     dollars: float | None = None
@@ -70,8 +72,8 @@ def settings(conn) -> dict:
 
 def spent_today(conn, today: date | None = None) -> float:
     day = (today or date.today()).isoformat()
-    row = conn.execute("SELECT COALESCE(SUM(usd), 0) AS s FROM trade_log WHERE substr(at, 1, 10) = ? AND status = 'placed'",
-                       (day,)).fetchone()
+    row = conn.execute("SELECT COALESCE(SUM(usd), 0) AS s FROM trade_log WHERE substr(at, 1, 10) = ? "
+                       "AND status IN ('placed', 'filled')", (day,)).fetchone()
     return float(row["s"] or 0)
 
 
@@ -83,16 +85,25 @@ def log(conn, order: Order, usd: float, status: str, broker_id: str = "", detail
     return cur.lastrowid
 
 
+ACCOUNT_OF = {"coinbase": "Coinbase", "robinhood": "Robinhood", "alpaca": "Alpaca", "public": "Public"}
+REAL = {"coinbase", "robinhood", "alpaca", "public"}      # venues that send real orders (paper and ticket don't)
+
+
 def venues(symbol: str) -> list[str]:
     """Where this symbol can be traded from the app."""
     if market.asset_class(symbol) != "crypto":
-        return ["ticket"]
+        out = []
+        if brokers.alpaca_configured():
+            out.append("alpaca")
+        if brokers.public_configured():
+            out.append("public")
+        return out + ["paper", "ticket"]
     out = []
     if coinbase_sync.configured():
         out.append("coinbase")
     if robinhood_crypto.configured():
         out.append("robinhood")
-    return out + ["ticket"]
+    return out + ["paper", "ticket"]
 
 
 # ------------------------------------------------------------------ checks
@@ -106,10 +117,15 @@ def held_in(transactions: list[dict], symbol: str, account: str) -> float:
 
 
 def checks(order: Order, usd: float, price: float, transactions: list[dict], plan: dict | None, today: date,
-           st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE) -> tuple[list[str], list[str]]:
+           st_rate: float = taxes.ST_RATE, lt_rate: float = taxes.LT_RATE,
+           methods: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """(warnings, blockers) for an order about to be placed."""
     warn, block = [], []
-    account = {"coinbase": "Coinbase", "robinhood": "Robinhood"}.get(order.venue, "")
+    if order.venue == "paper":
+        return ["Paper account: pretend money at the live price. Nothing is sent to a broker."], []
+    account = ACCOUNT_OF.get(order.venue, "")
+    if order.venue == "alpaca" and not brokers.alpaca_is_live():
+        warn.append("Alpaca paper mode: pretend money, not added to your ledger")
     if order.side == "buy":
         for b in taxes.blackout(transactions, today):
             if order.symbol in b["avoid"] and not taxes.is_crypto(order.symbol):
@@ -127,9 +143,11 @@ def checks(order: Order, usd: float, price: float, transactions: list[dict], pla
             have = held_in(transactions, order.symbol, account)
             if qty > have * 1.0001:
                 block.append(f"Your ledger shows {have:g} {order.symbol} in {account}; this sells {qty:g}")
-        lots, _ = taxes.lots_and_sales([t for t in transactions if not account or (t.get("account") or "") == account])
+        lots, _ = taxes.lots_and_sales(transactions)
+        method = (methods or {}).get(account, "fifo")
         left, gain_st, gain_lt = qty, 0.0, 0.0
-        for lot in lots.get(order.symbol, []):
+        mine = [lt for lt in lots.get(order.symbol, []) if not account or lt.account == account]
+        for lot in taxes.order_lots(mine, method, price, today.isoformat()):
             if left <= 0:
                 break
             take = min(left, lot.quantity)
@@ -140,6 +158,11 @@ def checks(order: Order, usd: float, price: float, transactions: list[dict], pla
                 gain_st += g
             left -= take
         tax = gain_st * st_rate + gain_lt * lt_rate
+        cmp = taxes.compare_methods(lots, order.symbol, qty, price, today, account, st_rate, lt_rate)
+        best = next((r for r in cmp["methods"] if r["method"] == cmp["best"]), None)
+        if best and best["method"] != method and tax - best["tax"] >= 5:
+            warn.append(f"Choosing lots {best['label'].split(' (')[0].lower()} at your broker would cut the tax on this sale by about "
+                        f"${tax - best['tax']:,.0f} (Portfolio → Taxes → Which shares to sell)")
         if gain_st + gain_lt > 0:
             warn.append(f"Gain of about ${gain_st + gain_lt:,.0f} ({'short' if gain_st >= gain_lt else 'long'}-term): "
                         f"about ${tax:,.0f} in federal tax at your rates")
@@ -196,14 +219,26 @@ def venue_quote(order: Order, cb_send=None, rh_send=None) -> dict:
         qty = order.quantity or ((order.dollars or 0) / price if price else 0)
         return {"price": price, "usd": qty * price, "quantity": round(qty, 8), "fees": 0.0, "errors": [], "broker": "Robinhood",
                 "note": "Robinhood's price includes its spread; there's no separate fee"}
+    if order.venue == "public":
+        try:
+            p = brokers.public_preflight(order.symbol, order.side, order.dollars, order.quantity, order.limit_price)
+            usd = float(p.get("estimatedCost") or p.get("estimatedProceeds") or p.get("orderValue") or 0)
+            qty = float(p.get("estimatedQuantity") or order.quantity or 0)
+            fees = float(p.get("estimatedCommission") or 0)
+            if usd and qty:
+                return {"price": usd / qty, "usd": usd, "quantity": round(qty, 6), "fees": fees, "errors": [], "broker": "Public.com"}
+        except brokers.BrokerError as exc:
+            return {"price": 0.0, "usd": 0.0, "quantity": 0.0, "fees": 0.0, "errors": [str(exc)], "broker": "Public.com"}
     q = market.get_live_quote(order.symbol)
-    price = order.limit_price or q.price
+    live = brokers.alpaca_price(order.symbol) if order.venue == "alpaca" else None
+    price = order.limit_price or live or q.price
     qty = order.quantity or ((order.dollars or 0) / price if price else 0)
-    return {"price": price, "usd": qty * price, "quantity": round(qty, 6), "fees": 0.0, "errors": [], "broker": "your broker app"}
+    broker = {"paper": "Paper account", "alpaca": "Alpaca", "public": "Public.com"}.get(order.venue, "your broker app")
+    return {"price": price, "usd": qty * price, "quantity": round(qty, 6), "fees": 0.0, "errors": [], "broker": broker}
 
 
 def preview(order: Order, transactions: list[dict], plan: dict | None, cfg: dict, spent: float, *,
-            now: float | None = None, today: date | None = None, quote_fn=None) -> dict:
+            now: float | None = None, today: date | None = None, quote_fn=None, methods: dict[str, str] | None = None) -> dict:
     now = now or time.time()
     today = today or date.today()
     if order.side not in ("buy", "sell"):
@@ -215,9 +250,16 @@ def preview(order: Order, transactions: list[dict], plan: dict | None, cfg: dict
     except (http.DataUnavailable, robinhood_crypto.RobinhoodError, KeyError, ValueError) as exc:
         raise TradeError(f"Couldn't get a price from {order.venue}: {exc}")
     usd = q["usd"] or (order.dollars or 0)
-    warn, block = checks(order, usd, q["price"], transactions, plan, today)
+    warn, block = checks(order, usd, q["price"], transactions, plan, today, methods=methods)
     block += q.get("errors") or []
-    if order.venue != "ticket":
+    if order.venue == "paper":
+        with db.connect() as conn:
+            st = brokers.paper_state(conn)
+        if order.side == "buy" and q["usd"] > st["cash"] + 0.005:
+            block.append(f"The paper account has ${st['cash']:,.2f} of pretend cash")
+        if order.side == "sell" and q["quantity"] > (st["positions"].get(order.symbol) or {}).get("quantity", 0) + 1e-9:
+            block.append(f"The paper account holds {(st['positions'].get(order.symbol) or {}).get('quantity', 0):g} {order.symbol}")
+    elif order.venue != "ticket":
         if not cfg["enabled"]:
             block.append("Trading from the app is off: switch it on in Settings → Trading first")
         if usd > cfg["max_order"]:
@@ -233,6 +275,8 @@ def place(order: Order, token: str, conn, *, now: float | None = None, cb_send=N
     """Send a previewed order. Raises TradeError without sending when anything doesn't match."""
     now = now or time.time()
     _unseal(order, token, now)
+    if order.venue == "paper":
+        return _place_paper(order, token, conn)
     cfg = settings(conn)
     if not cfg["enabled"]:
         raise TradeError("Trading from the app is off")
@@ -260,15 +304,73 @@ def place(order: Order, token: str, conn, *, now: float | None = None, cb_send=N
                 qty = round((order.dollars or 0) / price, 8) if price else 0
             res = robinhood_crypto.place(robinhood_crypto.order_body(order.symbol, order.side, qty, order.limit_price, client_id), rh_send)
             broker_id = res.get("id", "")
+        elif order.venue == "alpaca":
+            res = brokers.alpaca_place(order.symbol, order.side, order.dollars, order.quantity, order.limit_price, client_id)
+            broker_id = res.get("id", "")
+        elif order.venue == "public":
+            res = brokers.public_place(order.symbol, order.side, order.dollars, order.quantity, order.limit_price, client_id)
+            broker_id = res.get("orderId") or client_id
         else:
             raise TradeError("Stocks are placed in your broker's app; use the order ticket")
-    except (http.DataUnavailable, robinhood_crypto.RobinhoodError, ValueError, TypeError) as exc:
+    except (http.DataUnavailable, robinhood_crypto.RobinhoodError, brokers.BrokerError, ValueError, TypeError) as exc:
         # ValueError: a key that doesn't load (wrong format, or missing): nothing was sent.
         log(conn, order, est, "failed", "", {"error": str(exc)[:300]})
         raise TradeError(f"Not sent: {str(exc)[:200]}")
     log(conn, order, est, "placed", broker_id, res)
-    return {"placed": True, "broker_order_id": broker_id, "venue": order.venue, "usd": round(est, 2),
-            "note": "Sent. The trade shows up in your ledger at the next sync (within about 5 minutes)."}
+    note = ("Sent. The trade shows up in your ledger at the next sync (within about 5 minutes)." if order.venue in ("coinbase", "robinhood")
+            else "Sent to Alpaca's paper account (pretend money)." if order.venue == "alpaca" and not brokers.alpaca_is_live()
+            else "Sent. Once it fills, it comes into your ledger (the app checks every couple of minutes).")
+    return {"placed": True, "broker_order_id": broker_id, "venue": order.venue, "usd": round(est, 2), "note": note}
+
+
+def _place_paper(order: Order, token: str, conn) -> dict:
+    """Fill on the app's own paper account at the live price (a limit order fills only if it would now)."""
+    _used.add(token)
+    try:
+        price = market.get_live_quote(order.symbol).price
+    except http.DataUnavailable as exc:
+        raise TradeError(f"No live price for {order.symbol}: {exc}")
+    if order.limit_price and ((order.side == "buy" and price > order.limit_price) or (order.side == "sell" and price < order.limit_price)):
+        log(conn, order, 0.0, "refused", "", {"reason": "limit not reached", "price": price})
+        raise TradeError(f"{order.symbol} is at ${price:,.2f}, past your ${order.limit_price:,.2f} limit: paper orders fill only if they would fill now")
+    qty = order.quantity or ((order.dollars or 0) / price)
+    try:
+        fill = brokers.paper_fill(conn, order.symbol, order.side, qty, price)
+    except brokers.BrokerError as exc:
+        log(conn, order, qty * price, "refused", "", {"reason": str(exc)})
+        raise TradeError(str(exc))
+    log(conn, order, qty * price, "paper", fill["id"], fill)
+    return {"placed": True, "broker_order_id": fill["id"], "venue": "paper", "usd": round(qty * price, 2),
+            "note": f"Paper fill: {fill['quantity']:g} {order.symbol} at ${price:,.2f} (pretend money)."}
+
+
+def settle_pending(conn, alpaca_get=None, public_get=None) -> list[dict]:
+    """Bring filled Alpaca (live) and Public orders placed from the app into the ledger, once each."""
+    added = []
+    rows = conn.execute("SELECT * FROM trade_log WHERE status = 'placed' AND venue IN ('alpaca', 'public') AND broker_order_id != '' "
+                        "ORDER BY id").fetchall()
+    for r in rows:
+        try:
+            if r["venue"] == "alpaca":
+                fill = brokers.alpaca_fill((alpaca_get or brokers.alpaca_order)(r["broker_order_id"]))
+            else:
+                fill = brokers.public_fill((public_get or brokers.public_order)(r["broker_order_id"]))
+        except brokers.BrokerError:
+            continue
+        if not fill:
+            continue
+        status = "filled"
+        if r["venue"] == "alpaca" and not brokers.alpaca_is_live():
+            status = "filled (paper)"
+        else:
+            key = f"{'alp' if r['venue'] == 'alpaca' else 'pub'}:{r['broker_order_id']}"
+            if not conn.execute("SELECT 1 FROM transactions WHERE import_key = ?", (key,)).fetchone():
+                db.add_transaction(conn, r["symbol"], r["side"], fill["quantity"], fill["price"], fill["date"], 0.0,
+                                   f"Placed from the app on {ACCOUNT_OF[r['venue']]}", import_key=key, account=ACCOUNT_OF[r["venue"]])
+                added.append({"symbol": r["symbol"], "side": r["side"], "quantity": fill["quantity"], "price": fill["price"],
+                              "account": ACCOUNT_OF[r["venue"]]})
+        conn.execute("UPDATE trade_log SET status = ? WHERE id = ?", (status, r["id"]))
+    return added
 
 
 def recent(conn, days: int = 30) -> list[dict]:

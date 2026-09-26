@@ -31,7 +31,7 @@ PUSH_PRIORITY = {3: 5, 2: 4, 1: 3}
 def my_symbols() -> tuple[list[str], list[str]]:
     """(held, watched) symbols from the ledger and the watchlist."""
     with db.connect() as conn:
-        txs = db.list_transactions(conn)
+        txs = db.ledger(conn)
         watch = db.watchlist(conn)
     try:
         held = [p.symbol for p in pf.build_positions(txs).values() if p.quantity > 0]
@@ -191,6 +191,16 @@ class Sentinel:
                 await asyncio.to_thread(run_schedules_daily)
             except Exception:
                 pass
+            try:
+                await asyncio.to_thread(offsite_daily)
+                await asyncio.to_thread(health_check)
+                await asyncio.to_thread(settle_orders)
+                await asyncio.to_thread(log_advice_daily)
+                held_now = my_symbols()[0]
+                if held_now:
+                    await asyncio.to_thread(newsdesk_cache.get, tuple(sorted(held_now)), lambda: build_newsdesk(sorted(held_now)))
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:
@@ -256,6 +266,100 @@ def crypto_headsups(held: list[str]) -> int:
         if a["level"] >= 2:
             n += raise_headsup(f"crypto:{a['kind']}:{a['date']}:{a['text'][:60]}", "crypto", a["level"], a["text"], url=a.get("url", ""))
     return n
+
+
+def offsite_daily(now: datetime | None = None) -> dict | None:
+    """Once a day, after 2am local time: the encrypted off-site backup, when one is set up."""
+    import json
+    from . import config, offsite
+    if not offsite.configured():
+        return None
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone()
+    with db.connect() as conn:
+        last = json.loads(db.get_meta(conn, "offsite_last", "null") or "null")
+    if local.hour < 2 or (last and last.get("ok") and last["at"][:10] == now.date().isoformat()):
+        return None
+    if last and not last.get("ok") and now - datetime.fromisoformat(last["at"]) < timedelta(hours=1):
+        return None     # failed recently: try again in an hour, not every loop
+    try:
+        out = offsite.run(config.settings.db_path, now)
+        rec = {"at": out["at"], "ok": True, "to": out["to"], "errors": out["errors"]}
+    except offsite.BackupError as exc:
+        rec = {"at": now.isoformat(timespec="seconds"), "ok": False, "error": str(exc)}
+    with db.connect() as conn:
+        db.set_meta(conn, "offsite_last", json.dumps(rec))
+    return rec
+
+
+def health_check(now: datetime | None = None) -> list[dict]:
+    """Push once when a connection has been failing for a while (see health.py)."""
+    from . import health
+    problems = health.problems(now)
+    for p in problems:
+        if p["push"]:
+            raise_headsup(p["key"], "sync", 2, p["title"], p["body"], "", "")
+    return problems
+
+
+def settle_orders() -> list[dict]:
+    """Stock orders sent to Alpaca or Public from the app: record fills in the ledger."""
+    from . import brokers, trading
+    if not (brokers.alpaca_configured() or brokers.public_configured()):
+        return []
+    with db.connect() as conn:
+        added = trading.settle_pending(conn)
+    for a in added:
+        raise_headsup(f"fill:{a['account']}:{a['symbol']}:{a['quantity']}:{a['price']}", "sync", 1,
+                      f"Filled: {a['side']} {a['quantity']:g} {a['symbol']} at ${a['price']:,.2f} ({a['account']})",
+                      "Added to your ledger.", "", a["symbol"])
+    return added
+
+
+def log_advice_daily(today: date | None = None) -> int:
+    """Once a day, after the market opens: write down the hold plan's actionable advice with prices."""
+    from . import advice, holdplan
+    from .providers import market
+    today = today or date.today()
+    with db.connect() as conn:
+        if db.get_meta(conn, "advice_logged", "") == today.isoformat():
+            return 0
+    if not my_symbols()[0]:
+        return 0
+    plan = holdplan.cached()
+    with db.connect() as conn:
+        n = advice.record(conn, today.isoformat(), advice.from_plan(plan), lambda s: market.get_live_quote(s).price)
+        db.set_meta(conn, "advice_logged", today.isoformat())
+    return n
+
+
+def build_newsdesk(symbols: list[str]) -> dict:
+    """The news desk for your holdings (see newsdesk.py), remembered 20 minutes; confirmed
+    Tier A stories are pushed once each."""
+    import json
+    from . import logos, newsdesk, reading
+    from .providers import market
+    now = datetime.now(timezone.utc)
+    raw = logos.names(symbols)
+    names = {s: reading.short_company_name(n) for s, n in raw.items() if n and market.asset_class(s) != "crypto"}
+    coins = {s: n for s, n in raw.items() if n and market.asset_class(s) == "crypto"}
+    with db.connect() as conn:
+        history = json.loads(db.get_meta(conn, "newsdesk_history", "[]") or "[]")
+    radar_by: dict[str, list[dict]] = {}
+    try:
+        mine, _ = radar_cache.get(tuple(symbols), lambda: sentinel.mine(symbols))
+        for a in mine:
+            radar_by.setdefault(a.symbol, []).append(a.to_dict())
+    except Exception:  # noqa: BLE001 - the desk works without the radar
+        pass
+    desk = newsdesk.build(symbols, names, radar_by, history, now, crypto_names=coins)
+    with db.connect() as conn:
+        db.set_meta(conn, "newsdesk_history", json.dumps(newsdesk.remember(history, desk, now)))
+    for st in newsdesk.new_reviews(desk):
+        raise_headsup(f"newsdesk:{st['symbol']}:{st['event']}:{st['first'][:10]}", "news", 2,
+                      f"{st['symbol']}: {st['event'].replace('_', ' ')} ({st['sources']} sources)", st["title"],
+                      st["items"][0]["url"] if st["items"] else "", st["symbol"])
+    return {"desk": desk, "feeds": dict(newsdesk.FEED_STATUS), "at": now.isoformat(timespec="seconds")}
 
 
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",
@@ -370,6 +474,7 @@ crypto_cache = Cache(300)
 news_cache = Cache(300)
 reading_cache = Cache(600)
 radar_cache = Cache(300)
+newsdesk_cache = Cache(1200)
 
 
 def build_news(symbols: list[str]) -> dict:

@@ -112,29 +112,91 @@ class Realized:
     long_term: bool
     account: str = ""
     lot_tx: int = 0
+    bought: str = ""           # when the lot was bought
 
 
 def _tx_id(t: dict, i: int) -> int:
     return int(t["id"]) if t.get("id") is not None else -(i + 1)
 
 
-def lots_and_sales(transactions: list[dict]) -> tuple[dict[str, list[Lot]], list[Realized]]:
-    """Open lots per symbol and every realized sale, oldest lots first (FIFO within an account,
-    falling back to any account; brokers use FIFO by default)."""
+LOT_METHODS = {
+    "fifo": "First in, first out (brokers' default)",
+    "hifo": "Highest cost first (smallest gain now)",
+    "lifo": "Last in, first out",
+    "min_tax": "Least tax now (losses first, then long-term gains)",
+}
+
+
+def order_lots(lots: list[Lot], method: str, price: float, on: str) -> list[Lot]:
+    """The order a sale takes lots in, for a cost-basis method. FIFO keeps purchase order."""
+    if method == "lifo":
+        return sorted(lots, key=lambda lt: lt.date, reverse=True)
+    if method == "hifo":
+        return sorted(lots, key=lambda lt: -lt.cost)
+    if method == "min_tax":
+        d = date.fromisoformat(on[:10])
+
+        def tax_per_unit(lt: Lot) -> float:
+            long_term = (d - date.fromisoformat(lt.date)).days > 365
+            return (price - lt.cost) * (LT_RATE if long_term else ST_RATE)
+        return sorted(lots, key=tax_per_unit)
+    return list(lots)
+
+
+def lots_and_sales(transactions: list[dict], methods: dict[str, str] | None = None,
+                   carried: dict | None = None) -> tuple[dict[str, list[Lot]], list[Realized]]:
+    """Open lots per symbol and every realized sale. A sale takes lots from its own account first,
+    then any account, in the order of that account's cost-basis method (FIFO unless set in
+    `methods`, {account: method}, or on the sale row as "lot_method"; brokers use FIFO by default).
+
+    Rows flagged "transfer" (see transfers.with_moves) move lots between accounts, keeping their
+    purchase dates and total cost; `carried`, when given, receives each move's carried cost."""
+    methods = methods or {}
     lots: dict[str, list[Lot]] = {}
     sales: list[Realized] = []
+    transit: dict = {}
     indexed = [(t, _tx_id(t, i)) for i, t in enumerate(transactions)]
     for tx, tid in sorted(indexed, key=lambda p: (p[0]["date"], p[0].get("id", 0))):
         sym = tx["symbol"].upper()
         qty = float(tx["quantity"])
         acct = tx.get("account") or ""
         fees = float(tx.get("fees") or 0)
+        move = tx.get("transfer")
+        if move is not None:
+            held = lots.get(sym, [])
+            if tx["side"] == "sell":
+                taken, left = [], qty
+                for lot in [lt for lt in held if lt.account == acct] + [lt for lt in held if lt.account != acct]:
+                    if left <= 1e-12:
+                        break
+                    take = min(left, lot.quantity)
+                    lot.quantity -= take
+                    left -= take
+                    taken.append(Lot(sym, lot.date, take, lot.cost, acct, lot.tx))
+                transit[move] = (taken, qty)
+                lots[sym] = [lt for lt in held if lt.quantity > 1e-12]
+            else:
+                if move not in transit:          # the sending side isn't in these rows: arrive at the row's price
+                    lots.setdefault(sym, []).append(Lot(sym, tx["date"][:10], qty, float(tx.get("price") or 0), acct, tid))
+                    continue
+                taken, requested = transit.pop(move)
+                if not taken or requested <= 0:  # nothing was there to send (already sold): nothing arrives
+                    continue
+                scale = qty / requested          # received per unit sent (the network fee)
+                for lt in taken:
+                    lots.setdefault(sym, []).append(Lot(sym, lt.date, lt.quantity * scale, lt.cost / scale, acct, lt.tx))
+                lots[sym].sort(key=lambda lt: lt.date)
+                if carried is not None:
+                    carried[move] = sum(lt.quantity * lt.cost for lt in taken)
+            continue
         if tx["side"] == "buy":
             lots.setdefault(sym, []).append(Lot(sym, tx["date"][:10], qty, float(tx["price"]) + fees / qty, acct, tid))
             continue
         price = float(tx["price"]) - fees / qty
         held = lots.get(sym, [])
-        order = [lt for lt in held if lt.account == acct] + [lt for lt in held if lt.account != acct]
+        method = tx.get("lot_method") or methods.get(acct) or "fifo"
+        order = (order_lots([lt for lt in held if lt.account == acct], method, price, tx["date"])
+                 + order_lots([lt for lt in held if lt.account != acct], method, price, tx["date"]))
         left = qty
         for lot in order:
             if left <= 1e-9:
@@ -146,9 +208,43 @@ def lots_and_sales(transactions: list[dict]) -> tuple[dict[str, list[Lot]], list
             left -= take
             long_term = (date.fromisoformat(tx["date"][:10]) - date.fromisoformat(lot.date)).days > 365
             sales.append(Realized(sym, tx["date"][:10], take, take * price, take * lot.cost,
-                                  take * (price - lot.cost), long_term, acct, lot.tx))
+                                  take * (price - lot.cost), long_term, acct, lot.tx, lot.date))
         lots[sym] = [lt for lt in held if lt.quantity > 1e-9]
     return lots, sales
+
+
+def compare_methods(lots: dict[str, list[Lot]], symbol: str, quantity: float, price: float, today: date,
+                    account: str = "", st_rate: float = ST_RATE, lt_rate: float = LT_RATE) -> dict:
+    """Selling `quantity` of `symbol` now under each cost-basis method: which lots go, the
+    short- and long-term gain, and the federal tax at your rates (a loss shows as tax saved on
+    other gains). Lots come from `account`
+    first (any account when blank), as a sale there would take them."""
+    held = [lt for lt in lots.get(symbol, []) if not account or lt.account == account]
+    have = sum(lt.quantity for lt in held)
+    on = today.isoformat()
+    rows = []
+    for method, label in LOT_METHODS.items():
+        left, st, lt_gain, used = quantity, 0.0, 0.0, []
+        for lot in order_lots(held, method, price, on):
+            if left <= 1e-12:
+                break
+            take = min(left, lot.quantity)
+            gain = (price - lot.cost) * take
+            long_term = (today - date.fromisoformat(lot.date)).days > 365
+            if long_term:
+                lt_gain += gain
+            else:
+                st += gain
+            used.append({"bought": lot.date, "quantity": round(take, 8), "cost": round(lot.cost, 4), "gain": round(gain, 2),
+                         "long_term": long_term, "account": lot.account})
+            left -= take
+        rows.append({"method": method, "label": label, "short_term": round(st, 2), "long_term": round(lt_gain, 2),
+                     "tax": round(st * st_rate + lt_gain * lt_rate, 2), "lots": used})
+    best = min(rows, key=lambda r: (r["tax"], r["short_term"] + r["long_term"]))["method"] if rows else None
+    fifo = next((r["tax"] for r in rows if r["method"] == "fifo"), 0.0)
+    return {"symbol": symbol, "quantity": quantity, "price": price, "account": account, "held": round(have, 8),
+            "short": quantity > have + 1e-9, "methods": rows, "best": best,
+            "saves_vs_fifo": round(fifo - min((r["tax"] for r in rows), default=fifo), 2)}
 
 
 # ------------------------------------------------------------------ wash sales
@@ -171,7 +267,7 @@ def wash_sales(transactions: list[dict]) -> list[WashSale]:
     side, in any account, other than the purchase of the shares that were sold. The disallowed
     loss is capped by the shares bought back."""
     _, sales = lots_and_sales(transactions)
-    buys = [(t, _tx_id(t, i)) for i, t in enumerate(transactions) if t["side"] == "buy"]
+    buys = [(t, _tx_id(t, i)) for i, t in enumerate(transactions) if t["side"] == "buy" and t.get("transfer") is None]
     sold_lots = {s.lot_tx for s in sales}
     out = []
     used: set[int] = set()
@@ -219,7 +315,7 @@ def recent_buys(transactions: list[dict], symbol: str, today: date) -> list[tupl
     """Purchases of the symbol or an identical one in the last 30 days, any account."""
     since = (today - timedelta(days=WASH_DAYS)).isoformat()
     return [(t, _tx_id(t, i)) for i, t in enumerate(transactions)
-            if t["side"] == "buy" and identical(t["symbol"], symbol) and t["date"][:10] >= since]
+            if t["side"] == "buy" and t.get("transfer") is None and identical(t["symbol"], symbol) and t["date"][:10] >= since]
 
 
 # ------------------------------------------------------------------ the clock and harvesting
@@ -331,8 +427,8 @@ def harvest_candidates(views: list[LotView], transactions: list[dict], today: da
 
 
 def summary(transactions: list[dict], prices: dict[str, float], today: date,
-            st_rate: float = ST_RATE, lt_rate: float = LT_RATE) -> dict:
-    lots, sales = lots_and_sales(transactions)
+            st_rate: float = ST_RATE, lt_rate: float = LT_RATE, methods: dict[str, str] | None = None) -> dict:
+    lots, sales = lots_and_sales(transactions, methods)
     views = lot_views(lots, prices, today, st_rate, lt_rate)
     year = str(today.year)
     realized = [s for s in sales if s.date.startswith(year)]
@@ -384,8 +480,8 @@ def _last_trading_day(year: int) -> date:
 def recurring_buys(transactions: list[dict], symbol: str, today: date, days: int = 120, min_buys: int = 3) -> bool:
     """Looks like an automatic investment: several buys of this (or an identical) fund lately."""
     since = (today - timedelta(days=days)).isoformat()
-    buys = [t for t in transactions if t["side"] == "buy" and identical(t["symbol"], symbol) and t["date"][:10] >= since
-            and t.get("price", 1) > 0]
+    buys = [t for t in transactions if t["side"] == "buy" and t.get("transfer") is None and identical(t["symbol"], symbol)
+            and t["date"][:10] >= since and t.get("price", 1) > 0]
     return len(buys) >= min_buys
 
 
