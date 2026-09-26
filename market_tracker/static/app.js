@@ -2522,3 +2522,53 @@ $("#cash-form").addEventListener("submit", async (e) => {
     e.target.reset(); loadCash();
   } catch (err) { alert(err.message); }
 });
+
+// ---------------------------------------------------------------- off-site backup and connection health
+async function loadOffsite() {
+  try {
+    const o = await api("/api/offsite");
+    $("#os-dir").value = o.dir || ""; $("#os-repo").value = o.repo || "";
+    $("#os-token").placeholder = o.has_token ? "GitHub token saved (enter a new one to replace it)" : "GitHub token (fine-grained, Contents: write on that repo only)";
+    $("#os-pass").placeholder = o.has_key ? "Passphrase set (enter a new one to change it)" : "";
+    const l = o.last;
+    $("#os-status").innerHTML = !o.configured ? `<p class="muted">Not set up yet.</p>`
+      : l ? `<p class="${l.ok ? "up" : "down"}">${l.ok ? "Last copy" : "Last try failed"} ${esc(l.at.slice(0, 16).replace("T", " "))} UTC${l.ok ? " → " + esc(l.to.join(", ")) : ": " + esc(l.error)}</p>`
+      : `<p class="muted">Set up: the first copy runs tonight after 2am (or press the button).</p>`;
+  } catch (err) { $("#os-status").textContent = err.message; }
+}
+$("#os-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { dir: $("#os-dir").value, repo: $("#os-repo").value };
+  if ($("#os-pass").value) body.passphrase = $("#os-pass").value;
+  if ($("#os-token").value) body.token = $("#os-token").value;
+  $("#os-msg").className = "small muted"; $("#os-msg").textContent = "Saving and backing up…";
+  try {
+    const r = await api("/api/offsite", { method: "POST", body: JSON.stringify(body) });
+    $("#os-pass").value = ""; $("#os-token").value = "";
+    const b = r.backup;
+    $("#os-msg").className = "small " + (b && !b.ok ? "down" : "up");
+    $("#os-msg").textContent = !b ? "Saved. Add a passphrase and a folder or repository to start backing up." : b.ok ? `Backed up to ${b.to.join(" and ")}.${b.errors.length ? " " + b.errors.join(" ") : ""}` : b.error;
+    loadOffsite();
+  } catch (err) { $("#os-msg").className = "small down"; $("#os-msg").textContent = err.message; }
+});
+$("#os-restore-btn").addEventListener("click", () => $("#os-file").click());
+$("#os-file").addEventListener("change", async () => {
+  const f = $("#os-file").files[0];
+  if (!f) return;
+  const pass = prompt("The passphrase for this backup:");
+  if (!pass) return;
+  if (!confirm("Replace everything in this app with the backup's contents? (Today's data is kept beside it as a file.)")) return;
+  const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(f); });
+  try {
+    const r = await api("/api/offsite/restore", { method: "POST", body: JSON.stringify({ file_base64: b64, passphrase: pass }) });
+    alert(`Restored. The previous data was kept as ${r.previous_kept_as}.`); location.reload();
+  } catch (err) { alert(err.message); }
+  $("#os-file").value = "";
+});
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    $("#hl-list").innerHTML = h.checks.map((c) => `<li class="${c.ok ? "" : "down"}">${c.ok ? "●" : "▲"} ${esc(c.text)}</li>`).join("")
+      || `<li class="muted">Nothing connected yet: connect an account above.</li>`;
+  } catch (err) { $("#hl-list").textContent = err.message; }
+}

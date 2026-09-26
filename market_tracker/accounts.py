@@ -227,11 +227,18 @@ def record(kind: str, result: dict | None, error: str | None, now: datetime) -> 
     with db.connect() as conn:
         if result is not None and "by_account" in result:
             db.set_meta(conn, f"sync_diff:{kind}", json.dumps(result["by_account"]))
+        try:
+            prev = json.loads(db.get_meta(conn, f"sync:{kind}", "") or "null") or {}
+        except ValueError:
+            prev = {}
+        # When the current run of failures started (health.py pushes once it has lasted a while).
+        fail_since = None if error is None else (prev.get("fail_since") if prev and not prev.get("ok") and prev.get("fail_since")
+                                                  else now.isoformat(timespec="seconds"))
         db.set_meta(conn, f"sync:{kind}", json.dumps({"at": now.isoformat(timespec="seconds"), "ok": error is None,
                                                       "new": (result or {}).get("new", 0),
                                                       "income_new": (result or {}).get("income_new", 0),
                                                       "differences": len((result or {}).get("differences") or []),
-                                                      "error": error}))
+                                                      "error": error, "fail_since": fail_since}))
 
 
 def last_sync(kind: str) -> dict | None:

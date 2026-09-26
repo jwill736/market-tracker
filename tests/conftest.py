@@ -26,7 +26,9 @@ def _no_background(monkeypatch):
     monkeypatch.delenv("NTFY_TOPIC", raising=False)
     # Never reach a real inbox or broker from a test, whatever the developer's .env holds.
     for k in ("MAIL_USER", "MAIL_APP_PASSWORD", "COINBASE_API_KEY_NAME", "COINBASE_API_PRIVATE_KEY",
-              "ROBINHOOD_CRYPTO_API_KEY", "ROBINHOOD_CRYPTO_PRIVATE_KEY", "SNAPTRADE_CLIENT_ID", "SNAPTRADE_CONSUMER_KEY"):
+              "ROBINHOOD_CRYPTO_API_KEY", "ROBINHOOD_CRYPTO_PRIVATE_KEY", "SNAPTRADE_CLIENT_ID", "SNAPTRADE_CONSUMER_KEY",
+              "OFFSITE_DIR", "OFFSITE_REPO", "OFFSITE_GITHUB_TOKEN", "OFFSITE_KEY", "OFFSITE_SALT",
+              "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "ALPACA_LIVE", "PUBLIC_API_SECRET", "PUBLIC_ACCOUNT_ID"):
         monkeypatch.setenv(k, "x")
         monkeypatch.delenv(k)
 

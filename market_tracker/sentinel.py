@@ -191,6 +191,11 @@ class Sentinel:
                 await asyncio.to_thread(run_schedules_daily)
             except Exception:
                 pass
+            try:
+                await asyncio.to_thread(offsite_daily)
+                await asyncio.to_thread(health_check)
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:
@@ -256,6 +261,40 @@ def crypto_headsups(held: list[str]) -> int:
         if a["level"] >= 2:
             n += raise_headsup(f"crypto:{a['kind']}:{a['date']}:{a['text'][:60]}", "crypto", a["level"], a["text"], url=a.get("url", ""))
     return n
+
+
+def offsite_daily(now: datetime | None = None) -> dict | None:
+    """Once a day, after 2am local time: the encrypted off-site backup, when one is set up."""
+    import json
+    from . import config, offsite
+    if not offsite.configured():
+        return None
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone()
+    with db.connect() as conn:
+        last = json.loads(db.get_meta(conn, "offsite_last", "null") or "null")
+    if local.hour < 2 or (last and last.get("ok") and last["at"][:10] == now.date().isoformat()):
+        return None
+    if last and not last.get("ok") and now - datetime.fromisoformat(last["at"]) < timedelta(hours=1):
+        return None     # failed recently: try again in an hour, not every loop
+    try:
+        out = offsite.run(config.settings.db_path, now)
+        rec = {"at": out["at"], "ok": True, "to": out["to"], "errors": out["errors"]}
+    except offsite.BackupError as exc:
+        rec = {"at": now.isoformat(timespec="seconds"), "ok": False, "error": str(exc)}
+    with db.connect() as conn:
+        db.set_meta(conn, "offsite_last", json.dumps(rec))
+    return rec
+
+
+def health_check(now: datetime | None = None) -> list[dict]:
+    """Push once when a connection has been failing for a while (see health.py)."""
+    from . import health
+    problems = health.problems(now)
+    for p in problems:
+        if p["push"]:
+            raise_headsup(p["key"], "sync", 2, p["title"], p["body"], "", "")
+    return problems
 
 
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",

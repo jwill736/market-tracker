@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from . import (accounts, auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, logos, notify, pulse, radar, reading, research, snaptrade,
                sentinel, service, strategy, taxes, trading, transfers)
+from . import config
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -1634,6 +1635,94 @@ def set_cash_account(body: CashAcctIn):
         cash.save(conn, body.account.strip(), body.amount, body.apy, date.today())
     holdplan.clear_cache()
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ off-site backup
+
+@app.get("/api/offsite")
+def offsite_view():
+    from . import offsite
+    c = offsite.config()
+    with db.connect() as conn:
+        last = json.loads(db.get_meta(conn, "offsite_last", "null") or "null")
+    return {"configured": offsite.configured(), "has_key": bool(c["key"]), "dir": c["dir"], "repo": c["repo"],
+            "has_token": bool(c["token"]), "last": last}
+
+
+class OffsiteIn(BaseModel):
+    passphrase: str | None = Field(default=None, max_length=500)
+    dir: str | None = Field(default=None, max_length=500)
+    repo: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=500)
+
+
+def _offsite_run() -> dict:
+    from . import offsite
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    try:
+        out = offsite.run(config.settings.db_path, now)
+        rec = {"at": out["at"], "ok": True, "to": out["to"], "errors": out["errors"]}
+    except offsite.BackupError as exc:
+        rec = {"at": now.isoformat(timespec="seconds"), "ok": False, "error": str(exc)}
+    with db.connect() as conn:
+        db.set_meta(conn, "offsite_last", json.dumps(rec))
+    return rec
+
+
+@app.post("/api/offsite")
+async def offsite_setup(body: OffsiteIn):
+    """Save the passphrase (as a derived key) and destinations, then back up once."""
+    from . import offsite
+    vals: dict[str, str] = {}
+    try:
+        if body.passphrase:
+            vals.update(await asyncio.to_thread(offsite.new_key, body.passphrase))
+        if body.dir is not None:
+            d = body.dir.strip()
+            if d and not Path(d).expanduser().is_dir():
+                raise offsite.BackupError(f"The folder {d} doesn't exist on this computer.")
+            vals["OFFSITE_DIR"] = d
+        if body.repo is not None:
+            vals["OFFSITE_REPO"] = body.repo.strip()
+        if body.token:
+            vals["OFFSITE_GITHUB_TOKEN"] = body.token.strip()
+        repo = vals.get("OFFSITE_REPO", offsite.config()["repo"])
+        token = vals.get("OFFSITE_GITHUB_TOKEN", offsite.config()["token"])
+        if repo and token:
+            await asyncio.to_thread(offsite.check_private, repo, token)
+    except offsite.BackupError as exc:
+        raise HTTPException(400, str(exc))
+    if vals:
+        _save_env(vals)
+    if not offsite.configured():
+        return {"saved": True, "backup": None}
+    return {"saved": True, "backup": await asyncio.to_thread(_offsite_run)}
+
+
+class OffsiteRestoreIn(BaseModel):
+    file_base64: str = Field(min_length=10, max_length=200_000_000)
+    passphrase: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/offsite/restore")
+async def offsite_restore(body: OffsiteRestoreIn):
+    """Replace this app's data with an encrypted backup's (the current data is kept beside it)."""
+    import base64
+    from . import offsite
+    try:
+        kept = await asyncio.to_thread(offsite.restore, base64.b64decode(body.file_base64), body.passphrase,
+                                       config.settings.db_path)
+    except (offsite.BackupError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    holdplan.clear_cache()
+    return {"restored": True, "previous_kept_as": kept}
+
+
+@app.get("/api/health")
+def health_view():
+    from . import health
+    return {"checks": health.status()}
 
 
 @app.get("/api/accounts")
