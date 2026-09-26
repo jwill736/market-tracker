@@ -1102,7 +1102,7 @@ async def _sync_now(kind: str):
 # ------------------------------------------------------------------ trading
 
 class TradeIn(BaseModel):
-    venue: Literal["coinbase", "robinhood", "ticket"]
+    venue: Literal["coinbase", "robinhood", "paper", "alpaca", "public", "ticket"]
     symbol: str = Field(..., min_length=1, max_length=20)
     side: Literal["buy", "sell"]
     dollars: float | None = Field(None, gt=0, le=1_000_000)
@@ -1147,7 +1147,9 @@ async def trade_place(body: TradeIn):
         out = await asyncio.to_thread(run)
     except trading.TradeError as exc:
         raise HTTPException(400, str(exc))
-    kind = {"coinbase": "coinbase", "robinhood": "robinhood_crypto"}[body.venue]
+    kind = {"coinbase": "coinbase", "robinhood": "robinhood_crypto"}.get(body.venue)
+    if not kind:
+        return out
 
     async def later():
         await asyncio.sleep(8)
@@ -1723,6 +1725,115 @@ async def offsite_restore(body: OffsiteRestoreIn):
 def health_view():
     from . import health
     return {"checks": health.status()}
+
+
+@app.get("/api/live/status")
+def live_status():
+    return livefeed.hub.status()
+
+
+class FinnhubIn(BaseModel):
+    key: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.post("/api/live/finnhub")
+async def live_finnhub(body: FinnhubIn):
+    """Check a free Finnhub key with one quote, save it, and switch stocks to its live trade stream."""
+    import httpx
+
+    def check() -> int:
+        r = httpx.get("https://finnhub.io/api/v1/quote", params={"symbol": "AAPL", "token": body.key}, timeout=15)
+        return r.status_code if r.status_code != 200 else (200 if (r.json() or {}).get("c") else 204)
+    try:
+        code = await asyncio.to_thread(check)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Couldn't reach Finnhub: {exc}")
+    if code == 401 or code == 403:
+        raise HTTPException(400, "Finnhub didn't accept that key.")
+    if code not in (200, 204):
+        raise HTTPException(502, f"Finnhub answered {code}; try again in a minute.")
+    _save_env({"FINNHUB_API_KEY": body.key})
+    await livefeed.hub.restart()
+    return livefeed.hub.status()
+
+
+# ------------------------------------------------------------------ brokers for the order engine
+
+@app.get("/api/brokers")
+async def brokers_view():
+    from . import brokers
+    with db.connect() as conn:
+        rows = brokers.overview(conn)
+        paper = brokers.paper_state(conn)
+    alpaca = None
+    if brokers.alpaca_configured():
+        try:
+            alpaca = await asyncio.to_thread(brokers.alpaca_account)
+        except brokers.BrokerError as exc:
+            alpaca = {"error": str(exc)}
+    return {"brokers": rows, "paper": paper, "alpaca": alpaca}
+
+
+class AlpacaIn(BaseModel):
+    key_id: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9]+$")
+    secret: str = Field(min_length=8, max_length=200)
+    live: bool = False
+
+
+@app.post("/api/brokers/alpaca")
+async def brokers_alpaca(body: AlpacaIn):
+    """Check the key against the account, then save it."""
+    import os
+    from . import brokers
+    old = {k: os.environ.get(k) for k in ("ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "ALPACA_LIVE")}
+    os.environ.update({"ALPACA_KEY_ID": body.key_id, "ALPACA_SECRET_KEY": body.secret.strip(), "ALPACA_LIVE": "1" if body.live else ""})
+    try:
+        acct = await asyncio.to_thread(brokers.alpaca_account)
+    except brokers.BrokerError as exc:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        raise HTTPException(400, f"{exc}. {'Live' if body.live else 'Paper'} keys only work in {'live' if body.live else 'paper'} mode.")
+    _save_env({"ALPACA_KEY_ID": body.key_id, "ALPACA_SECRET_KEY": body.secret.strip(), "ALPACA_LIVE": "1" if body.live else ""})
+    return {"ok": True, "account": acct}
+
+
+class PublicIn(BaseModel):
+    secret: str = Field(min_length=8, max_length=500)
+
+
+@app.post("/api/brokers/public")
+async def brokers_public(body: PublicIn):
+    import os
+    from . import brokers
+    old = os.environ.get("PUBLIC_API_SECRET")
+    os.environ["PUBLIC_API_SECRET"] = body.secret.strip()
+    brokers._public_token.clear()
+    os.environ.pop("PUBLIC_ACCOUNT_ID", None)
+    try:
+        acct = await asyncio.to_thread(brokers.public_account_id)
+    except brokers.BrokerError as exc:
+        if old is None:
+            os.environ.pop("PUBLIC_API_SECRET", None)
+        else:
+            os.environ["PUBLIC_API_SECRET"] = old
+        raise HTTPException(400, str(exc))
+    _save_env({"PUBLIC_API_SECRET": body.secret.strip(), "PUBLIC_ACCOUNT_ID": acct})
+    return {"ok": True}
+
+
+class PaperResetIn(BaseModel):
+    start: float = Field(default=10_000, ge=100, le=10_000_000)
+
+
+@app.post("/api/brokers/paper/reset")
+def brokers_paper_reset(body: PaperResetIn):
+    from . import brokers
+    with db.connect() as conn:
+        brokers.paper_reset(conn, body.start)
+        return brokers.paper_state(conn)
 
 
 @app.get("/api/accounts")

@@ -183,8 +183,12 @@ def test_rejection_is_logged_not_raised_silently(monkeypatch):
         assert trading.recent(conn)[0]["status"] == "failed" and trading.spent_today(conn) == 0
 
 
-def test_stocks_are_tickets():
-    assert trading.venues("AAPL") == ["ticket"]
+def test_stock_venues_paper_and_ticket_until_a_broker_is_connected(monkeypatch):
+    assert trading.venues("AAPL") == ["paper", "ticket"]
+    monkeypatch.setenv("ALPACA_KEY_ID", "k" * 10)
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s" * 10)
+    monkeypatch.setenv("PUBLIC_API_SECRET", "p" * 10)
+    assert trading.venues("AAPL") == ["alpaca", "public", "paper", "ticket"]
 
 
 # ------------------------------------------------------------------ endpoints
@@ -212,7 +216,7 @@ def test_connection_endpoints(monkeypatch, tmp_path):
     monkeypatch.setattr(robinhood_crypto, "account", lambda send=None: (_ for _ in ()).throw(robinhood_crypto.RobinhoodError("Robinhood 401: bad key")))
     r = c.post("/api/connections/robinhood", json={"api_key": "rh-api-123"})
     assert r.status_code == 400 and "bad key" in r.json()["detail"]
-    assert c.get("/api/trade/venues/AAPL").json()["venues"] == ["ticket"]
+    assert c.get("/api/trade/venues/AAPL").json()["venues"] == ["paper", "ticket"]
     s = c.post("/api/trade/settings", json={"enabled": True, "max_order": 100, "daily_limit": 300}).json()
     assert s == {"enabled": True, "max_order": 100.0, "daily_limit": 300.0}
     assert c.post("/api/trade/place", json={"venue": "coinbase", "symbol": "BTC", "side": "buy", "dollars": 10}).status_code == 400

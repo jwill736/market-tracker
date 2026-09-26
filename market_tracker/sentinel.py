@@ -194,6 +194,7 @@ class Sentinel:
             try:
                 await asyncio.to_thread(offsite_daily)
                 await asyncio.to_thread(health_check)
+                await asyncio.to_thread(settle_orders)
             except Exception:
                 pass
             await asyncio.sleep(RADAR_SECONDS)
@@ -295,6 +296,20 @@ def health_check(now: datetime | None = None) -> list[dict]:
         if p["push"]:
             raise_headsup(p["key"], "sync", 2, p["title"], p["body"], "", "")
     return problems
+
+
+def settle_orders() -> list[dict]:
+    """Stock orders sent to Alpaca or Public from the app: record fills in the ledger."""
+    from . import brokers, trading
+    if not (brokers.alpaca_configured() or brokers.public_configured()):
+        return []
+    with db.connect() as conn:
+        added = trading.settle_pending(conn)
+    for a in added:
+        raise_headsup(f"fill:{a['account']}:{a['symbol']}:{a['quantity']}:{a['price']}", "sync", 1,
+                      f"Filled: {a['side']} {a['quantity']:g} {a['symbol']} at ${a['price']:,.2f} ({a['account']})",
+                      "Added to your ledger.", "", a["symbol"])
+    return added
 
 
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",

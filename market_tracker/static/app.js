@@ -77,7 +77,7 @@ function selectTab(name) {
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
-  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); }
+  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
@@ -1895,7 +1895,7 @@ function openTradeTicket(sym, side = "buy") {
 }
 
 // Sending the order from the app (Coinbase, Robinhood crypto): preview, then confirm.
-const VENUE_NAME = { coinbase: "Coinbase", robinhood: "Robinhood (crypto)", ticket: "your broker's app" };
+const VENUE_NAME = { coinbase: "Coinbase", robinhood: "Robinhood (crypto)", paper: "Paper account (pretend money)", alpaca: "Alpaca", public: "Public.com", ticket: "your broker app" };
 async function setupSending(sym, $$, shares, price) {
   let info;
   try { info = await api("/api/trade/venues/" + encodeURIComponent(sym)); } catch { return; }
@@ -1904,14 +1904,14 @@ async function setupSending(sym, $$, shares, price) {
   if (!apiVenues.length) {
     box.hidden = false;
     box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Accounts) to send orders from here."
-      : "Stocks and funds are placed in Robinhood or Stash (no broker offers individuals a stock API). Open it there; the confirmation email brings the trade in automatically once your email is connected."}</p>`;
+      : "Robinhood and Stash have no stock API: open it there, and the confirmation email brings the trade in. To trade stocks from here, connect Alpaca or Public.com (Portfolio → Accounts → Brokers)."}</p>`;
     return;
   }
   box.hidden = false;
   box.innerHTML = `<div class="tt-send"><label>Send with <select id="tt-venue">${apiVenues.map((v) => `<option value="${v}">${VENUE_NAME[v]}</option>`).join("")}<option value="ticket">Open in the app myself</option></select></label>
       <button type="button" id="tt-preview">Preview order</button></div>
     <div id="tt-pv"></div>
-    ${info.settings.enabled ? "" : `<p class="small down">Trading from the app is off. Switch it on in Portfolio → Trading (you can preview without it).</p>`}`;
+    ${info.settings.enabled ? "" : `<p class="small muted">Real-money trading from the app is off (Portfolio → Accounts → Trading); the paper account works without it.</p>`}`;
   let timer = null;
   $$("tt-preview").addEventListener("click", async () => {
     const venue = $$("tt-venue").value, out = $$("tt-pv");
@@ -1931,7 +1931,7 @@ async function setupSending(sym, $$, shares, price) {
         ${e.note ? `<p class="muted small">${esc(e.note)}</p>` : ""}
         ${pv.warnings.map((w) => `<p class="small warn-line">⚠ ${esc(w)}</p>`).join("")}
         ${pv.blockers.map((w) => `<p class="small down">✕ ${esc(w)}</p>`).join("")}
-        <p class="muted small">Today: ${fmtMoney(pv.spent_today, 2)} of your ${fmtMoney(pv.limits.daily_limit, 0)} daily limit.</p>
+        ${venue === "paper" ? "" : `<p class="muted small">Today: ${fmtMoney(pv.spent_today, 2)} of your ${fmtMoney(pv.limits.daily_limit, 0)} daily limit.</p>`}
         ${pv.token ? `<button type="button" id="tt-place" class="tt-place">Confirm: ${tradeState.side} on ${esc(e.broker)} <span id="tt-count"></span></button>` : ""}</div>`;
       if (!pv.token) return;
       let left = pv.expires_in;
@@ -2571,4 +2571,51 @@ async function loadHealth() {
     $("#hl-list").innerHTML = h.checks.map((c) => `<li class="${c.ok ? "" : "down"}">${c.ok ? "●" : "▲"} ${esc(c.text)}</li>`).join("")
       || `<li class="muted">Nothing connected yet: connect an account above.</li>`;
   } catch (err) { $("#hl-list").textContent = err.message; }
+}
+async function loadLive() {
+  try {
+    const s = await api("/api/live/status");
+    const ago = s.last_stock_tick ? Math.round((Date.now() - Date.parse(s.last_stock_tick)) / 1000) : null;
+    $("#lv-status").innerHTML = s.mode === "finnhub"
+      ? `<p class="up">Stocks: live trade stream (Finnhub)${ago != null ? `, last trade ${ago < 120 ? ago + "s" : Math.round(ago / 60) + " min"} ago` : ""}. Crypto: live from Coinbase.</p>`
+      : `<p>Stocks: checked every few seconds (Yahoo)${ago != null ? `, last price ${ago < 120 ? ago + "s" : Math.round(ago / 60) + " min"} ago` : ""}. Crypto: live from Coinbase, tick by tick.</p>
+         <p class="muted">For every stock trade as it happens, add a free Finnhub key: sign up at
+         <a href="https://finnhub.io/register" target="_blank" rel="noopener noreferrer">finnhub.io</a>, copy the API key from the dashboard, paste it here.</p>`;
+    $("#lv-form").hidden = s.mode === "finnhub";
+  } catch (err) { $("#lv-status").textContent = err.message; }
+}
+$("#lv-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#lv-msg").className = "small muted"; $("#lv-msg").textContent = "Checking the key…";
+  try { await api("/api/live/finnhub", { method: "POST", body: JSON.stringify({ key: $("#lv-key").value.trim() }) });
+    $("#lv-key").value = ""; $("#lv-msg").className = "small up"; $("#lv-msg").textContent = "Switched: stock prices now stream live."; loadLive(); }
+  catch (err) { $("#lv-msg").className = "small down"; $("#lv-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- brokers for the order engine
+async function loadBrokers() {
+  let b;
+  try { b = await api("/api/brokers"); } catch (err) { $("#bk-brokers").textContent = err.message; return; }
+  const pos = Object.entries(b.paper.positions);
+  $("#bk-brokers").innerHTML = b.brokers.map((x) => `<div class="broker-row"><b>${esc(x.name)}</b>
+      <span class="${x.ready ? "up" : "muted"}">${x.ready ? "● ready" : "○ not connected"}</span>
+      <span class="grow muted">${esc(x.text)}</span>
+      ${x.key === "alpaca" && !x.ready ? `<form class="inline-form" id="bk-alp"><input name="key_id" placeholder="API key ID" required>
+        <input name="secret" type="password" placeholder="Secret key" required autocomplete="off">
+        <label class="check"><input type="checkbox" name="live"> live (real money)</label><button type="submit" class="small">Connect</button></form>` : ""}
+      ${x.key === "public" && !x.ready ? `<form class="inline-form" id="bk-pub"><input name="secret" type="password" placeholder="Public API secret" required autocomplete="off">
+        <button type="submit" class="small">Connect</button></form>` : ""}
+      ${x.key === "paper" ? `<button type="button" class="link small" id="bk-paper-reset">Reset to $10,000</button>` : ""}</div>`).join("")
+    + (pos.length ? `<p class="muted">Paper holdings: ${pos.map(([s, p]) => `${esc(s)} ${fmtShares(p.quantity)}`).join(", ")}</p>` : "")
+    + (b.alpaca && !b.alpaca.error ? `<p class="muted">Alpaca: ${fmtMoney(b.alpaca.cash, 2)} cash, ${fmtMoney(b.alpaca.value, 2)} total.</p>` : b.alpaca ? `<p class="down">${esc(b.alpaca.error)}</p>` : "")
+    + `<p class="muted">Orders go from any stock's page: Trade → Send with. Each one is previewed and needs your confirm.</p><p class="small" id="bk-msg"></p>`;
+  const send = (id, path, body) => { const f = $(id); if (!f) return; f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await api(path, { method: "POST", body: JSON.stringify(body(Object.fromEntries(new FormData(f)), f)) }); loadBrokers(); }
+    catch (err) { $("#bk-msg").className = "small down"; $("#bk-msg").textContent = err.message; }
+  }); };
+  send("#bk-alp", "/api/brokers/alpaca", (d, f) => ({ key_id: d.key_id.trim(), secret: d.secret.trim(), live: f.live.checked }));
+  send("#bk-pub", "/api/brokers/public", (d) => ({ secret: d.secret.trim() }));
+  const r = $("#bk-paper-reset");
+  if (r) r.addEventListener("click", async () => { if (confirm("Start the paper account over with $10,000?")) { await api("/api/brokers/paper/reset", { method: "POST", body: "{}" }); loadBrokers(); } });
 }
