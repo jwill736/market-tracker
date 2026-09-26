@@ -106,6 +106,8 @@
       <aside class="home-side">
         <div class="rh-list card"><div class="rh-list-head"><h2>Stocks</h2><span class="muted small" id="home-stocks-meta"></span></div><div id="home-stocks"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Crypto</h2></div><div id="home-crypto"></div></div>
+        <div class="card conf-card"><div class="rh-list-head"><h2>Checked against your brokers</h2>
+          <button type="button" class="link small" id="conf-setup">Setup</button></div><div id="home-conf"></div></div>
         <div class="card acct-card"><div class="rh-list-head"><h2>Accounts</h2><span class="muted small" id="home-acct-meta"></span></div><div id="home-accounts"></div></div>
         <div class="card"><div class="rh-list-head"><h2>vs the market</h2><span class="muted small" id="bm-meta"></span></div><div id="bm-body" class="small"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Watchlist</h2></div><div id="home-watch"></div></div>
@@ -646,6 +648,13 @@
 
   <!-- Accounts: connections, transfers, cash, brokers, backup -->
   <section id="tab-accounts" class="tab" hidden>
+    <div class="card" id="setup">
+      <div class="card-head"><h2>Setup</h2><span class="muted small" id="su-count"></span></div>
+      <p class="muted small">Each step is done only when its test passes. In order: the backup first, then phone alerts, then each
+        account's feed, then a statement for what no feed can see.</p>
+      <ol class="setup-steps" id="su-steps"></ol>
+      <div id="su-fixes" class="small"></div>
+    </div>
     <div class="grid two">
       <div class="card">
         <h2 id="connections">Connections</h2>

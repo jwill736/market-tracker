@@ -77,7 +77,7 @@ function selectTab(name) {
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
-  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
+  if (name === "accounts") { loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") { loadJournal(); loadAdvice(); }
@@ -1619,6 +1619,7 @@ async function loadHome(quiet = false) {
   $("#home-empty").hidden = hasHoldings;
   if (!quiet) $("#home-chart").innerHTML = hasHoldings ? `<p class="muted small">Loading…</p>` : "";
   loadCash();
+  loadConfidence();
   renderHomeLists();
   loadHomeFeeds();
   if (!quiet || Date.now() - briefState.loadedAt > 600000) loadBrief();
@@ -2501,7 +2502,7 @@ $("#lp-form").addEventListener("submit", async (e) => {
 });
 
 // ---------------------------------------------------------------- cash waiting in your accounts
-async function loadCash() {
+async function loadCashAccounts() {
   let v;
   try { v = await api("/api/cash/accounts"); } catch (err) { $("#cash-out").textContent = err.message; return; }
   $("#cash-acct").innerHTML = v.names.map((n) => `<option>${esc(n)}</option>`).join("");
@@ -2519,7 +2520,7 @@ $("#cash-form").addEventListener("submit", async (e) => {
   const apy = $("#cash-apy").value;
   try {
     await api("/api/cash/accounts", { method: "POST", body: JSON.stringify({ account: $("#cash-acct").value, amount: +$("#cash-amt").value, apy: apy === "" ? null : +apy }) });
-    e.target.reset(); loadCash();
+    e.target.reset(); loadCashAccounts();
   } catch (err) { alert(err.message); }
 });
 
@@ -2667,3 +2668,63 @@ async function loadNewsDesk(refresh = false) {
   } catch (err) { $("#nd-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
 }
 $("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));
+
+// ---------------------------------------------------------------- setup and what's been checked
+const GO = { offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
+  "cx-rh": ["accounts", "#cx-rh"], "cx-email": ["accounts", "#cx-email"], statement: ["portfolio", "#st-form"], live: ["accounts", "#live"],
+  brokers: ["accounts", "#brokers"], transfers: ["accounts", "#transfers"], health: ["accounts", "#health"], connections: ["accounts", "#cx-email"] };
+function goTo(where) {
+  const [page, sel] = GO[where] || ["accounts", "#setup"];
+  selectTab(page);
+  setTimeout(() => { const el = $(sel); if (!el) return; if (el.tagName === "DETAILS") el.open = true; el.scrollIntoView({ block: "center" }); }, 150);
+}
+async function loadSetup() {
+  let s, c;
+  try { [s, c] = await Promise.all([api("/api/setup"), api("/api/confidence")]); } catch (err) { $("#su-steps").textContent = err.message; return; }
+  $("#su-count").textContent = `${s.done} of ${s.total} done`;
+  $("#su-steps").innerHTML = s.steps.map((st) => `<li class="${st.done ? "done" : ""}">
+      <div class="su-head"><span class="su-mark">${st.done ? "✓" : "○"}</span><b>${esc(st.title)}</b></div>
+      <div class="muted small">${esc(st.why)}</div>
+      <div class="small ${st.done ? "up" : ""}">${esc(st.detail)}</div>
+      ${st.key === "alerts" ? `<form class="inline-form" id="su-alerts"><input id="su-topic" value="${esc(s.ntfy_topic || s.suggested_topic)}" minlength="12" maxlength="64" pattern="[A-Za-z0-9_-]+" aria-label="ntfy topic">
+        <button type="submit" class="small">Save and send a test</button></form>
+        <p class="muted small">Install the free ntfy app, add this topic (keep it secret: anyone with the name can read your alerts), then press the button.</p>` : ""}
+      <div class="row">${st.done ? "" : `<button type="button" class="small secondary su-go" data-go="${esc(st.go)}">Open</button>`}
+        ${st.test ? `<button type="button" class="small su-test" data-key="${esc(st.key)}">Test now</button>` : ""}<span class="small su-out"></span></div></li>`).join("");
+  document.querySelectorAll(".su-go").forEach((b) => b.addEventListener("click", () => goTo(b.dataset.go)));
+  document.querySelectorAll(".su-test").forEach((b) => b.addEventListener("click", async () => {
+    const out = b.parentElement.querySelector(".su-out");
+    b.disabled = true; out.className = "small muted su-out"; out.textContent = "Testing…";
+    try { const r = await api(`/api/setup/test/${encodeURIComponent(b.dataset.key)}`, { method: "POST" }); out.className = "small up su-out"; out.textContent = r.text; setTimeout(loadSetup, 1500); }
+    catch (err) { out.className = "small down su-out"; out.textContent = err.message; }
+    b.disabled = false;
+  }));
+  const f = $("#su-alerts");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const out = f.parentElement.querySelector(".su-out");
+    try { await api("/api/setup/alerts", { method: "POST", body: JSON.stringify({ topic: $("#su-topic").value.trim() }) }); out.className = "small up su-out"; out.textContent = "Test sent: check your phone"; setTimeout(loadSetup, 800); }
+    catch (err) { out.className = "small down su-out"; out.textContent = err.message; }
+  });
+  $("#su-fixes").innerHTML = c.fixes.length ? `<h3 class="small mt">To fix (${c.fixes.length})</h3><ul class="hp-lines">${c.fixes.map((x) =>
+    `<li class="${x.level >= 2 ? "down" : ""}">${x.level >= 2 ? "▲" : "●"} ${esc(x.text)} <button type="button" class="link small su-fix" data-go="${esc(x.where)}">Fix</button></li>`).join("")}</ul>` : "";
+  document.querySelectorAll(".su-fix").forEach((b) => b.addEventListener("click", () => goTo(b.dataset.go)));
+}
+async function loadConfidence() {
+  const box = $("#home-conf");
+  if (!box) return;
+  try {
+    const c = await api("/api/confidence");
+    if (c.score == null) { box.innerHTML = `<p class="muted small">No holdings yet. <button type="button" class="link" id="conf-start">Start the setup</button></p>`; }
+    else {
+      box.innerHTML = `<div class="conf-score"><span class="conf-num ${c.score >= 80 ? "up" : c.score >= 40 ? "" : "down"}">${c.score}%</span>
+        <span class="muted small">of your money (${fmtMoney(c.checked_value, 0)} of ${fmtMoney(c.total_value, 0)}) matched a broker balance today or a statement this month</span></div>
+        ${c.accounts.map((a) => `<div class="conf-row"><span>${esc(a.account)}</span><span class="conf-bar"><i style="width:${a.pct || 0}%"></i></span><span class="small">${a.pct == null ? "—" : a.pct + "%"}</span></div>`).join("")}
+        ${c.fixes.length ? `<p class="small ${c.fixes.some((x) => x.level >= 2) ? "down" : "muted"}">${c.fixes.length} thing${c.fixes.length === 1 ? "" : "s"} to fix: ${esc(c.fixes[0].text)}
+          <button type="button" class="link" id="conf-fix">See all</button></p>` : ""}`;
+    }
+    [["#conf-start", "setup"], ["#conf-fix", "setup"]].forEach(([id]) => { const b = $(id); if (b) b.addEventListener("click", () => goTo("setup-top")); });
+  } catch (err) { box.innerHTML = `<p class="muted small">${esc(err.message)}</p>`; }
+}
+$("#conf-setup").addEventListener("click", () => goTo("setup-top"));
+GO["setup-top"] = ["accounts", "#setup"];
