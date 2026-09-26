@@ -1046,7 +1046,6 @@ def robinhood_keypair():
     """Make the key pair Robinhood asks for: the private half stays in .env, the public half is
     what you paste into Robinhood's API credentials page."""
     from . import robinhood_crypto
-    import os
     priv, pub = robinhood_crypto.new_keypair()
     _save_env({"ROBINHOOD_CRYPTO_PRIVATE_KEY": priv})
     with db.connect() as conn:
