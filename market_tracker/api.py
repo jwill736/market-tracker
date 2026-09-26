@@ -2005,6 +2005,15 @@ async def overlap_view():
         raise HTTPException(502, str(exc))
 
 
+@app.get("/api/moved")
+async def moved_view():
+    """Today's change in dollars by holding, with the news desk's likely reason for each."""
+    try:
+        return await asyncio.to_thread(sentinel.moved_today)
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""

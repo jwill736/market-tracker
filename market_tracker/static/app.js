@@ -1621,6 +1621,7 @@ async function loadHome(quiet = false) {
   if (!quiet) $("#home-chart").innerHTML = hasHoldings ? `<p class="muted small">Loading…</p>` : "";
   loadCash();
   loadConfidence();
+  loadMoved();
   renderHomeLists();
   loadHomeFeeds();
   if (!quiet || Date.now() - briefState.loadedAt > 600000) loadBrief();
@@ -2786,3 +2787,20 @@ $("#ov-load").addEventListener("click", async () => {
         return `<td style="${a === b ? "" : shade(v)}">${a === b ? "" : v == null ? "—" : v.toFixed(2)}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
   } catch (err) { $("#ov-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
 });
+
+// ---------------------------------------------------------------- what moved today, and why
+async function loadMoved() {
+  const box = $("#home-moved");
+  if (!box) return;
+  try {
+    const m = await api("/api/moved");
+    if (!m.rows.length) { box.innerHTML = `<p class="muted">Nothing yet: prices and holdings load first.</p>`; $("#mv-head").textContent = ""; return; }
+    $("#mv-head").innerHTML = `<span class="${cls(m.total)}">${fmtMoney(m.total, 0)}</span>`;
+    box.innerHTML = m.rows.slice(0, 5).map((r) => `<div class="mv-row${r.big ? " big" : ""}">
+        <div class="row">${logoImg(r.symbol, 18)} <b>${esc(r.symbol)}</b> <span class="${cls(r.change)}">${fmtMoney(r.change, 0)} (${fmtPct(r.change_pct)})</span>
+          ${r.big ? `<span class="mv-flag">${r.typical ? (Math.abs(r.change_pct) / r.typical).toFixed(1) + "× usual" : "big move"}</span>` : ""}</div>
+        ${r.why ? `<div class="muted">${r.why.url ? `<a href="${esc(r.why.url)}" target="_blank" rel="noopener noreferrer">${esc(r.why.title)}</a>` : esc(r.why.title)}
+          · ${r.why.sources} source${r.why.sources === 1 ? "" : "s"}</div>` : r.big ? `<div class="muted">No news found.</div>` : ""}
+        ${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}</div>`).join("");
+  } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
