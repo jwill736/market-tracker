@@ -61,7 +61,7 @@ function selectTab(name) {
   const cur = document.querySelector(`#tabs button[data-tab="${name}"]`);
   if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });   // keeps the chosen tab visible in the phone's scrolling row
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
-  if (name === "portfolio") loadPortfolio();
+  if (name === "portfolio") { loadPortfolio(); loadConnections(); }
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
@@ -889,6 +889,57 @@ $("#st-sync").addEventListener("click", async () => {
     loadPortfolio(); loadHoldings();
   } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 });
+// ---------------------------------------------------------------- connections and trading settings
+function lastLine(l) {
+  if (!l) return "not run yet";
+  const when = new Date(l.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return l.ok ? `last checked ${when}${l.new ? `, ${l.new} new` : ""}` : `failed ${when}: ${l.error}`;
+}
+async function loadConnections() {
+  let c;
+  try { c = await api("/api/connections"); } catch { return; }
+  document.querySelectorAll(".conn-state").forEach((el) => {
+    const x = c[el.dataset.state];
+    el.className = "conn-state " + (x && x.configured ? (x.last && !x.last.ok ? "down" : "up") : "muted");
+    el.textContent = x && x.configured ? `● connected · ${lastLine(x.last)}` : "○ not connected";
+  });
+  if (c.email.user) $("#cx-mail").value = c.email.user;
+  $("#cx-unread").innerHTML = (c.email.unread || []).slice(0, 8).map((u) => `<li class="muted">Couldn't read: ${esc(u.account)} · ${esc(u.subject)} (${esc(u.date)})</li>`).join("");
+  if (c.robinhood_crypto.public_key) $("#cx-rh-pub").textContent = c.robinhood_crypto.public_key;
+  try {
+    const t = await api("/api/trade/log");
+    $("#tr-on").checked = t.settings.enabled; $("#tr-max").value = t.settings.max_order; $("#tr-day").value = t.settings.daily_limit;
+    $("#tr-log").innerHTML = t.orders.slice(0, 10).map((o) => `<li><b>${esc(o.at.slice(0, 16).replace("T", " "))}</b> ${esc(o.side)} ${esc(o.symbol)} ${fmtMoney(o.usd, 2)} on ${esc(o.venue)}
+      <span class="${o.status === "placed" ? "up" : "down"} small">${esc(o.status)}</span></li>`).join("") || `<li class="muted">No orders sent from the app yet.</li>`;
+  } catch { /* trading log is optional */ }
+}
+const connSubmit = (form, msg, path, body, done) => $(form).addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $(msg).className = "small muted"; $(msg).textContent = "Connecting and running the first sync…";
+  try {
+    const r = await api(path, { method: "POST", body: JSON.stringify(body()) });
+    const f = r.first_sync || {};
+    $(msg).className = "small up";
+    $(msg).textContent = f.error ? `Connected, but the first sync said: ${f.error}` : `Connected. ${f.new || 0} new trades${f.unread ? `, ${f.unread} emails it couldn't read (listed below)` : ""}.`;
+    if (done) done();
+    loadConnections(); loadHoldings(); if (typeof loadAccounts === "function") loadAccounts();
+  } catch (err) { $(msg).className = "small down"; $(msg).textContent = err.message; }
+});
+connSubmit("#cx-email-form", "#cx-email-msg", "/api/connections/email", () => ({ user: $("#cx-mail").value.trim(), app_password: $("#cx-mail-pw").value.replace(/\s/g, "") }), () => { $("#cx-mail-pw").value = ""; });
+connSubmit("#cx-cb-form", "#cx-cb-msg", "/api/connections/coinbase", () => ({ key_name: $("#cx-cb-name").value.trim(), private_key: $("#cx-cb-key").value.trim() }), () => { $("#cx-cb-key").value = ""; });
+connSubmit("#cx-rh-form", "#cx-rh-msg", "/api/connections/robinhood", () => ({ api_key: $("#cx-rh-key").value.trim() }));
+$("#cx-rh-pair").addEventListener("click", async () => {
+  if ($("#cx-rh-pub").textContent && !confirm("Make a new key pair? A credential made with the old public key stops working.")) return;
+  try { const r = await api("/api/connections/robinhood/keypair", { method: "POST" }); $("#cx-rh-pub").textContent = r.public_key; }
+  catch (err) { $("#cx-rh-msg").textContent = err.message; }
+});
+$("#tr-settings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/trade/settings", { method: "POST", body: JSON.stringify({ enabled: $("#tr-on").checked, max_order: +$("#tr-max").value || 250, daily_limit: +$("#tr-day").value || 500 }) });
+    $("#tr-msg").textContent = "Saved";
+  } catch (err) { $("#tr-msg").textContent = err.message; }
+});
 $("#bk-download").addEventListener("click", async () => {
   try {
     const data = await api("/api/backup");
@@ -1649,6 +1700,7 @@ function openTradeTicket(sym, side = "buy") {
       <button type="button" class="secondary" id="tt-record">It filled: record it</button>
     </div>
     <div class="tt-confirm" id="tt-confirm" hidden></div>
+    <div class="tt-live" id="tt-live" hidden></div>
     <p class="muted small" id="tt-status"></p>`;
   const $$ = (id) => $("#" + id);
   const paintSide = () => {
@@ -1699,6 +1751,61 @@ function openTradeTicket(sym, side = "buy") {
   $("#trade-modal").hidden = false;
   bindLive("trade", $("#trade-modal"));
   $$("tt-qty").focus();
+  setupSending(sym, $$, shares, price);
+}
+
+// Sending the order from the app (Coinbase, Robinhood crypto): preview, then confirm.
+const VENUE_NAME = { coinbase: "Coinbase", robinhood: "Robinhood (crypto)", ticket: "your broker's app" };
+async function setupSending(sym, $$, shares, price) {
+  let info;
+  try { info = await api("/api/trade/venues/" + encodeURIComponent(sym)); } catch { return; }
+  const apiVenues = info.venues.filter((v) => v !== "ticket");
+  const box = $$("tt-live");
+  if (!apiVenues.length) {
+    box.hidden = false;
+    box.innerHTML = `<p class="muted small">${isCryptoSym(sym) ? "Connect Coinbase or Robinhood crypto (Portfolio → Connections) to send orders from here."
+      : "Stocks and funds are placed in Robinhood or Stash (no broker offers individuals a stock API). Open it there; the confirmation email brings the trade in automatically once your email is connected."}</p>`;
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `<div class="tt-send"><label>Send with <select id="tt-venue">${apiVenues.map((v) => `<option value="${v}">${VENUE_NAME[v]}</option>`).join("")}<option value="ticket">Open in the app myself</option></select></label>
+      <button type="button" id="tt-preview">Preview order</button></div>
+    <div id="tt-pv"></div>
+    ${info.settings.enabled ? "" : `<p class="small down">Trading from the app is off. Switch it on in Portfolio → Trading (you can preview without it).</p>`}`;
+  let timer = null;
+  $$("tt-preview").addEventListener("click", async () => {
+    const venue = $$("tt-venue").value, out = $$("tt-pv");
+    if (venue === "ticket") { out.innerHTML = `<p class="muted small">Use Open in ${esc(brokerFor(sym, []).acct)} above.</p>`; return; }
+    const q = shares(), dollars = tradeState.unit === "dollars" ? (+$$("tt-qty").value || 0) : null;
+    if (!(q > 0)) { out.innerHTML = `<p class="small down">Enter an amount first.</p>`; return; }
+    const body = { venue, symbol: sym, side: tradeState.side, dollars: dollars || null, quantity: dollars ? null : q,
+      limit_price: tradeState.type === "limit" ? price() : null };
+    out.innerHTML = `<p class="muted small">Asking ${esc(VENUE_NAME[venue])} for a quote…</p>`;
+    clearInterval(timer);
+    try {
+      const pv = await api("/api/trade/preview", { method: "POST", body: JSON.stringify(body) });
+      const e = pv.estimate;
+      out.innerHTML = `<div class="tt-pv-card">
+        <p><b>${tradeState.side === "buy" ? "Buy" : "Sell"} ${(+e.quantity).toLocaleString(undefined, { maximumFractionDigits: 8 })} ${esc(sym.replace(/-USD$/, ""))}</b>
+          for about <b>${fmtMoney(e.usd, 2)}</b> at ${fmtMoney(e.price)}${e.fees ? ` + ${fmtMoney(e.fees, 2)} fees` : ""} on ${esc(e.broker)}</p>
+        ${e.note ? `<p class="muted small">${esc(e.note)}</p>` : ""}
+        ${pv.warnings.map((w) => `<p class="small warn-line">⚠ ${esc(w)}</p>`).join("")}
+        ${pv.blockers.map((w) => `<p class="small down">✕ ${esc(w)}</p>`).join("")}
+        <p class="muted small">Today: ${fmtMoney(pv.spent_today, 2)} of your ${fmtMoney(pv.limits.daily_limit, 0)} daily limit.</p>
+        ${pv.token ? `<button type="button" id="tt-place" class="tt-place">Confirm: ${tradeState.side} on ${esc(e.broker)} <span id="tt-count"></span></button>` : ""}</div>`;
+      if (!pv.token) return;
+      let left = pv.expires_in;
+      timer = setInterval(() => { left -= 1; const c = $$("tt-count"); if (c) c.textContent = `(${left}s)`; if (left <= 0) { clearInterval(timer); const b = $$("tt-place"); if (b) { b.disabled = true; b.textContent = "Expired: preview again"; } } }, 1000);
+      $$("tt-place").addEventListener("click", async (ev) => {
+        ev.target.disabled = true; ev.target.textContent = "Sending…"; clearInterval(timer);
+        try {
+          const r = await api("/api/trade/place", { method: "POST", body: JSON.stringify({ ...body, token: pv.token }) });
+          out.innerHTML = `<p class="up"><b>Sent to ${esc(VENUE_NAME[r.venue])}.</b> Order ${esc(r.broker_order_id || "")}</p><p class="muted small">${esc(r.note)}</p>`;
+          setTimeout(() => { loadHoldings().then(renderPosition); }, 12000);
+        } catch (err) { out.innerHTML = `<p class="down small">Not sent: ${esc(err.message)}</p>`; }
+      });
+    } catch (err) { out.innerHTML = `<p class="down small">${esc(err.message)}</p>`; }
+  });
 }
 function closeTrade() { $("#trade-modal").hidden = true; Live.drop("trade"); tradeState.update = null; }
 $("#trade-close").addEventListener("click", closeTrade);

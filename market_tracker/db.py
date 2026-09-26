@@ -93,6 +93,19 @@ CREATE TABLE IF NOT EXISTS income (
     note TEXT NOT NULL DEFAULT '',
     import_key TEXT UNIQUE
 );
+CREATE TABLE IF NOT EXISTS trade_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    usd REAL NOT NULL DEFAULT 0,
+    quantity REAL,
+    limit_price REAL,
+    status TEXT NOT NULL,
+    broker_order_id TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

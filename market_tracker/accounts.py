@@ -4,12 +4,15 @@ Robinhood, Stash and Coinbase each hold part of the portfolio; the ledger tags e
 its account and with where it came from (its import key):
 
     rh:     Robinhood account-activity CSV     cb:     Coinbase transaction CSV
+    rhc:    Robinhood Crypto API               em:     a broker's trade-confirmation email
+    sched:  your auto-invest schedule (Stash)
     cbapi:  Coinbase read-only API sync        st:     SnapTrade sync (any broker)
     hl:     holdings typed in (Stash / other)  bk:     restored from a backup
     (none)  added by hand (Quick add / Trade → "It filled")
 
-Syncs that can run without you (a Coinbase View-only key, a SnapTrade key) run in the
-background: Coinbase every 6 hours, SnapTrade twice a day. Each result is remembered so the
+Syncs that can run without you run in the background: Coinbase (API key) and Robinhood Crypto
+(API key) every 5 minutes, broker trade-confirmation emails every 2 minutes (Robinhood stocks,
+Stash), SnapTrade twice a day. Each result is remembered so the
 Accounts card can say when an account was last brought up to date, and anything new raises a
 heads-up.
 """
@@ -19,11 +22,13 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timedelta, timezone
 
-from . import coinbase_sync, db, http, service, snaptrade
+from . import coinbase_sync, db, email_trades, http, robinhood_crypto, service, snaptrade
 
 SOURCES = {"rh": "Robinhood CSV", "cb": "Coinbase CSV", "cbapi": "Coinbase API sync", "st": "SnapTrade sync",
+           "rhc": "Robinhood Crypto API", "em": "Trade emails", "sched": "Auto-invest schedule",
            "hl": "Typed in", "bk": "Backup restore", "": "Added by hand"}
-AUTO_EVERY = {"coinbase": timedelta(hours=6), "snaptrade": timedelta(hours=12)}
+AUTO_EVERY = {"coinbase": timedelta(minutes=5), "robinhood_crypto": timedelta(minutes=5), "email": timedelta(minutes=2),
+              "snaptrade": timedelta(hours=12)}
 STALE_DAYS = 30
 
 
@@ -125,7 +130,68 @@ def sync_snaptrade() -> dict:
             "income_new": len(new_inc), "differences": differences, "skipped": skipped}
 
 
-SYNCS = {"coinbase": (coinbase_sync.configured, sync_coinbase), "snaptrade": (snaptrade.configured, sync_snaptrade)}
+def _insert_new(txs: list[dict], label: str) -> tuple[list[dict], int]:
+    """Add trades not already in the ledger (by key, or the same trade from a CSV or another sync)."""
+    with db.connect() as conn:
+        existing = db.list_transactions(conn)
+        fresh, dup = snaptrade.new_only(txs, db.import_keys(conn), existing, snaptrade.match)
+        try:
+            service.pf.build_positions(existing + fresh)
+        except ValueError as exc:
+            raise SyncError(400, f"{label}: {exc}. Add the missing earlier purchase (Stash / other), then it syncs again.")
+        for t in fresh:
+            db.add_transaction(conn, t["symbol"], t["side"], t["quantity"], t["price"], t["date"], t.get("fees", 0.0),
+                               t.get("note"), import_key=t["import_key"], account=t["account"])
+    return fresh, dup
+
+
+def sync_robinhood_crypto() -> dict:
+    """Filled Robinhood crypto orders into the ledger; positions compared with Robinhood's."""
+    if not robinhood_crypto.configured():
+        raise SyncError(400, "Add ROBINHOOD_CRYPTO_API_KEY and ROBINHOOD_CRYPTO_PRIVATE_KEY to .env first.")
+    try:
+        txs = robinhood_crypto.orders_to_transactions(robinhood_crypto.orders())
+        held = robinhood_crypto.holdings()
+    except robinhood_crypto.RobinhoodError as exc:
+        raise SyncError(502, str(exc))
+    fresh, dup = _insert_new(sorted(txs, key=lambda t: t["date"]), "Robinhood Crypto")
+    with db.connect() as conn:
+        ledger = db.list_transactions(conn)
+    qty: dict[str, float] = {}
+    for t in ledger:
+        if (t.get("account") or "") == robinhood_crypto.ACCOUNT and t["symbol"].endswith("-USD"):
+            qty[t["symbol"]] = qty.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    diffs = [{"symbol": s, "broker": round(held.get(s, 0.0), 8), "ledger": round(qty.get(s, 0.0), 8),
+              "difference": round(held.get(s, 0.0) - qty.get(s, 0.0), 8)}
+             for s in sorted(set(held) | {k for k, v in qty.items() if abs(v) > 1e-9})
+             if abs(held.get(s, 0.0) - qty.get(s, 0.0)) > 1e-6 * max(1.0, held.get(s, 0.0))]
+    return {"new": len(fresh), "duplicates": dup, "differences": diffs}
+
+
+def sync_email() -> dict:
+    """Trades from broker confirmation emails (Robinhood stocks, Stash, Coinbase)."""
+    if not email_trades.configured():
+        raise SyncError(400, "Add MAIL_USER and MAIL_APP_PASSWORD (an app password) to .env first.")
+    last = last_sync("email")
+    since = date.today() - timedelta(days=email_trades.LOOKBACK_DAYS)
+    if last and last.get("ok"):
+        since = max(since, datetime.fromisoformat(last["at"]).date() - timedelta(days=2))
+    try:
+        parsed = email_trades.read(since)
+    except Exception as exc:  # noqa: BLE001 - IMAP errors come in many shapes; report, don't crash the loop
+        raise SyncError(502, f"Email: {str(exc)[:200]}")
+    fresh, dup = _insert_new(parsed.trades, "Trade emails")
+    with db.connect() as conn:
+        old = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
+        seen = {(u["subject"], u["date"]) for u in old}
+        merged = (parsed.unread + [u for u in old if (u["subject"], u["date"]) not in {(x["subject"], x["date"]) for x in parsed.unread}])
+        db.set_meta(conn, "email_unread", json.dumps(merged[:30]))
+    return {"new": len(fresh), "duplicates": dup, "differences": [], "unread": len([u for u in parsed.unread if (u["subject"], u["date"]) not in seen])}
+
+
+SYNCS = {"coinbase": (coinbase_sync.configured, sync_coinbase), "robinhood_crypto": (robinhood_crypto.configured, sync_robinhood_crypto),
+         "email": (email_trades.configured, sync_email), "snaptrade": (snaptrade.configured, sync_snaptrade)}
+LABELS = {"coinbase": "Coinbase", "robinhood_crypto": "Robinhood Crypto", "email": "Trade emails", "snaptrade": "SnapTrade"}
 
 
 def record(kind: str, result: dict | None, error: str | None, now: datetime) -> None:
@@ -174,7 +240,7 @@ def auto_sync(now: datetime | None = None, raise_headsup=None) -> list[str]:
         except SyncError:
             continue
         if raise_headsup and (r.get("new") or r.get("income_new")):
-            label = "Coinbase" if kind == "coinbase" else "SnapTrade"
+            label = LABELS[kind]
             raise_headsup(f"sync:{kind}:{now.date().isoformat()}:{r.get('new')}:{r.get('income_new')}", "sync", 1,
                           f"{label} sync: {r.get('new', 0)} new trades"
                           + (f", {r['income_new']} payments" if r.get("income_new") else ""),
@@ -215,8 +281,16 @@ def overview(transactions: list[dict], income_rows: list[dict], today: date | No
                           for s, p in sorted(a["positions"].items()) if p["quantity"] > 1e-9]
         a["income_12m"] = round(a.get("income_12m", 0.0), 2)
         synced = None
+        mail = email_trades.configured()
         if a["name"] == "Coinbase" and coinbase_sync.configured():
-            synced = {"how": "Coinbase API, automatic every 6 hours", "last": cb}
+            synced = {"how": "Coinbase API, every 5 minutes", "last": cb}
+        elif a["name"] == "Robinhood" and (mail or robinhood_crypto.configured()):
+            parts = (["stocks from trade emails every 2 minutes"] if mail else []) + \
+                    (["crypto from the Robinhood Crypto API every 5 minutes"] if robinhood_crypto.configured() else [])
+            synced = {"how": "Automatic: " + ", ".join(parts), "last": last_sync("email") if mail else last_sync("robinhood_crypto"),
+                      "partial": not mail}
+        elif a["name"] == "Stash" and mail:
+            synced = {"how": "Trade emails every 2 minutes, plus your auto-invest schedule", "last": last_sync("email")}
         elif "SnapTrade sync" in a["sources"] and snaptrade.configured():
             synced = {"how": "SnapTrade, automatic twice a day", "last": st}
         a["auto"] = synced
@@ -230,6 +304,9 @@ def advice(a: dict, today: date) -> str:
         last = a["auto"]["last"]
         if last and not last["ok"]:
             return f"The last automatic sync failed: {last['error']}"
+        if a["auto"].get("partial"):
+            return ("Crypto syncs automatically; stock trades still need the CSV, or connect your email "
+                    "(Settings → Connections) so confirmations bring them in.")
         return "Kept up to date automatically."
     age = (today - date.fromisoformat(a["last_trade"])).days if a["last_trade"] else None
     srcs = set(a["sources"])

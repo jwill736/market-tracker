@@ -101,7 +101,7 @@ def test_auto_sync_runs_when_due_and_records(monkeypatch):
     now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
     assert accounts.auto_sync(now, lambda *a: raised.append(a)) == ["coinbase"]
     assert runs == [1] and "2 new trades" in raised[0][3]
-    assert accounts.auto_sync(now + timedelta(hours=1)) == []               # not due yet
+    assert accounts.auto_sync(now + timedelta(minutes=2)) == []             # not due yet (every 5 minutes)
     assert accounts.auto_sync(now + timedelta(hours=7)) == ["coinbase"]
     last = accounts.last_sync("coinbase")
     assert last["ok"] and last["new"] == 2

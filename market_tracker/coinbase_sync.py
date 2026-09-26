@@ -135,3 +135,43 @@ def reconcile(bal: dict[str, float], ledger_qty: dict[str, float], tolerance: fl
         if abs(have - ledger) > max(tolerance, 1e-6 * max(have, ledger)):
             out.append({"coin": c, "coinbase": have, "ledger": ledger, "difference": have - ledger})
     return out
+
+
+# ------------------------------------------------------------------ trading (needs a key with the Trade permission)
+
+ORDERS = "/api/v3/brokerage/orders"
+
+
+def _post(path: str, body: dict, send=None) -> dict:
+    import httpx
+    key_name, pem = os.environ.get("COINBASE_API_KEY_NAME", ""), os.environ.get("COINBASE_API_PRIVATE_KEY", "")
+    token = make_jwt(key_name, pem, "POST", path)
+    send = send or (lambda url, headers, content: httpx.post(url, headers=headers, content=content, timeout=20))
+    resp = send(f"https://{API_HOST}{path}", {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json.dumps(body))
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {"error": resp.text[:200]}
+    if resp.status_code >= 400:
+        raise http.DataUnavailable(f"Coinbase {resp.status_code}: {data.get('message') or data.get('error') or data}")
+    return data
+
+
+def order_configuration(side: str, quote_usd: float | None, quantity: float | None, limit_price: float | None) -> dict:
+    """Market buys by dollars, market sells by quantity (Coinbase's rule), limits by quantity."""
+    if limit_price:
+        return {"limit_limit_gtc": {"base_size": f"{quantity:.8f}".rstrip("0").rstrip("."), "limit_price": f"{limit_price:.2f}",
+                                    "post_only": False}}
+    if side == "buy":
+        return {"market_market_ioc": {"quote_size": f"{quote_usd:.2f}"}}
+    return {"market_market_ioc": {"base_size": f"{quantity:.8f}".rstrip("0").rstrip(".")}}
+
+
+def preview_order(product_id: str, side: str, config: dict, send=None) -> dict:
+    return _post(ORDERS + "/preview", {"product_id": product_id, "side": side.upper(), "order_configuration": config}, send)
+
+
+def create_order(product_id: str, side: str, config: dict, client_order_id: str, send=None) -> dict:
+    return _post(ORDERS, {"client_order_id": client_order_id, "product_id": product_id, "side": side.upper(),
+                          "order_configuration": config}, send)

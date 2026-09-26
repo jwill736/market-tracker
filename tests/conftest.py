@@ -24,6 +24,11 @@ def synthetic_closes(n: int = 600, drift: float = 0.0005, vol: float = 0.015, se
 def _no_background(monkeypatch):
     monkeypatch.setenv("MT_BACKGROUND", "0")
     monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    # Never reach a real inbox or broker from a test, whatever the developer's .env holds.
+    for k in ("MAIL_USER", "MAIL_APP_PASSWORD", "COINBASE_API_KEY_NAME", "COINBASE_API_PRIVATE_KEY",
+              "ROBINHOOD_CRYPTO_API_KEY", "ROBINHOOD_CRYPTO_PRIVATE_KEY", "SNAPTRADE_CLIENT_ID", "SNAPTRADE_CONSUMER_KEY"):
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)
 
 
 @pytest.fixture(autouse=True)

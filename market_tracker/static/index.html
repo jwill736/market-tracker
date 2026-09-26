@@ -539,6 +539,44 @@
           <button>Save</button>
           <span id="tx-status" class="muted"></span>
         </form>
+        <h2 class="mt" id="connections">Connections</h2>
+        <p class="muted small">Free ways to keep your accounts current without CSVs. Each one is read-only unless you switch on trading below.</p>
+        <div class="conn-list">
+          <details class="conn" id="cx-email"><summary><b>Email: Robinhood stocks and Stash</b> <span class="conn-state" data-state="email"></span></summary>
+            <p class="small">Your brokers email you after every trade; the app reads those (only from robinhood.com, stash.com and coinbase.com)
+              every 2 minutes and adds the trades. It never sends, moves or deletes mail.</p>
+            <ol class="small"><li>Gmail: turn on 2-Step Verification, then create an app password at
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">myaccount.google.com/apppasswords</a> named "Plumbline".</li>
+              <li>Enter your address and that 16-letter app password (not your normal password):</li></ol>
+            <form class="inline-form" id="cx-email-form"><input id="cx-mail" type="email" placeholder="you@gmail.com" required>
+              <input id="cx-mail-pw" type="password" placeholder="app password" autocomplete="off" required>
+              <button type="submit">Connect</button></form>
+            <p class="small" id="cx-email-msg"></p><ul class="small hp-lines" id="cx-unread"></ul></details>
+          <details class="conn" id="cx-coinbase"><summary><b>Coinbase</b> <span class="conn-state" data-state="coinbase"></span></summary>
+            <ol class="small"><li>coinbase.com → Settings → API → New API key (Advanced Trade). Pick the <b>ECDSA</b> algorithm.</li>
+              <li>Permissions: <b>View</b> to track; add <b>Trade</b> only if you want to place orders from here. Never Transfer.</li>
+              <li>Paste the key name and private key:</li></ol>
+            <form id="cx-cb-form" class="stack"><input id="cx-cb-name" placeholder="organizations/…/apiKeys/…" required>
+              <textarea id="cx-cb-key" rows="3" placeholder="-----BEGIN EC PRIVATE KEY-----" required></textarea><button type="submit">Connect Coinbase</button></form>
+            <p class="small" id="cx-cb-msg"></p></details>
+          <details class="conn" id="cx-rh"><summary><b>Robinhood crypto</b> <span class="conn-state" data-state="robinhood_crypto"></span></summary>
+            <p class="small">Robinhood's official Crypto API (free). Stocks aren't in it: those come from email.</p>
+            <ol class="small"><li><button type="button" class="secondary small" id="cx-rh-pair">Make my key pair</button> <span id="cx-rh-pub" class="mono small"></span></li>
+              <li>On a computer, <a href="https://robinhood.com/account/crypto" target="_blank" rel="noopener noreferrer">robinhood.com/account/crypto</a> → API trading → add a credential,
+                paste the public key above, choose permissions (read, and trade if you want it).</li>
+              <li>Paste the API key Robinhood shows you:</li></ol>
+            <form class="inline-form" id="cx-rh-form"><input id="cx-rh-key" placeholder="rh-api-…" required><button type="submit">Connect</button></form>
+            <p class="small" id="cx-rh-msg"></p></details>
+        </div>
+        <h2 class="mt" id="trading">Trading</h2>
+        <form class="inline-form" id="tr-settings">
+          <label class="check"><input type="checkbox" id="tr-on"> Let the app place orders (after a preview you confirm)</label>
+          <label>Per order $<input type="number" id="tr-max" min="1" step="1"></label>
+          <label>Per day $<input type="number" id="tr-day" min="1" step="1"></label>
+          <button type="submit">Save</button><span class="muted small" id="tr-msg"></span>
+        </form>
+        <p class="muted small">Crypto can be sent to Coinbase or Robinhood from any coin's page (Trade). Stocks open in your broker's app.</p>
+        <ul class="hp-lines small" id="tr-log"></ul>
         <h2 class="mt">Import your accounts</h2>
         <div class="seg" role="tablist" aria-label="Import source" id="imp-seg">
           <button type="button" data-src="robinhood" aria-pressed="true">Robinhood</button>
