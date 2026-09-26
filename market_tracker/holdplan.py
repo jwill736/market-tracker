@@ -280,6 +280,11 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+def market_price(sym: str) -> float:
+    from .providers import market
+    return market.get_live_quote(sym).price
+
+
 def gather(today: date | None = None) -> dict:
     """The hold plan from the ledger, your theses and settings, the radar for your companies and
     upcoming earnings. Used by the Hold tab and the morning brief."""
@@ -317,6 +322,24 @@ def gather(today: date | None = None) -> dict:
                  fundamentals=fund)
     plan["events"] = cal
     plan["radar"] = {s: v for s, v in radar_by.items()}
+    # Your buy-the-dip list: anything at or below the price you said you'd pay goes first.
+    from . import price_alerts
+    with db.connect() as conn:
+        targets = price_alerts.targets(conn)
+    dips = []
+    for t in targets:
+        try:
+            p = market_price(t["symbol"])
+        except Exception:  # noqa: BLE001 - a missing quote just leaves it off
+            p = None
+        t["now"] = p
+        if p is not None and p <= t["price"]:
+            dips.append(t["symbol"])
+            plan["reinvest"] = [q for q in plan["reinvest"] if q["symbol"] != t["symbol"] or q.get("amount")]
+            plan["reinvest"].insert(0, {"symbol": t["symbol"], "why": f"At your buy price (${t['price']:,.2f}; now ${p:,.2f})",
+                                        "amount": None, "source": "dip"})
+    plan["buy_targets"] = targets
+    plan["dip_hits"] = dips
     plan["errors"] = radar_errors + cal.get("errors", []) + fund_errors
     return plan
 
@@ -386,8 +409,13 @@ def new_money(plan: dict, amount: float, min_order: float = MIN_ORDER) -> dict:
                      "target": round(targets[s], 4), "why": why})
     rest = round(amount - spent, 2)
     if rest >= min_order:
-        fund = FALLBACK_FUND[0]
-        buys.append({"symbol": fund, "amount": rest, "shares": None, "weight_now": None, "weight_after": None, "target": None,
-                     "why": "Every target is met: " + FALLBACK_FUND[1] if eligible else FALLBACK_FUND[1]})
+        dip = next((d for d in plan.get("dip_hits") or [] if d not in blocked_syms), None)
+        if dip:
+            buys.append({"symbol": dip, "amount": rest, "shares": None, "weight_now": None, "weight_after": None, "target": None,
+                         "why": "On your buy-the-dip list and at your price"})
+        else:
+            fund = FALLBACK_FUND[0]
+            buys.append({"symbol": fund, "amount": rest, "shares": None, "weight_now": None, "weight_after": None, "target": None,
+                         "why": "Every target is met: " + FALLBACK_FUND[1] if eligible else FALLBACK_FUND[1]})
     return {"amount": round(amount, 2), "buys": buys, "skipped": skipped, "has_targets": bool(set_targets),
             "note": "Buying in any of your accounts counts the same. Nothing is sold."}

@@ -186,6 +186,11 @@ class Sentinel:
                 await asyncio.to_thread(accounts.auto_sync, None, raise_headsup)
             except Exception:
                 pass
+            try:
+                await asyncio.to_thread(price_alerts_check)
+                await asyncio.to_thread(run_schedules_daily)
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:
@@ -196,6 +201,31 @@ class Sentinel:
         if self.task:
             self.task.cancel()
             self.task = None
+
+
+def price_alerts_check() -> list[dict]:
+    """Your price lines (sell-below, take-some-off, buy-the-dip) against live prices."""
+    from . import price_alerts
+
+    def q(sym):
+        return market.get_live_quote(sym).price
+    return price_alerts.check(q, raise_headsup=raise_headsup)
+
+
+def run_schedules_daily(today: date | None = None) -> list[dict]:
+    """Once a day: record auto-invest buys that came due."""
+    from . import schedules
+    today = today or date.today()
+    with db.connect() as conn:
+        if db.get_meta(conn, "schedules_ran", "") == today.isoformat():
+            return []
+        added = schedules.apply(conn, today, schedules.close_on)
+        db.set_meta(conn, "schedules_ran", today.isoformat())
+    for a in added:
+        raise_headsup(f"sched:{a['symbol']}:{a['date']}", "sync", 1,
+                      f"Auto-invest: bought {a['quantity']:g} {a['symbol']} in {a['account']} on {a['date']}",
+                      "Recorded from your schedule at that day's close.", "", a["symbol"])
+    return added
 
 
 def send_brief_if_due(now: datetime | None = None, gather_fn=None) -> bool:

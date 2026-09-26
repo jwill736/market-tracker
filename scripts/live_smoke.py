@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, cryptoradar, dividends, early, events, fundamentals, http, logos, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -373,6 +373,38 @@ def _():
     assert logos.lookup_name("SUI-USD") == "Sui"
     assert "Apple" in logos.lookup_name("AAPL")
     return ", ".join(f"{s} {len(v[0]):,} B {v[1]}" for s, v in got.items() if v) + f"; names: AAPL = {logos.lookup_name('AAPL')}, VOO = {logos.lookup_name('VOO') or '(none)'}"
+
+
+@check("What funds hold: VOO and SPY (via IVV) from SEC N-PORT")
+def _():
+    voo = lookthrough.holdings("VOO", now=time.time() + 10 ** 9)          # far-future 'now' skips any cache
+    # The app keeps a fund's largest 300 holdings; a full S&P 500 filing fills that cap.
+    assert voo and len(voo["holdings"]) == 300, voo and len(voo["holdings"])
+    top = voo["holdings"][0]
+    assert 0.02 < top["pct"] < 0.2, top
+    names = " ".join(h["name"] for h in voo["holdings"][:10]).lower()
+    assert "apple" in names or "nvidia" in names or "microsoft" in names, names
+    spy = lookthrough.holdings("SPY", now=time.time() + 10 ** 9)
+    assert spy and spy["source"] == "IVV", spy and spy["source"]
+    return f"VOO {len(voo['holdings'])} holdings as of {voo['period']}, top {top['name']} {top['pct']:.1%}; SPY via {spy['source']} ({spy['period']})"
+
+
+@check("Fund fees: VOO and SPY expense ratios")
+def _():
+    voo, spy = fees.expense_ratio("VOO", now=time.time() + 10 ** 9), fees.expense_ratio("SPY", now=time.time() + 10 ** 9)
+    assert voo is not None and 0 < voo < 0.002, voo
+    assert spy is not None and voo < spy < 0.005, spy
+    return f"VOO {voo:.2%}, SPY {spy:.4%}"
+
+
+@check("Robinhood Crypto API and Coinbase orders endpoint reachable (refuse unsigned requests)")
+def _():
+    import httpx
+    rh = httpx.get("https://trading.robinhood.com/api/v1/crypto/trading/accounts/", timeout=20)
+    assert rh.status_code in (400, 401, 403) and "x-api-key" in rh.text.lower(), (rh.status_code, rh.text[:120])
+    cb = httpx.post("https://api.coinbase.com/api/v3/brokerage/orders/preview", json={}, timeout=20)
+    assert cb.status_code in (401, 403), cb.status_code
+    return f"Robinhood {rh.status_code} (asks for x-api-key/x-signature/x-timestamp); Coinbase preview {cb.status_code} without a key"
 
 
 def main() -> int:

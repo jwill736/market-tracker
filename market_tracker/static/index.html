@@ -28,23 +28,28 @@
     <span class="brand-name">Plumbline</span>
     <span class="brand-tag">Measure it true before you trust it</span>
   </a>
-  <nav id="tabs" role="tablist">
-    <button role="tab" data-tab="home" aria-selected="true">Home</button>
-    <button role="tab" data-tab="hold" aria-selected="false">Hold plan</button>
-    <button role="tab" data-tab="income" aria-selected="false">Income</button>
-    <button role="tab" data-tab="early" aria-selected="false">Early</button>
-    <button role="tab" data-tab="people" aria-selected="false">People</button>
-    <button role="tab" data-tab="pulse" aria-selected="false">Pulse</button>
-    <button role="tab" data-tab="plan" aria-selected="false">Plan</button>
-    <button role="tab" data-tab="mynews" aria-selected="false">News</button>
-    <button role="tab" data-tab="reading" aria-selected="false">Reading</button>
-    <button role="tab" data-tab="radar" aria-selected="false">Radar</button>
-    <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
-    <button role="tab" data-tab="analyze">Analyze</button>
-    <button role="tab" data-tab="smart">Smart money</button>
-    <button role="tab" data-tab="portfolio">Portfolio</button>
-    <button role="tab" data-tab="research">Deep dive</button>
-    <button role="tab" data-tab="journal">Track record</button>
+  <nav id="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" data-group="home" aria-selected="true">Home</button>
+    <button role="tab" data-group="plan" aria-selected="false">Plan</button>
+    <button role="tab" data-group="discover" aria-selected="false">Discover</button>
+    <button role="tab" data-group="news" aria-selected="false">News</button>
+    <button role="tab" data-group="portfolio" aria-selected="false">Portfolio</button>
+  </nav>
+  <nav id="subtabs" aria-label="Pages" hidden>
+    <button data-tab="hold" data-group="plan">Hold plan</button>
+    <button data-tab="income" data-group="plan">Income</button>
+    <button data-tab="plan" data-group="plan">Strategy</button>
+    <button data-tab="pulse" data-group="discover">Pulse</button>
+    <button data-tab="early" data-group="discover">Early wire</button>
+    <button data-tab="people" data-group="discover">People</button>
+    <button data-tab="radar" data-group="discover">Filing radar</button>
+    <button data-tab="smart" data-group="discover">Smart money</button>
+    <button data-tab="analyze" data-group="discover">Analyze</button>
+    <button data-tab="research" data-group="discover">Deep dive</button>
+    <button data-tab="dashboard" data-group="discover">Dashboard</button>
+    <button data-tab="journal" data-group="discover">Track record</button>
+    <button data-tab="mynews" data-group="news">Your news</button>
+    <button data-tab="reading" data-group="news">Reading room</button>
   </nav>
   <form id="quick-form" class="quick" role="search">
     <input id="quick-input" placeholder="Search a symbol" aria-label="Open a symbol" autocomplete="off">
@@ -99,6 +104,7 @@
         <div class="rh-list card"><div class="rh-list-head"><h2>Stocks</h2><span class="muted small" id="home-stocks-meta"></span></div><div id="home-stocks"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Crypto</h2></div><div id="home-crypto"></div></div>
         <div class="card acct-card"><div class="rh-list-head"><h2>Accounts</h2><span class="muted small" id="home-acct-meta"></span></div><div id="home-accounts"></div></div>
+        <div class="card"><div class="rh-list-head"><h2>vs the market</h2><span class="muted small" id="bm-meta"></span></div><div id="bm-body" class="small"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Watchlist</h2></div><div id="home-watch"></div></div>
       </aside>
     </div>
@@ -141,6 +147,18 @@
         <ul class="hp-lines" id="nm-out"></ul></div>
       <div class="card"><div class="card-head"><h2>Coming up</h2><span class="muted small">Earnings in dollars · Fed · CPI · jobs</span></div>
         <ul class="hp-lines" id="hp-events"></ul></div>
+    </div>
+    <div class="grid two">
+      <div class="card"><div class="card-head"><h2>Buy-the-dip list</h2><span class="muted small">a price you'd pay, decided ahead of time</span></div>
+        <form id="bt-form" class="inline-form"><input id="bt-sym" placeholder="Symbol" required maxlength="20"><label>at $<input id="bt-price" type="number" min="0" step="any" required></label>
+          <input id="bt-note" placeholder="Why (optional)" maxlength="200"><button type="submit">Add</button></form>
+        <p class="muted small">Your phone gets a push when it gets there, and it goes to the top of where new money goes.</p>
+        <ul class="hp-lines" id="bt-list"></ul></div>
+      <div class="card"><div class="card-head"><h2>Goal</h2><span class="muted small" id="gl-meta"></span></div>
+        <form id="gl-form" class="inline-form"><label>$<input id="gl-target" type="number" min="1" step="1000" required></label>
+          <label>by <input id="gl-year" type="number" min="2026" max="2100" required></label>
+          <label>adding $<input id="gl-monthly" type="number" min="0" step="10" value="0"> a month</label><button type="submit">Check</button></form>
+        <div id="gl-out" class="small"></div></div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Taxes across your accounts</h2><span class="muted small" id="hp-tax-meta"></span></div>
@@ -578,7 +596,71 @@
         </div>
         <div class="row imp-sync" hidden><button type="button" id="cb-sync">Sync Coinbase now</button></div>
         <div id="rh-result"></div>
-        <h2 class="mt">Backup</h2>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="connections">Connections</h2>
+        <p class="muted small">Free ways to keep your accounts current without CSVs. Each one is read-only unless you switch on trading below.</p>
+        <div class="conn-list">
+          <details class="conn" id="cx-email"><summary><b>Email: Robinhood stocks and Stash</b> <span class="conn-state" data-state="email"></span></summary>
+            <p class="small">Your brokers email you after every trade; the app reads those (only from robinhood.com, stash.com and coinbase.com)
+              every 2 minutes and adds the trades. It never sends, moves or deletes mail.</p>
+            <ol class="small"><li>Gmail: turn on 2-Step Verification, then create an app password at
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">myaccount.google.com/apppasswords</a> named "Plumbline".</li>
+              <li>Enter your address and that 16-letter app password (not your normal password):</li></ol>
+            <form class="inline-form" id="cx-email-form"><input id="cx-mail" type="email" placeholder="you@gmail.com" required>
+              <input id="cx-mail-pw" type="password" placeholder="app password" autocomplete="off" required>
+              <button type="submit">Connect</button></form>
+            <p class="small" id="cx-email-msg"></p><ul class="small hp-lines" id="cx-unread"></ul></details>
+          <details class="conn" id="cx-coinbase"><summary><b>Coinbase</b> <span class="conn-state" data-state="coinbase"></span></summary>
+            <ol class="small"><li>coinbase.com → Settings → API → New API key (Advanced Trade). Pick the <b>ECDSA</b> algorithm.</li>
+              <li>Permissions: <b>View</b> to track; add <b>Trade</b> only if you want to place orders from here. Never Transfer.</li>
+              <li>Paste the key name and private key:</li></ol>
+            <form id="cx-cb-form" class="stack"><input id="cx-cb-name" placeholder="organizations/…/apiKeys/…" required>
+              <textarea id="cx-cb-key" rows="3" placeholder="-----BEGIN EC PRIVATE KEY-----" required></textarea><button type="submit">Connect Coinbase</button></form>
+            <p class="small" id="cx-cb-msg"></p></details>
+          <details class="conn" id="cx-rh"><summary><b>Robinhood crypto</b> <span class="conn-state" data-state="robinhood_crypto"></span></summary>
+            <p class="small">Robinhood's official Crypto API (free). Stocks aren't in it: those come from email.</p>
+            <ol class="small"><li><button type="button" class="secondary small" id="cx-rh-pair">Make my key pair</button> <span id="cx-rh-pub" class="mono small"></span></li>
+              <li>On a computer, <a href="https://robinhood.com/account/crypto" target="_blank" rel="noopener noreferrer">robinhood.com/account/crypto</a> → API trading → add a credential,
+                paste the public key above, choose permissions (read, and trade if you want it).</li>
+              <li>Paste the API key Robinhood shows you:</li></ol>
+            <form class="inline-form" id="cx-rh-form"><input id="cx-rh-key" placeholder="rh-api-…" required><button type="submit">Connect</button></form>
+            <p class="small" id="cx-rh-msg"></p></details>
+        </div>
+        <h2 class="mt" id="trading">Trading</h2>
+        <form class="inline-form" id="tr-settings">
+          <label class="check"><input type="checkbox" id="tr-on"> Let the app place orders (after a preview you confirm)</label>
+          <label>Per order $<input type="number" id="tr-max" min="1" step="1"></label>
+          <label>Per day $<input type="number" id="tr-day" min="1" step="1"></label>
+          <button type="submit">Save</button><span class="muted small" id="tr-msg"></span>
+        </form>
+        <p class="muted small">Crypto can be sent to Coinbase or Robinhood from any coin's page (Trade). Stocks open in your broker's app.</p>
+        <ul class="hp-lines small" id="tr-log"></ul>
+      </div>
+      <div class="card">
+        <h2>What your funds really hold</h2>
+        <p class="muted small">Your money in each company, directly and through your funds (from each fund's latest SEC holdings report).</p>
+        <div id="lt-out" class="small"><button type="button" class="secondary small" id="lt-load">Look through my funds</button></div>
+        <h2 class="mt">What your funds cost</h2>
+        <div id="fe-out" class="small"><button type="button" class="secondary small" id="fe-load">Check my fund fees</button></div>
+        <h2 class="mt">Auto-invest schedules</h2>
+        <p class="muted small">For Stash's Auto-Stash or Robinhood recurring buys: the app records each buy at that day's close
+          (skipped when an email or import already has it).</p>
+        <form class="inline-form" id="sc-form"><select id="sc-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
+          <input id="sc-sym" placeholder="Symbol" required maxlength="20"><label>$<input id="sc-amt" type="number" min="1" step="any" required></label>
+          <select id="sc-every"><option value="week">every week</option><option value="2weeks">every 2 weeks</option><option value="month">every month</option></select>
+          <select id="sc-day"></select><label>from <input id="sc-start" type="date" required></label><button type="submit">Add</button></form>
+        <ul class="hp-lines small" id="sc-list"></ul>
+        <h2 class="mt">Check a statement</h2>
+        <form class="inline-form" id="st-form"><select id="st-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
+          <input type="file" id="st-file" accept="application/pdf,.pdf" required><button type="submit">Compare</button></form>
+        <div id="st-out" class="small"></div>
+      </div>
+    </div>
+    <div class="card">
+        <h2>Backup</h2>
         <p class="muted small">Everything you've entered (trades, accounts, watchlist, cash, topics, follows) in one file. Use it to move
           to a server or another computer; restoring twice adds nothing twice.</p>
         <div class="row"><button type="button" id="bk-download" class="secondary">Download backup</button>
@@ -586,7 +668,6 @@
         <p class="muted small" id="bk-status"></p>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
-      </div>
     </div>
   </section>
 

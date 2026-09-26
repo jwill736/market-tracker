@@ -93,6 +93,35 @@ CREATE TABLE IF NOT EXISTS income (
     note TEXT NOT NULL DEFAULT '',
     import_key TEXT UNIQUE
 );
+CREATE TABLE IF NOT EXISTS trade_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    usd REAL NOT NULL DEFAULT 0,
+    quantity REAL,
+    limit_price REAL,
+    status TEXT NOT NULL,
+    broker_order_id TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS auto_invest (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    amount REAL NOT NULL,
+    every TEXT NOT NULL,
+    day INTEGER NOT NULL,
+    start TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS buy_targets (
+    symbol TEXT PRIMARY KEY,
+    price REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    added TEXT NOT NULL DEFAULT (date('now'))
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

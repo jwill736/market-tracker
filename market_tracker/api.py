@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import (accounts, auth, brief, charts, cryptoradar, events, coinbase_sync, db, dilution, dividends, early, fundamentals, holdplan, people, pickers, http, importers, journal, livefeed, logos, notify, pulse, radar, reading, research, snaptrade,
-               sentinel, service, strategy, taxes)
+               sentinel, service, strategy, taxes, trading)
 from .investors import INVESTORS, by_key
 from .providers import market, news, sec
 
@@ -40,6 +40,22 @@ throttle = auth.Throttle()
 
 
 # ------------------------------------------------------------------ login (only when APP_PASSWORD is set)
+
+@app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    """Changes (orders, keys, settings) only from this app's own pages: a request another website
+    makes from your browser carries its own Origin and is refused."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        # The app's pages send X-Plumbline; a browser won't let another site add it without asking
+        # this app first (and this app never agrees), so it proves the request came from here,
+        # even behind a proxy (Tailscale, Fly) that changes the Host header.
+        if origin and not request.headers.get("x-plumbline"):
+            from urllib.parse import urlparse
+            if urlparse(origin).netloc != request.headers.get("host", ""):
+                return JSONResponse({"detail": "Refused: request from another site"}, status_code=403)
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
@@ -928,6 +944,450 @@ async def coinbase_sync_now():
 def snaptrade_status():
     with db.connect() as conn:
         return {"configured": snaptrade.configured(), "last_sync": db.get_meta(conn, "snaptrade_last_sync", "") or None}
+
+
+# ------------------------------------------------------------------ connections (set up from the app)
+
+def _env_path() -> str:
+    return str(Path.cwd() / ".env")
+
+
+def _save_env(values: dict[str, str]) -> None:
+    """Write keys into .env (next to the app) and into this running process, so no restart is needed."""
+    import os
+    from . import firstrun
+    lines = firstrun.read_env(_env_path())
+    for k, v in values.items():
+        lines = firstrun.put(lines, k, v.replace('"', "").replace("\n", "\\n"))
+        os.environ[k] = v
+    with open(_env_path(), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+@app.get("/api/connections")
+def connections_view():
+    """Each free connection: set up or not, when it last ran, and what it said."""
+    from . import email_trades, robinhood_crypto
+    with db.connect() as conn:
+        unread = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
+    return {
+        "email": {"configured": email_trades.configured(), "last": accounts.last_sync("email"), "unread": unread,
+                  "user": __import__("os").environ.get("MAIL_USER", "")},
+        "coinbase": {"configured": coinbase_sync.configured(), "last": accounts.last_sync("coinbase")},
+        "robinhood_crypto": {"configured": robinhood_crypto.configured(), "last": accounts.last_sync("robinhood_crypto"),
+                             "public_key": db_meta("robinhood_public_key")},
+        "snaptrade": {"configured": snaptrade.configured(), "last": accounts.last_sync("snaptrade")},
+    }
+
+
+def db_meta(key: str) -> str:
+    with db.connect() as conn:
+        return db.get_meta(conn, key, "")
+
+
+class EmailIn(BaseModel):
+    user: str = Field(..., min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    app_password: str = Field(..., min_length=8, max_length=64)
+    imap_host: str | None = Field(None, max_length=100, pattern=r"^[a-z0-9.-]+$")
+
+
+@app.post("/api/connections/email")
+async def connect_email(body: EmailIn):
+    """Check the login, then save it. Read-only: the app only reads broker emails."""
+    from . import email_trades
+    import os
+    old = {k: os.environ.get(k) for k in ("MAIL_USER", "MAIL_APP_PASSWORD", "MAIL_IMAP_HOST")}
+    os.environ["MAIL_USER"], os.environ["MAIL_APP_PASSWORD"] = body.user, body.app_password
+    if body.imap_host:
+        os.environ["MAIL_IMAP_HOST"] = body.imap_host
+    problem = await asyncio.to_thread(email_trades.check_login)
+    if problem:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        raise HTTPException(400, f"Couldn't sign in: {problem}. For Gmail, use an app password (not your normal password).")
+    _save_env({"MAIL_USER": body.user, "MAIL_APP_PASSWORD": body.app_password, **({"MAIL_IMAP_HOST": body.imap_host} if body.imap_host else {})})
+    try:
+        result = await asyncio.to_thread(accounts.run_sync, "email")
+    except accounts.SyncError as exc:
+        result = {"error": str(exc)}
+    holdplan.clear_cache()
+    return {"connected": True, "first_sync": result}
+
+
+class CoinbaseKeyIn(BaseModel):
+    key_name: str = Field(..., min_length=10, max_length=300)
+    private_key: str = Field(..., min_length=40, max_length=4000)
+
+
+@app.post("/api/connections/coinbase")
+async def connect_coinbase(body: CoinbaseKeyIn):
+    import os
+    try:
+        coinbase_sync.make_jwt(body.key_name, body.private_key, "GET", "/api/v3/brokerage/accounts")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, f"That private key doesn't load: {exc}. Create the key with the ECDSA algorithm.")
+    os.environ["COINBASE_API_KEY_NAME"], os.environ["COINBASE_API_PRIVATE_KEY"] = body.key_name, body.private_key
+    try:
+        result = await asyncio.to_thread(accounts.run_sync, "coinbase")
+    except accounts.SyncError as exc:
+        os.environ.pop("COINBASE_API_KEY_NAME", None)
+        os.environ.pop("COINBASE_API_PRIVATE_KEY", None)
+        raise HTTPException(exc.status, str(exc))
+    _save_env({"COINBASE_API_KEY_NAME": body.key_name, "COINBASE_API_PRIVATE_KEY": body.private_key.replace("\n", "\\n")})
+    holdplan.clear_cache()
+    return {"connected": True, "first_sync": result}
+
+
+@app.post("/api/connections/robinhood/keypair")
+def robinhood_keypair():
+    """Make the key pair Robinhood asks for: the private half stays in .env, the public half is
+    what you paste into Robinhood's API credentials page."""
+    from . import robinhood_crypto
+    priv, pub = robinhood_crypto.new_keypair()
+    _save_env({"ROBINHOOD_CRYPTO_PRIVATE_KEY": priv})
+    with db.connect() as conn:
+        db.set_meta(conn, "robinhood_public_key", pub)
+    return {"public_key": pub}
+
+
+class RobinhoodKeyIn(BaseModel):
+    api_key: str = Field(..., min_length=10, max_length=200, pattern=r"^[A-Za-z0-9_\-]+$")
+
+
+@app.post("/api/connections/robinhood")
+async def connect_robinhood(body: RobinhoodKeyIn):
+    from . import robinhood_crypto
+    import os
+    if not os.environ.get("ROBINHOOD_CRYPTO_PRIVATE_KEY"):
+        raise HTTPException(400, "Make the key pair first (step 1).")
+    os.environ["ROBINHOOD_CRYPTO_API_KEY"] = body.api_key
+    try:
+        await asyncio.to_thread(robinhood_crypto.account)
+    except robinhood_crypto.RobinhoodError as exc:
+        os.environ.pop("ROBINHOOD_CRYPTO_API_KEY", None)
+        raise HTTPException(400, f"Robinhood didn't accept it: {exc}")
+    _save_env({"ROBINHOOD_CRYPTO_API_KEY": body.api_key})
+    try:
+        result = await asyncio.to_thread(accounts.run_sync, "robinhood_crypto")
+    except accounts.SyncError as exc:
+        result = {"error": str(exc)}
+    holdplan.clear_cache()
+    return {"connected": True, "first_sync": result}
+
+
+@app.post("/api/sync/robinhood_crypto")
+async def sync_robinhood_crypto_now():
+    return await _sync_now("robinhood_crypto")
+
+
+@app.post("/api/sync/email")
+async def sync_email_now():
+    return await _sync_now("email")
+
+
+async def _sync_now(kind: str):
+    try:
+        out = await asyncio.to_thread(accounts.run_sync, kind)
+    except accounts.SyncError as exc:
+        raise HTTPException(exc.status, str(exc))
+    holdplan.clear_cache()
+    return out
+
+
+# ------------------------------------------------------------------ trading
+
+class TradeIn(BaseModel):
+    venue: Literal["coinbase", "robinhood", "ticket"]
+    symbol: str = Field(..., min_length=1, max_length=20)
+    side: Literal["buy", "sell"]
+    dollars: float | None = Field(None, gt=0, le=1_000_000)
+    quantity: float | None = Field(None, gt=0, le=1e12)
+    limit_price: float | None = Field(None, gt=0, le=1e9)
+    token: str | None = Field(None, max_length=200)
+
+    def order(self) -> "trading.Order":
+        return trading.Order(self.venue, market.normalize_symbol(self.symbol), self.side, self.dollars, self.quantity, self.limit_price)
+
+
+@app.get("/api/trade/venues/{symbol}")
+def trade_venues(symbol: str):
+    with db.connect() as conn:
+        cfg = trading.settings(conn)
+    return {"venues": trading.venues(market.normalize_symbol(symbol)), "settings": cfg}
+
+
+@app.post("/api/trade/preview")
+async def trade_preview(body: TradeIn):
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+        cfg = trading.settings(conn)
+        spent = trading.spent_today(conn)
+    try:
+        plan = holdplan._cache.get("plan", (None, 0, None))[2]
+        return await asyncio.to_thread(trading.preview, body.order(), txs, plan, cfg, spent)
+    except trading.TradeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/trade/place")
+async def trade_place(body: TradeIn):
+    if not body.token:
+        raise HTTPException(400, "Preview the order first")
+
+    def run():
+        with db.connect() as conn:
+            return trading.place(body.order(), body.token, conn)
+    try:
+        out = await asyncio.to_thread(run)
+    except trading.TradeError as exc:
+        raise HTTPException(400, str(exc))
+    kind = {"coinbase": "coinbase", "robinhood": "robinhood_crypto"}[body.venue]
+
+    async def later():
+        await asyncio.sleep(8)
+        try:
+            await asyncio.to_thread(accounts.run_sync, kind)
+            holdplan.clear_cache()
+        except accounts.SyncError:
+            pass
+    asyncio.create_task(later())
+    return out
+
+
+class TradeSettingsIn(BaseModel):
+    enabled: bool
+    max_order: float = Field(250.0, gt=0, le=100_000)
+    daily_limit: float = Field(500.0, gt=0, le=1_000_000)
+
+
+@app.post("/api/trade/settings")
+def trade_settings(body: TradeSettingsIn):
+    with db.connect() as conn:
+        db.set_meta(conn, "trading_enabled", "1" if body.enabled else "")
+        db.set_meta(conn, "trading_max_order", str(body.max_order))
+        db.set_meta(conn, "trading_daily_limit", str(body.daily_limit))
+        return trading.settings(conn)
+
+
+@app.get("/api/trade/log")
+def trade_log_view():
+    with db.connect() as conn:
+        return {"orders": trading.recent(conn), "settings": trading.settings(conn), "spent_today": trading.spent_today(conn)}
+
+
+# ------------------------------------------------------------------ auto-invest schedules, buy-the-dip, goals
+
+class ScheduleIn(BaseModel):
+    account: str = Field("Stash", min_length=1, max_length=40)
+    symbol: str = Field(..., min_length=1, max_length=20)
+    amount: float = Field(..., gt=0, le=1_000_000)
+    every: Literal["week", "2weeks", "month"] = "week"
+    day: int = Field(0, ge=0, le=28)
+    start: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/api/schedules")
+def schedules_view():
+    from . import schedules
+    with db.connect() as conn:
+        return [s.__dict__ for s in schedules.load(conn)]
+
+
+@app.post("/api/schedules")
+def schedule_add(body: ScheduleIn):
+    from . import schedules
+    if body.every == "month" and body.day < 1:
+        raise HTTPException(422, "For a monthly schedule, give the day of the month (1-28)")
+    if body.every != "month" and body.day > 6:
+        raise HTTPException(422, "For a weekly schedule, give the weekday (0 = Monday … 6 = Sunday)")
+    with db.connect() as conn:
+        schedules.add(conn, body.account.strip(), market.normalize_symbol(body.symbol), body.amount, body.every, body.day, body.start)
+        added = schedules.apply(conn, date.today(), schedules.close_on)
+        out = [s.__dict__ for s in schedules.load(conn)]
+    holdplan.clear_cache()
+    return {"schedules": out, "recorded": added}
+
+
+@app.delete("/api/schedules/{sid}")
+def schedule_delete(sid: int):
+    from . import schedules
+    with db.connect() as conn:
+        schedules.remove(conn, sid)
+        return [s.__dict__ for s in schedules.load(conn)]
+
+
+class TargetIn(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=20)
+    price: float = Field(..., gt=0, le=1e9)
+    note: str = Field("", max_length=200)
+
+
+@app.get("/api/buy-targets")
+def buy_targets_view():
+    from . import price_alerts
+    with db.connect() as conn:
+        rows = price_alerts.targets(conn)
+    for r in rows:
+        t = livefeed_price(r["symbol"])
+        r["now"] = t
+        r["gap_pct"] = round((t / r["price"] - 1) * 100, 1) if t else None
+    return rows
+
+
+def livefeed_price(sym: str) -> float | None:
+    try:
+        return market.get_live_quote(sym).price
+    except (http.DataUnavailable, KeyError, ValueError):
+        return None
+
+
+@app.post("/api/buy-targets")
+def buy_target_set(body: TargetIn):
+    from . import price_alerts
+    with db.connect() as conn:
+        price_alerts.set_target(conn, market.normalize_symbol(body.symbol), body.price, body.note.strip())
+    holdplan.clear_cache()
+    return buy_targets_view()
+
+
+@app.delete("/api/buy-targets/{symbol}")
+def buy_target_delete(symbol: str):
+    from . import price_alerts
+    with db.connect() as conn:
+        price_alerts.remove_target(conn, market.normalize_symbol(symbol))
+    holdplan.clear_cache()
+    return buy_targets_view()
+
+
+class GoalIn(BaseModel):
+    target: float = Field(..., gt=0, le=1e10)
+    year: int = Field(..., ge=2000, le=2100)
+    monthly: float = Field(0, ge=0, le=1e7)
+    mean: float = Field(0.07, ge=-0.2, le=0.3)
+    vol: float = Field(0.15, ge=0, le=1)
+
+
+@app.get("/api/goal")
+async def goal_view():
+    from . import goals
+    with db.connect() as conn:
+        raw = db.get_meta(conn, "goal", "")
+    if not raw:
+        return {"goal": None}
+    g = json.loads(raw)
+    plan = await _holdplan_data()
+    years = max(0, g["year"] - date.today().year)
+    return {"goal": g, "now_value": plan["base"],
+            "projection": goals.project(plan["base"], g["monthly"], years, g["target"], g.get("mean", 0.07), g.get("vol", 0.15))}
+
+
+@app.post("/api/goal")
+async def goal_set(body: GoalIn):
+    with db.connect() as conn:
+        db.set_meta(conn, "goal", json.dumps(body.model_dump()))
+    return await goal_view()
+
+
+# ------------------------------------------------------------------ vs the market, look-through, fees, statement check
+
+_analysis_cache = sentinel.Cache(1800)
+
+
+def _valued_positions() -> tuple[list[dict], list[dict]]:
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    return (service.portfolio_summary(txs, False)["positions"] if txs else []), txs
+
+
+@app.get("/api/benchmark")
+async def benchmark_view(symbol: str = Query("VOO", max_length=10)):
+    """Your gain against the same money put into one index fund on the same days."""
+    from . import benchmark
+
+    def run():
+        positions, txs = _valued_positions()
+        prices = {p["symbol"]: p["price"] for p in positions if p.get("price")}
+        return benchmark.build(txs, prices, market.normalize_symbol(symbol))
+    try:
+        key = ("bench", symbol, _ledger_key(), date.today().isoformat())
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
+def _ledger_key() -> tuple:
+    """Changes whenever a trade is added or removed (so cached analyses refresh)."""
+    with db.connect() as conn:
+        r = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM transactions").fetchone()
+        return (r["n"], r["m"])
+
+
+@app.get("/api/lookthrough")
+async def lookthrough_view():
+    """Your money in each company, directly and through the funds you own."""
+    from . import lookthrough
+
+    def run():
+        positions, _ = _valued_positions()
+        funds = {}
+        errors = []
+        for p in positions:
+            if market.asset_class(p["symbol"]) != "stock":
+                continue
+            try:
+                fd = lookthrough.holdings(p["symbol"])
+            except (http.DataUnavailable, ValueError, KeyError) as exc:
+                errors.append(f"{p['symbol']}: {str(exc)[:80]}")
+                continue
+            if fd:
+                funds[p["symbol"]] = fd
+        out = lookthrough.exposure(positions, funds)
+        out["errors"] = errors
+        return out
+    key = ("look", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+@app.get("/api/fees")
+async def fees_view():
+    from . import fees
+
+    def run():
+        positions, _ = _valued_positions()
+        return fees.build(positions)
+    key = ("fees", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+class StatementIn(BaseModel):
+    account: str = Field(..., min_length=1, max_length=40)
+    pdf_base64: str = Field(..., min_length=10, max_length=20_000_000)
+
+
+@app.post("/api/statement-check")
+def statement_check(body: StatementIn):
+    """Share counts on a statement PDF against the ledger for that account."""
+    import base64
+    from . import statement
+    try:
+        text = statement.text_of_pdf(base64.b64decode(body.pdf_base64))
+    except Exception as exc:  # noqa: BLE001 - any unreadable PDF is the same answer
+        raise HTTPException(400, f"Couldn't read that PDF: {str(exc)[:120]}")
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    ledger: dict[str, float] = {}
+    for t in txs:
+        if (t.get("account") or "") == body.account:
+            ledger[t["symbol"]] = ledger.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    known = {s.replace("-USD", "") for s in ledger}
+    found = statement.quantities(text, known)
+    found = {(s + "-USD" if s + "-USD" in ledger else s): q for s, q in found.items()}
+    out = statement.compare(found, {s: q for s, q in ledger.items() if q > 1e-9})
+    out["read"] = len(found)
+    return out
 
 
 @app.post("/api/sync/snaptrade/connect")

@@ -471,3 +471,38 @@ button.small { font-size: 12px; padding: 3px 8px; }
   nav#tabs::-webkit-scrollbar { display: none; }
   nav#tabs button { flex: none; white-space: nowrap; padding: 6px 9px; }
 }
+
+/* sending orders from the app */
+.tt-live { border-top: 1px solid var(--grid); margin-top: 12px; padding-top: 10px; display: grid; gap: 8px; }
+.tt-send { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.tt-send label { display: grid; gap: 4px; font-size: 13px; }
+.tt-pv-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; background: var(--mid); }
+.tt-pv-card p { margin: 0; }
+.warn-line { color: var(--warn-ink, #8a5a00); }
+.tt-place { justify-self: start; }
+
+/* connections */
+.conn-list { display: grid; gap: 8px; }
+.conn { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.conn summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.conn-state { font-size: 12px; }
+.conn ol { padding-left: 18px; display: grid; gap: 4px; }
+.mono { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+#tr-settings label.check { display: flex; gap: 6px; align-items: center; }
+
+/* second row: the pages inside Plan, Discover and News */
+#subtabs { width: 100%; gap: 2px; border-top: 1px solid var(--grid); padding-top: 6px; margin-top: -4px; }
+#subtabs button { font-size: 13px; padding: 4px 9px; color: var(--muted); }
+#subtabs button[aria-current="true"] { color: var(--ink); background: var(--mid); font-weight: 600; }
+#subtabs button[hidden] { display: none; }
+@media (max-width: 720px) {
+  nav#subtabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  nav#subtabs::-webkit-scrollbar { display: none; }
+  nav#subtabs button { flex: none; white-space: nowrap; }
+}
+
+/* vs the market */
+.bm-rows { display: grid; gap: 4px; margin-top: 6px; }
+.bm-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: baseline; font-variant-numeric: tabular-nums; }
+.bm-row > :nth-child(n+2) { text-align: right; }
+tr.warn-row td { background: color-mix(in srgb, var(--warn-bg, #fff4d6) 60%, transparent); }
