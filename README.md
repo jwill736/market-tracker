@@ -252,7 +252,7 @@ minutes per portfolio) return the same data as JSON.
 
 ### How each account reaches the app (free, near real time)
 
-Connect them in **Portfolio → Connections**; no files to edit. Prices are live everywhere; your holdings follow within
+Connect them in **Portfolio → Accounts**; no files to edit. Prices are live everywhere; your holdings follow within
 minutes of each trade:
 
 | Account | How | How fast |
@@ -271,7 +271,46 @@ brokers' exact emails. A trade already in the ledger (CSV, another sync, or a sc
 Home → **Accounts** shows each account's value, where its data comes from and how fresh it is; the morning brief says
 when an account's data has gone stale. Every symbol page says which accounts hold it ("Robinhood 40 · Stash 2").
 
+### Moves between your own accounts (Portfolio → Accounts → Transfers)
+
+Sending coins from Coinbase to Robinhood, or shares from one broker to another, isn't a sale: they keep what you paid
+and the date you bought them, so a later sale is taxed on the original cost (and counts as long-term from the first
+purchase). Coinbase's CSV sends and receives, and the balance checks after each sync, show up here to pair; a move you
+made by hand can be recorded in one line. A network fee (up to 3%) is folded into the cost of what arrived. Coins that
+arrived from outside the accounts here ask for their original cost and date; coins that left ask whether they went to a
+wallet of yours or were spent.
+
+### Your money (Accounts page)
+
+- **Cash waiting**: each account's uninvested cash (Coinbase fills in from its sync, Robinhood crypto's buying power from
+  its API), how long it has sat, and what it would earn at today's 13-week T-bill yield. Over $100 for two weeks is flagged
+  in the morning brief with a link to the new-money planner.
+- **Off-site backup**: every night after 2am, the whole database, encrypted (AES-256-GCM, key from your passphrase by
+  scrypt), to a folder (a synced Google Drive / iCloud / Dropbox folder works; the last 14 kept) and/or a private GitHub
+  repository (refused if public). Only the passphrase opens a backup; the app keeps a key derived from it, not the
+  passphrase, so it can run while you sleep. Restore replaces the data and keeps the old copy beside it.
+- **Connection health**: a push when a sync has failed for 3 hours, when an auto-invest buy has no confirmation email
+  after 5 days, or when the backup fails or hasn't run for 3 days.
+- **Live prices**: crypto is tick by tick from Coinbase; stocks poll Yahoo every few seconds until you paste a free Finnhub
+  key here, which switches them to Finnhub's live trade stream without a restart.
+
 ### Trading from the app
+
+The app has its own order engine: a preview, your limits, a one-time sealed confirm and a trade log, for every venue.
+
+| Where | What | Money |
+|---|---|---|
+| **Paper account** | Stocks and crypto, filled at the live price. Starts at $10,000, resettable | Pretend |
+| **Coinbase**, **Robinhood crypto** | Crypto, with your API keys | Real |
+| **Alpaca** | Stocks and ETFs, fractional and by dollar amount, commission-free. Its paper keys are pretend money | Real or pretend |
+| **Public.com** | Stocks and ETFs, fractional by dollar amount (its free Individual Trader API) | Real |
+
+Robinhood and Stash have no stock API for individuals (Robinhood's 2026 agentic trading works only in a separate account
+through an AI agent), so shares held there still open in their app, and the confirmation email brings the trade in. To
+trade stocks from here, hold money at Alpaca or Public (new money by bank transfer; moving existing shares costs about
+$75-100 per account and fractional shares get sold). Their adapters follow each broker's official SDK; Public's hasn't
+run against a live account yet. Filled Alpaca (live) and Public orders come into the ledger as accounts "Alpaca" and
+"Public" within a couple of minutes.
 
 Crypto orders go straight to Coinbase or Robinhood from any coin's **Trade** window: pick where to send it, **Preview**
 (the broker's own price and fees, plus wash-sale, tax and concentration warnings), then **Confirm**. Safety:
@@ -344,6 +383,17 @@ filings.
   count against its usual daily pace (**loud** at 3× and 5+), headline mood, in-depth coverage, and one merged
   headline feed you can filter by symbol. The **heads-up** list at the top collects everything the background
   watch found.
+- **News desk** (top of the News tab): each holding's news from aggregators (Google News, Yahoo, Nasdaq, Finnhub),
+  newsrooms read directly (CNBC, WSJ, MarketWatch, Bloomberg), press wires (PR Newswire, Business Wire, GlobeNewswire),
+  regulators (SEC, FDA, FTC), the SEC filing radar and crypto outlets (CoinDesk, Cointelegraph, Decrypt, The Block),
+  grouped into stories. Each story counts independent outlets rather than copies (a filing or regulator weighs 1.0, a top
+  newsroom 0.8, other newsrooms 0.6, a company press release 0.5, blogs 0.4), gets an event type, and is marked rumor or
+  stale (a repeat within 30 days). A serious event (restatement, auditor leaving, SEC/DOJ action, going concern, dividend
+  or guidance cut, sudden CEO/CFO exit, bankruptcy, FDA rejection, exchange hack) confirmed by a filing or two major
+  newsrooms puts the holding under Review in the hold plan and pauses new buys of it until you look. News never says sell
+  on its own and headline mood never moves anything: research finds large-company news is mostly priced by the time
+  it's a headline (Ke, Kelly & Xiu 2019; Lopez-Lira & Tang 2023), recycled news reverses (Tetlock 2011), and specific
+  events, not article counts, carry the information (Boudoukh et al. 2019).
 - **Reading tab:**
   - *What the pros are reading*: the links Abnormal Returns (a daily list for investment professionals) and Barry
     Ritholtz picked in the last few days. Picked by both ranks first.
@@ -415,6 +465,21 @@ the gain.
 - **What your funds cost** (Portfolio): each fund's expense ratio in dollars a year and over 30 years, and a cheaper fund
   on the same index where one exists (switching means selling, so check the tax first).
 - **Auto-invest schedules and statement check** (Portfolio): see the accounts table above.
+
+## Taxes (Portfolio → Taxes)
+
+- **Which shares to sell**: a sale under each cost-basis method (first in first out, highest cost, last in first out,
+  least tax now), the lots each takes and the tax in dollars, with the cheapest marked. Set each account's method to what
+  the broker uses so the app's gains match your 1099; the trade preview also says when another method would save $5+.
+- **Tax export**: the year's sales from every account in one CSV laid out like Form 8949 (short/long-term, wash-sale code
+  W across accounts), and an income CSV (dividends, interest, tax withheld, crypto rewards and staking). A worksheet to
+  check each broker's 1099-B / 1099-DA / 1099-DIV against, not a filing.
+
+## Does the advice work? (Discover → Track record)
+
+Every day the hold plan's sells, trims and buys are written down with that day's price and later scored against what
+you'd have done anyway: put the money in VOO. A sell helped if the stock then lagged VOO; a buy helped if it beat it. The
+page says "too early to tell" until 20 have a 3-month result.
 
 ## Income (dividends)
 
@@ -537,9 +602,12 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 | `APP_PASSWORD` | Password for the private app. When set, every page and API call needs a login |
 | `APP_SECRET` | Optional: signs login sessions (defaults to one derived from the password) |
 | `REQUIRE_LOGIN` | Set to `1` on a server so the app refuses to serve until `APP_PASSWORD` is set |
-| `MAIL_USER`, `MAIL_APP_PASSWORD`, `MAIL_IMAP_HOST` | Set from Portfolio → Connections: reads broker trade-confirmation emails (read-only IMAP; Gmail needs an app password) |
+| `MAIL_USER`, `MAIL_APP_PASSWORD`, `MAIL_IMAP_HOST` | Set from Portfolio → Accounts: reads broker trade-confirmation emails (read-only IMAP; Gmail needs an app password) |
 | `COINBASE_API_KEY_NAME`, `COINBASE_API_PRIVATE_KEY` | Set from Connections: Coinbase sync every 5 minutes; with the Trade permission, orders from the app |
 | `ROBINHOOD_CRYPTO_API_KEY`, `ROBINHOOD_CRYPTO_PRIVATE_KEY` | Set from Connections: Robinhood Crypto API (holdings, trades, orders) |
+| `OFFSITE_DIR`, `OFFSITE_REPO`, `OFFSITE_GITHUB_TOKEN`, `OFFSITE_KEY`, `OFFSITE_SALT` | Set from Accounts → Off-site backup (the key is derived from your passphrase; the passphrase isn't stored) |
+| `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_LIVE` | Set from Accounts → Brokers: stock orders through Alpaca (`ALPACA_LIVE=1` for real money, else its paper mode) |
+| `PUBLIC_API_SECRET`, `PUBLIC_ACCOUNT_ID` | Set from Accounts → Brokers: stock orders through Public.com |
 | `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` | Optional: automatic, read-only account sync through SnapTrade (personal key) |
 | `SNAPTRADE_USER_ID`, `SNAPTRADE_USER_SECRET` | Only with a commercial SnapTrade key: the user it registered |
 
