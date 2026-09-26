@@ -1,61 +1,44 @@
-"""Temporary: Robinhood crypto API paths, fund holdings and fee sources."""
+"""Temporary: Robinhood crypto API fields, SEC N-PORT holdings, fee source."""
 import re
 import httpx
 
-UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-      "Accept": "text/html,application/json,*/*"}
-c = httpx.Client(timeout=25, headers=UA, follow_redirects=True)
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"}
+SEC = {"User-Agent": "plumbline probe contact@example.com", "Accept-Encoding": "gzip, deflate"}
+c = httpx.Client(timeout=30, headers=UA, follow_redirects=True)
 
+page = c.get("https://docs.robinhood.com/crypto/trading/").text
+for src in re.findall(r'src="(/_next/static/chunks/pages/crypto/[^"]+\.js)"', page):
+    js = c.get("https://docs.robinhood.com" + src).text
+    print("=== chunk", src, len(js))
+    for p in sorted(set(re.findall(r"/api/v[12]/crypto/[A-Za-z_/{}.:-]+", js))):
+        print("PATH", p)
+    for kw in ["trading.robinhood.com", "message_to_sign", "api_key}{", "f\"{api_key", "base64", "timestamp", "SigningKey",
+               "market_order_config", "limit_order_config", "stop_loss_order_config", "asset_quantity", "quote_amount",
+               "client_order_id", "time_in_force", "estimated_price", "best_bid_ask", "holdings", "average_price",
+               "filled_asset_quantity", "executions", "effective_price", "state", "buying_power", "cancel"]:
+        for m in list(re.finditer(re.escape(kw), js))[:2]:
+            s = js[max(0, m.start() - 160): m.start() + 260]
+            print(f"--- {kw}: {s!r}")
 
-def get(label, url, **kw):
-    try:
-        r = c.get(url, **kw)
-        print(f"=== {label} {r.status_code} {r.headers.get('content-type','')[:40]} {len(r.content)}")
-        return r
-    except Exception as e:
-        print(f"=== {label} ERR {e}")
-        return None
-
-
-r = get("rh docs", "https://docs.robinhood.com/crypto/trading/")
-if r is not None:
-    t = r.text
-    for pat in [r"https://[a-z.]*robinhood\.com[^\s\"'<>]*", r"/api/v[12]/crypto/[a-z_/{}.-]+[^\s\"'<]*"]:
-        print(sorted(set(re.findall(pat, t)))[:60])
-    for kw in ["message", "base64", "timestamp", "signature", "asset_quantity", "quote_amount", "market_order_config",
-               "limit_order_config", "client_order_id", "time_in_force", "estimated_price", "best_bid_ask"]:
-        i = t.find(kw)
-        if i >= 0:
-            print(f"--- {kw}: {re.sub(r'<[^>]+>', ' ', t[max(0,i-200):i+300])!r}"[:600])
-    js = sorted(set(re.findall(r'src="([^"]+\.js)"', t)))
-    print("scripts", js[:10])
-for path in ["/api/v1/crypto/trading/accounts/", "/api/v2/crypto/trading/accounts/", "/api/v1/crypto/marketdata/best_bid_ask/?symbol=BTC-USD"]:
-    rr = get("rh " + path, "https://trading.robinhood.com" + path)
-    if rr is not None:
-        print(rr.text[:200])
-
-# fund holdings
-get_v = get("vanguard VOO holdings", "https://investor.vanguard.com/investment-products/etfs/profile/api/VOO/portfolio-holding/stock?start=1&count=5")
-if get_v is not None:
-    print(get_v.text[:400])
-for label, url in [("ssga SPY xlsx", "https://www.ssga.com/us/en/intermediary/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spy.xlsx"),
-                   ("ishares IVV csv", "https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund"),
-                   ("invesco QQQ", "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings/0?audienceType=Investor&action=download&ticker=QQQ"),
-                   ("schwab SCHD", "https://www.schwabassetmanagement.com/allholdings/SCHD"),
-                   ("stockanalysis VOO", "https://stockanalysis.com/etf/voo/holdings/"),
-                   ("zacks VOO", "https://www.zacks.com/funds/etf/VOO/holding")]:
-    rr = get(label, url)
-    if rr is not None:
-        print(repr(rr.content[:300]))
-# expense ratio sources
-for label, url in [("stockanalysis VOO overview", "https://stockanalysis.com/etf/voo/"),
-                   ("vanguard VOO profile", "https://investor.vanguard.com/investment-products/etfs/profile/api/VOO/profile")]:
-    rr = get(label, url)
-    if rr is not None:
-        t = rr.text
-        i = t.lower().find("expense")
-        print(repr(re.sub(r"<[^>]+>", " ", t[max(0, i-100):i+200])) if i >= 0 else t[:200])
-# SEC N-PORT for VOO (Vanguard Index Funds, series)
-rr = get("sec nport search", "https://efts.sec.gov/LATEST/search-index?q=%22VOO%22&forms=NPORT-P", headers={"User-Agent": "plumbline probe contact@example.com"})
-if rr is not None:
-    print(rr.text[:300])
+tick = c.get("https://www.sec.gov/files/company_tickers_mf.json", headers=SEC).json()
+print("mf fields", tick.get("fields"))
+rows = {r[3]: r for r in tick["data"] if r[3] in ("VOO", "QQQ", "SCHD", "VTI", "SPY", "IVV")}
+print(rows)
+for sym, r in rows.items():
+    cik, series = str(r[0]), r[1]
+    q = c.get("https://efts.sec.gov/LATEST/search-index", params={"q": f'"{series}"', "forms": "NPORT-P"}, headers=SEC).json()
+    hits = (q.get("hits") or {}).get("hits") or []
+    print(sym, series, "hits", len(hits), [(h["_id"], h["_source"].get("period_ending"), h["_source"].get("file_date")) for h in hits[:3]])
+    if hits and sym in ("VOO", "SCHD"):
+        h = max(hits, key=lambda h: h["_source"].get("file_date", ""))
+        acc, fname = h["_id"].split(":")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(h['_source']['ciks'][0])}/{acc.replace('-', '')}/{fname}"
+        x = c.get(url, headers=SEC)
+        t = x.text
+        print("xml", x.status_code, len(t), "seriesId" in t, t.count("<invstOrSec>"))
+        i = t.find("<invstOrSec>")
+        print(t[i:i + 900])
+sa = c.get("https://stockanalysis.com/etf/qqq/holdings/").text
+print("stockanalysis qqq", len(sa), re.findall(r'/stocks/([a-z.]+)/', sa)[:15])
+i = sa.find("% Weight")
+print(repr(re.sub(r"<[^>]+>", " ", sa[i:i + 800])))
