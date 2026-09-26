@@ -43,3 +43,16 @@ def test_tenk_changes_end_to_end(monkeypatch):
     assert r["current"]["filed"] == "2026-07-20" and r["previous"]["filed"] == "2025-07-22"
     assert r["level"] == "big" and r["sections"]["risk"]["new_count"] == 2
     assert r["sections"]["legal"]["new_count"] == 0
+
+
+def test_light_edits_are_not_new_text():
+    prev = ("The Company depends on component suppliers in Asia for most of its products and shipments. "
+            "Changes in trade policy could raise the Company's costs and reduce its gross margin materially. "
+            "The Company faces intense competition in every market in which it sells its hardware products.")
+    cur = ("Apple depends on component suppliers in Asia for most of its products and shipments. "        # one word changed
+           "Changes in trade policy, including new tariffs, could raise the Company's costs and reduce its gross margin materially. "
+           "The Company faces intense competition in every market in which it sells its hardware products. "
+           "A cybersecurity breach at a cloud provider could disrupt the Company's services for customers worldwide.")
+    c = filings.compare(prev, cur)
+    assert c["new_count"] == 1 and c["new"][0].startswith("A cybersecurity breach")
+    assert c["removed_count"] == 0 and c["new_share"] < 0.35

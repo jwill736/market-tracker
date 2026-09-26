@@ -76,14 +76,44 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z#]+", " ", s).strip()
 
 
+SAME = 0.7      # a sentence sharing 70%+ of its words with one from last year is an edit, not new text
+
+
+def _tokens(s: str) -> frozenset:
+    return frozenset(w for w in _norm(s).split() if len(w) > 2)
+
+
+def _closest(tok: frozenset, pool: list[frozenset], index: dict[str, list[int]]) -> float:
+    """Best word-overlap (Jaccard) with any sentence in pool, via the words they share."""
+    seen: dict[int, int] = {}
+    for w in tok:
+        for i in index.get(w, ()):
+            seen[i] = seen.get(i, 0) + 1
+    best = 0.0
+    for i, shared in seen.items():
+        union = len(tok) + len(pool[i]) - shared
+        if union:
+            best = max(best, shared / union)
+    return best
+
+
+def _unmatched(a: list[str], b: list[str]) -> list[str]:
+    """Sentences of a with no exact or close counterpart in b."""
+    exact = {_norm(s) for s in b}
+    pool = [_tokens(s) for s in b]
+    index: dict[str, list[int]] = {}
+    for i, t in enumerate(pool):
+        for w in t:
+            index.setdefault(w, []).append(i)
+    return [s for s in a if _norm(s) not in exact and _closest(_tokens(s), pool, index) < SAME]
+
+
 def compare(prev: str, cur: str) -> dict:
     if not prev or not cur:
         return {"similarity": None, "new_share": None, "new": [], "removed": [], "words": len(cur.split()), "words_before": len(prev.split())}
-    old = {_norm(s) for s in sentences(prev)}
-    now_s = sentences(cur)
-    new = [s for s in now_s if _norm(s) not in old]
-    cur_n = {_norm(s) for s in now_s}
-    removed = [s for s in sentences(prev) if _norm(s) not in cur_n]
+    old_s, now_s = sentences(prev), sentences(cur)
+    new = _unmatched(now_s, old_s)
+    removed = _unmatched(old_s, now_s)
     new_chars = sum(len(s) for s in new)
     total = sum(len(s) for s in now_s) or 1
     flagged = sorted(new, key=lambda s: (not WATCH_WORDS.search(s), -len(s)))

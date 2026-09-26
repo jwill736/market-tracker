@@ -438,6 +438,9 @@ def _():
     risk = r["sections"]["risk"]
     assert risk["words"] > 3000 and risk["words_before"] > 3000, (risk["words"], risk["words_before"])
     assert risk["similarity"] is not None and 0.5 < risk["similarity"] <= 1.0, risk["similarity"]
+    # Apple rewrites little of its Risk Factors in a year: a big "new" share with near-identical
+    # wording means edits are being counted as new text.
+    assert risk["new_share"] < 0.4 or risk["similarity"] < 0.95, (risk["new_share"], risk["similarity"])
     return (f"{r['current']['form']} {r['current']['filed']} vs {r['previous']['filed']}: Risk Factors {risk['words']:,} words, "
             f"{risk['new_share']:.0%} new, similarity {risk['similarity']:.2f}; level {r['level']}")
 
