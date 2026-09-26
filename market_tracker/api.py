@@ -1850,6 +1850,22 @@ async def advice_record():
     return dict(out, items=out["items"][:200])
 
 
+@app.get("/api/newsdesk")
+async def newsdesk_view(refresh: bool = False):
+    """Your holdings' news, clustered into stories, with sources counted and weighed, the event
+    type, and what (if anything) it changes in the plan."""
+    held = sorted(sentinel.my_symbols()[0])
+    if not held:
+        return {"desk": {}, "feeds": {}, "at": None}
+    key = tuple(held)
+    if refresh:
+        sentinel.newsdesk_cache.clear()
+    try:
+        return await asyncio.to_thread(sentinel.newsdesk_cache.get, key, lambda: sentinel.build_newsdesk(held))
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
 @app.get("/api/accounts")
 def accounts_view():
     """Each account: what's in it, how it reaches this app, and how fresh it is."""

@@ -196,6 +196,9 @@ class Sentinel:
                 await asyncio.to_thread(health_check)
                 await asyncio.to_thread(settle_orders)
                 await asyncio.to_thread(log_advice_daily)
+                held_now = my_symbols()[0]
+                if held_now:
+                    await asyncio.to_thread(newsdesk_cache.get, tuple(sorted(held_now)), lambda: build_newsdesk(sorted(held_now)))
             except Exception:
                 pass
             await asyncio.sleep(RADAR_SECONDS)
@@ -330,6 +333,35 @@ def log_advice_daily(today: date | None = None) -> int:
     return n
 
 
+def build_newsdesk(symbols: list[str]) -> dict:
+    """The news desk for your holdings (see newsdesk.py), remembered 20 minutes; confirmed
+    Tier A stories are pushed once each."""
+    import json
+    from . import logos, newsdesk, reading
+    from .providers import market
+    now = datetime.now(timezone.utc)
+    raw = logos.names(symbols)
+    names = {s: reading.short_company_name(n) for s, n in raw.items() if n and market.asset_class(s) != "crypto"}
+    coins = {s: n for s, n in raw.items() if n and market.asset_class(s) == "crypto"}
+    with db.connect() as conn:
+        history = json.loads(db.get_meta(conn, "newsdesk_history", "[]") or "[]")
+    radar_by: dict[str, list[dict]] = {}
+    try:
+        mine, _ = radar_cache.get(tuple(symbols), lambda: sentinel.mine(symbols))
+        for a in mine:
+            radar_by.setdefault(a.symbol, []).append(a.to_dict())
+    except Exception:  # noqa: BLE001 - the desk works without the radar
+        pass
+    desk = newsdesk.build(symbols, names, radar_by, history, now, crypto_names=coins)
+    with db.connect() as conn:
+        db.set_meta(conn, "newsdesk_history", json.dumps(newsdesk.remember(history, desk, now)))
+    for st in newsdesk.new_reviews(desk):
+        raise_headsup(f"newsdesk:{st['symbol']}:{st['event']}:{st['first'][:10]}", "news", 2,
+                      f"{st['symbol']}: {st['event'].replace('_', ' ')} ({st['sources']} sources)", st["title"],
+                      st["items"][0]["url"] if st["items"] else "", st["symbol"])
+    return {"desk": desk, "feeds": dict(newsdesk.FEED_STATUS), "at": now.isoformat(timespec="seconds")}
+
+
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",
                   symbol: str = "") -> int:
     with db.connect() as conn:
@@ -442,6 +474,7 @@ crypto_cache = Cache(300)
 news_cache = Cache(300)
 reading_cache = Cache(600)
 radar_cache = Cache(300)
+newsdesk_cache = Cache(1200)
 
 
 def build_news(symbols: list[str]) -> dict:

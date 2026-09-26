@@ -327,6 +327,16 @@
   <!-- News for your holdings -->
   <section id="tab-mynews" class="tab" hidden>
     <div class="card">
+      <div class="card-head"><h2>News desk</h2><span class="muted small" id="nd-meta"></span>
+        <button type="button" class="secondary small" id="nd-refresh">Refresh</button></div>
+      <p class="muted small">Your holdings' news from many sources (aggregators, major newsrooms, press wires, regulators, SEC filings),
+        grouped into stories. Each story counts independent outlets, not copies, and gets a type. Only confirmed serious news
+        (a filing or regulator, or two major newsrooms) changes anything: it puts the holding under Review and pauses new buys
+        until you look. News never says sell on its own.</p>
+      <div id="nd-out" class="small"></div>
+      <details class="mt"><summary class="small">Sources and their status</summary><div id="nd-feeds" class="small"></div></details>
+    </div>
+    <div class="card">
       <div class="card-head"><h2>Heads-up</h2><span class="muted small" id="hu-push"></span></div>
       <ul class="hu-list" id="hu-list"></ul>
     </div>

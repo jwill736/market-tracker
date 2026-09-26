@@ -88,7 +88,7 @@ function selectTab(name) {
   if (name === "people") { loadPeople(); loadPickers(); }
   if (name === "hold") { loadHold(); loadTargets(); loadGoal(); }
   if (name === "income") loadIncome();
-  if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
+  if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
@@ -2637,3 +2637,33 @@ async function loadAdvice() {
         || `<li class="muted">Nothing logged yet: the first entries appear the day after you have holdings.</li>`}</ul>`;
   } catch (err) { $("#adv-verdict").textContent = err.message; }
 }
+
+// ---------------------------------------------------------------- news desk
+const TIER_LABEL = { A: "Serious", B: "Worth a look", C: "Noise" };
+const ACTION_LABEL = { review: "Review", watch: "Unconfirmed", note: "Note", ignore: "No action" };
+async function loadNewsDesk(refresh = false) {
+  $("#nd-out").innerHTML = `<p class="muted">Reading the sources…</p>`;
+  try {
+    const r = await api("/api/newsdesk" + (refresh ? "?refresh=true" : ""));
+    const syms = Object.keys(r.desk);
+    if (!syms.length) { $("#nd-out").innerHTML = `<p class="muted">No holdings yet.</p>`; return; }
+    $("#nd-meta").textContent = r.at ? `checked ${new Date(r.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+    const rank = (d) => Math.min(...d.stories.map((s) => ({ review: 0, watch: 1, note: 2, ignore: 3 }[s.action])), 4);
+    syms.sort((a, b) => rank(r.desk[a]) - rank(r.desk[b]));
+    $("#nd-out").innerHTML = syms.map((sym) => {
+      const d = r.desk[sym];
+      const shown = d.stories.filter((s) => s.action !== "ignore").slice(0, 4);
+      const quiet = d.stories.length - shown.length;
+      return `<div class="nd-sym"><div class="row">${logoImg(sym, 20)} <b>${esc(sym)}</b> <span class="muted">${d.items} headlines${d.outlets_3d ? ` · ${d.outlets_3d} outlets in 3 days (GDELT)` : ""}</span></div>
+        ${shown.map((st) => `<div class="nd-story nd-${st.action}"><span class="nd-badge">${ACTION_LABEL[st.action]}</span>
+          <b>${esc(st.title)}</b>
+          <div class="muted">${esc(TIER_LABEL[st.tier])} · ${esc(st.event.replace(/_/g, " "))} · ${st.sources} independent source${st.sources === 1 ? "" : "s"}
+            (${esc(st.outlets.slice(0, 5).join(", "))}) · confidence ${Math.round(st.confidence * 100)}%${st.rumor ? " · rumor wording" : ""}${st.stale ? " · seen before (stale)" : ""}</div>
+          <div>${esc(st.action_text)}</div>
+          <div class="muted">${st.items.slice(0, 3).map((i) => `<a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.outlet)}</a>`).join(" · ")}</div></div>`).join("")}
+        ${quiet > 0 ? `<p class="muted">${quiet} more stor${quiet === 1 ? "y" : "ies"} with no bearing on the plan.</p>` : ""}</div>`;
+    }).join("");
+    $("#nd-feeds").innerHTML = `<ul class="hp-lines">${Object.entries(r.feeds).sort().map(([k, v]) => `<li class="${v.ok ? "" : "down"}">${v.ok ? "●" : "▲"} ${esc(k)}: ${v.ok ? v.items + " items" : esc(v.error || "down")}</li>`).join("")}</ul>`;
+  } catch (err) { $("#nd-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+}
+$("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));
