@@ -68,3 +68,20 @@ def test_split_sentences_and_abbreviations_are_not_new():
     assert len(filings.sentences(cur)) == 3
     c = filings.compare(prev, cur)
     assert c["new_count"] == 0, c["new"]
+
+
+def test_joined_sentences_and_word_forms_are_not_new():
+    # From Apple's 2024 and 2025 Risk Factors: two old sentences joined, and "broader" -> "broad".
+    prev = ("The Company has a minority market share in the global smartphone, personal computer and tablet markets. "
+            "Some of the markets in which the Company competes have from time to time experienced little to no growth or contracted overall. "
+            "In addition, some of the Company's competitors have broader product lines, lower-priced products and a larger installed base of active devices. "
+            "The application of tax laws may be uncertain, require significant judgment and be subject to differing interpretations.")
+    cur = ("The Company has a minority market share in the global smartphone, personal computer, tablet and wearables markets, and some "
+           "of the markets in which the Company competes have from time to time experienced little to no growth or contracted overall. "
+           "Some of the Company's competitors have broad product lines, low-priced products, large installed bases of active devices, and large customer bases. "
+           "The court's order is subject to further proceedings before the D.C. District Court, which may result in changes to the "
+           "interpretation or application of the remedies ordered by the court, as well as new or changed remedies being ordered. "
+           "Beginning in the second quarter of 2025, new tariffs were announced on imports to the U.S., including additional tariffs on imports from China.")
+    c = filings.compare(prev, cur)
+    assert c["new_count"] == 2, c["new"]
+    assert sorted(s[:9] for s in c["new"]) == ["Beginning", "The court"]

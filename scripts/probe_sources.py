@@ -29,4 +29,4 @@ for s in random.sample(new, min(8, len(new))):
 lens = sorted(len(s) for s in now_s)
 print("\nlength percentiles", lens[len(lens) // 10], lens[len(lens) // 2], lens[-len(lens) // 10], lens[-1])
 print("\nLONGEST NEW:", max(new, key=len)[:600])
-# rerun: containment matching
+# rerun: containment matching, joined sentences and word forms

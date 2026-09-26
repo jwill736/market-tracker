@@ -1903,12 +1903,12 @@ def setup_view():
             "ntfy_topic": os.environ.get("NTFY_TOPIC", ""), "suggested_topic": setup.suggest_topic()}
 
 
-class TopicIn(BaseModel):
+class AlertTopicIn(BaseModel):
     topic: str = Field(min_length=12, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 @app.post("/api/setup/alerts")
-async def setup_alerts(body: TopicIn):
+async def setup_alerts(body: AlertTopicIn):
     """Save the ntfy topic and send a test push to it."""
     _save_env({"NTFY_TOPIC": body.topic})
     ok = await asyncio.to_thread(notify.send, notify.Message(title="Plumbline test", body="Alerts reach this phone.", url="", priority=3, tags=("white_check_mark",)))

@@ -87,23 +87,44 @@ def _norm(s: str) -> str:
 
 
 SAME = 0.75     # a sentence whose words are 75%+ inside one of last year's is an edit or a split, not new text
+MERGED = 0.85   # ...or 85%+ inside two of last year's sentences together: two old sentences joined into one
+
+
+def _stem(w: str) -> str:
+    """Crude: "broader" and "broad", "bases" and "base" count as the same word."""
+    for suf in ("ing", "ed", "er", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            return w[:-len(suf)]
+    return w
 
 
 def _tokens(s: str) -> frozenset:
-    return frozenset(w for w in _norm(s).split() if len(w) > 2)
+    return frozenset(_stem(w) for w in _norm(s).split() if len(w) > 2 and w not in STOP)
 
 
 def _closest(tok: frozenset, pool: list[frozenset], index: dict[str, list[int]]) -> float:
-    """The largest share of this sentence's words found inside a single sentence of pool.
+    """How much of this sentence's words are found in last year's text, as one sentence or two.
     Containment rather than overlap: companies often split one long sentence into several, and
-    each piece is then almost entirely inside the old sentence."""
+    each piece is then almost entirely inside the old sentence. Two sentences because they also
+    join old ones together. The two-sentence figure is scaled so it has to clear MERGED, not SAME."""
     if not tok:
         return 1.0
     seen: dict[int, int] = {}
     for w in tok:
         for i in index.get(w, ()):
             seen[i] = seen.get(i, 0) + 1
-    return max(seen.values(), default=0) / len(tok)
+    if not seen:
+        return 0.0
+    first = max(seen, key=seen.get)
+    one = seen[first] / len(tok)
+    rest = tok - pool[first]
+    more: dict[int, int] = {}
+    for w in rest:
+        for i in index.get(w, ()):
+            if i != first:
+                more[i] = more.get(i, 0) + 1
+    two = (seen[first] + max(more.values(), default=0)) / len(tok)
+    return max(one, two * SAME / MERGED if one >= 0.4 else 0.0)
 
 
 def _unmatched(a: list[str], b: list[str]) -> list[str]:
