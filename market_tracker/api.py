@@ -42,6 +42,22 @@ throttle = auth.Throttle()
 # ------------------------------------------------------------------ login (only when APP_PASSWORD is set)
 
 @app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    """Changes (orders, keys, settings) only from this app's own pages: a request another website
+    makes from your browser carries its own Origin and is refused."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        # The app's pages send X-Plumbline; a browser won't let another site add it without asking
+        # this app first (and this app never agrees), so it proves the request came from here,
+        # even behind a proxy (Tailscale, Fly) that changes the Host header.
+        if origin and not request.headers.get("x-plumbline"):
+            from urllib.parse import urlparse
+            if urlparse(origin).netloc != request.headers.get("host", ""):
+                return JSONResponse({"detail": "Refused: request from another site"}, status_code=403)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def require_login(request: Request, call_next):
     if auth.misconfigured() and request.url.path != "/healthz":
         return JSONResponse({"detail": "APP_PASSWORD is not set. Add it as a secret on your host, then restart."},
@@ -1161,6 +1177,218 @@ def trade_settings(body: TradeSettingsIn):
 def trade_log_view():
     with db.connect() as conn:
         return {"orders": trading.recent(conn), "settings": trading.settings(conn), "spent_today": trading.spent_today(conn)}
+
+
+# ------------------------------------------------------------------ auto-invest schedules, buy-the-dip, goals
+
+class ScheduleIn(BaseModel):
+    account: str = Field("Stash", min_length=1, max_length=40)
+    symbol: str = Field(..., min_length=1, max_length=20)
+    amount: float = Field(..., gt=0, le=1_000_000)
+    every: Literal["week", "2weeks", "month"] = "week"
+    day: int = Field(0, ge=0, le=28)
+    start: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/api/schedules")
+def schedules_view():
+    from . import schedules
+    with db.connect() as conn:
+        return [s.__dict__ for s in schedules.load(conn)]
+
+
+@app.post("/api/schedules")
+def schedule_add(body: ScheduleIn):
+    from . import schedules
+    if body.every == "month" and body.day < 1:
+        raise HTTPException(422, "For a monthly schedule, give the day of the month (1-28)")
+    if body.every != "month" and body.day > 6:
+        raise HTTPException(422, "For a weekly schedule, give the weekday (0 = Monday … 6 = Sunday)")
+    with db.connect() as conn:
+        schedules.add(conn, body.account.strip(), market.normalize_symbol(body.symbol), body.amount, body.every, body.day, body.start)
+        added = schedules.apply(conn, date.today(), schedules.close_on)
+        out = [s.__dict__ for s in schedules.load(conn)]
+    holdplan.clear_cache()
+    return {"schedules": out, "recorded": added}
+
+
+@app.delete("/api/schedules/{sid}")
+def schedule_delete(sid: int):
+    from . import schedules
+    with db.connect() as conn:
+        schedules.remove(conn, sid)
+        return [s.__dict__ for s in schedules.load(conn)]
+
+
+class TargetIn(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=20)
+    price: float = Field(..., gt=0, le=1e9)
+    note: str = Field("", max_length=200)
+
+
+@app.get("/api/buy-targets")
+def buy_targets_view():
+    from . import price_alerts
+    with db.connect() as conn:
+        rows = price_alerts.targets(conn)
+    for r in rows:
+        t = livefeed_price(r["symbol"])
+        r["now"] = t
+        r["gap_pct"] = round((t / r["price"] - 1) * 100, 1) if t else None
+    return rows
+
+
+def livefeed_price(sym: str) -> float | None:
+    try:
+        return market.get_live_quote(sym).price
+    except (http.DataUnavailable, KeyError, ValueError):
+        return None
+
+
+@app.post("/api/buy-targets")
+def buy_target_set(body: TargetIn):
+    from . import price_alerts
+    with db.connect() as conn:
+        price_alerts.set_target(conn, market.normalize_symbol(body.symbol), body.price, body.note.strip())
+    holdplan.clear_cache()
+    return buy_targets_view()
+
+
+@app.delete("/api/buy-targets/{symbol}")
+def buy_target_delete(symbol: str):
+    from . import price_alerts
+    with db.connect() as conn:
+        price_alerts.remove_target(conn, market.normalize_symbol(symbol))
+    holdplan.clear_cache()
+    return buy_targets_view()
+
+
+class GoalIn(BaseModel):
+    target: float = Field(..., gt=0, le=1e10)
+    year: int = Field(..., ge=2000, le=2100)
+    monthly: float = Field(0, ge=0, le=1e7)
+    mean: float = Field(0.07, ge=-0.2, le=0.3)
+    vol: float = Field(0.15, ge=0, le=1)
+
+
+@app.get("/api/goal")
+async def goal_view():
+    from . import goals
+    with db.connect() as conn:
+        raw = db.get_meta(conn, "goal", "")
+    if not raw:
+        return {"goal": None}
+    g = json.loads(raw)
+    plan = await _holdplan_data()
+    years = max(0, g["year"] - date.today().year)
+    return {"goal": g, "now_value": plan["base"],
+            "projection": goals.project(plan["base"], g["monthly"], years, g["target"], g.get("mean", 0.07), g.get("vol", 0.15))}
+
+
+@app.post("/api/goal")
+async def goal_set(body: GoalIn):
+    with db.connect() as conn:
+        db.set_meta(conn, "goal", json.dumps(body.model_dump()))
+    return await goal_view()
+
+
+# ------------------------------------------------------------------ vs the market, look-through, fees, statement check
+
+_analysis_cache = sentinel.Cache(1800)
+
+
+def _valued_positions() -> tuple[list[dict], list[dict]]:
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    return (service.portfolio_summary(txs, False)["positions"] if txs else []), txs
+
+
+@app.get("/api/benchmark")
+async def benchmark_view(symbol: str = Query("VOO", max_length=10)):
+    """Your gain against the same money put into one index fund on the same days."""
+    from . import benchmark
+
+    def run():
+        positions, txs = _valued_positions()
+        prices = {p["symbol"]: p["price"] for p in positions if p.get("price")}
+        return benchmark.build(txs, prices, market.normalize_symbol(symbol))
+    try:
+        key = ("bench", symbol, _ledger_key(), date.today().isoformat())
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
+def _ledger_key() -> tuple:
+    """Changes whenever a trade is added or removed (so cached analyses refresh)."""
+    with db.connect() as conn:
+        r = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS m FROM transactions").fetchone()
+        return (r["n"], r["m"])
+
+
+@app.get("/api/lookthrough")
+async def lookthrough_view():
+    """Your money in each company, directly and through the funds you own."""
+    from . import lookthrough
+
+    def run():
+        positions, _ = _valued_positions()
+        funds = {}
+        errors = []
+        for p in positions:
+            if market.asset_class(p["symbol"]) != "stock":
+                continue
+            try:
+                fd = lookthrough.holdings(p["symbol"])
+            except (http.DataUnavailable, ValueError, KeyError) as exc:
+                errors.append(f"{p['symbol']}: {str(exc)[:80]}")
+                continue
+            if fd:
+                funds[p["symbol"]] = fd
+        out = lookthrough.exposure(positions, funds)
+        out["errors"] = errors
+        return out
+    key = ("look", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+@app.get("/api/fees")
+async def fees_view():
+    from . import fees
+
+    def run():
+        positions, _ = _valued_positions()
+        return fees.build(positions)
+    key = ("fees", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+class StatementIn(BaseModel):
+    account: str = Field(..., min_length=1, max_length=40)
+    pdf_base64: str = Field(..., min_length=10, max_length=20_000_000)
+
+
+@app.post("/api/statement-check")
+def statement_check(body: StatementIn):
+    """Share counts on a statement PDF against the ledger for that account."""
+    import base64
+    from . import statement
+    try:
+        text = statement.text_of_pdf(base64.b64decode(body.pdf_base64))
+    except Exception as exc:  # noqa: BLE001 - any unreadable PDF is the same answer
+        raise HTTPException(400, f"Couldn't read that PDF: {str(exc)[:120]}")
+    with db.connect() as conn:
+        txs = db.list_transactions(conn)
+    ledger: dict[str, float] = {}
+    for t in txs:
+        if (t.get("account") or "") == body.account:
+            ledger[t["symbol"]] = ledger.get(t["symbol"], 0.0) + (t["quantity"] if t["side"] == "buy" else -t["quantity"])
+    known = {s.replace("-USD", "") for s in ledger}
+    found = statement.quantities(text, known)
+    found = {(s + "-USD" if s + "-USD" in ledger else s): q for s, q in found.items()}
+    out = statement.compare(found, {s: q for s, q in ledger.items() if q > 1e-9})
+    out["read"] = len(found)
+    return out
 
 
 @app.post("/api/sync/snaptrade/connect")

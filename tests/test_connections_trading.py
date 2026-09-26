@@ -216,3 +216,31 @@ def test_connection_endpoints(monkeypatch, tmp_path):
     s = c.post("/api/trade/settings", json={"enabled": True, "max_order": 100, "daily_limit": 300}).json()
     assert s == {"enabled": True, "max_order": 100.0, "daily_limit": 300.0}
     assert c.post("/api/trade/place", json={"venue": "coinbase", "symbol": "BTC", "side": "buy", "dollars": 10}).status_code == 400
+
+
+def test_a_key_that_does_not_load_is_a_clean_failure(monkeypatch):
+    def bad(*a, **k):
+        raise ValueError("Could not deserialize key data")
+    monkeypatch.setattr(coinbase_sync, "create_order", bad)
+    o = trading.Order("coinbase", "BTC-USD", "buy", dollars=20)
+    now = time.time()
+    token = trading.preview(o, TXS, None, CFG, 0, now=now, quote_fn=quote)["token"]
+    with db.connect() as conn:
+        db.set_meta(conn, "trading_enabled", "1")
+        with pytest.raises(trading.TradeError, match="Not sent"):
+            trading.place(o, token, conn, now=now + 1)
+        assert trading.recent(conn)[0]["status"] == "failed"
+
+
+def test_writes_from_another_site_are_refused(monkeypatch):
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    monkeypatch.delenv("REQUIRE_LOGIN", raising=False)
+    c = TestClient(api.app)
+    body = {"enabled": True, "max_order": 250, "daily_limit": 500}
+    r = c.post("/api/trade/settings", json=body, headers={"origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert c.post("/api/trade/settings", json=body, headers={"origin": "http://testserver"}).status_code == 200
+    assert c.post("/api/trade/settings", json=body).status_code == 200          # no Origin: same-origin or a script
+    assert c.get("/api/trade/log", headers={"origin": "https://evil.example"}).status_code == 200
+    # Behind a proxy the Host differs from the page's origin: the app's own header gets through.
+    assert c.post("/api/trade/settings", json=body, headers={"origin": "https://me.tail1234.ts.net", "x-plumbline": "1"}).status_code == 200

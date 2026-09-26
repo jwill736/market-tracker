@@ -262,9 +262,10 @@ def place(order: Order, token: str, conn, *, now: float | None = None, cb_send=N
             broker_id = res.get("id", "")
         else:
             raise TradeError("Stocks are placed in your broker's app; use the order ticket")
-    except (http.DataUnavailable, robinhood_crypto.RobinhoodError) as exc:
-        log(conn, order, est, "failed", "", {"error": str(exc)})
-        raise TradeError(str(exc))
+    except (http.DataUnavailable, robinhood_crypto.RobinhoodError, ValueError, TypeError) as exc:
+        # ValueError: a key that doesn't load (wrong format, or missing): nothing was sent.
+        log(conn, order, est, "failed", "", {"error": str(exc)[:300]})
+        raise TradeError(f"Not sent: {str(exc)[:200]}")
     log(conn, order, est, "placed", broker_id, res)
     return {"placed": True, "broker_order_id": broker_id, "venue": order.venue, "usd": round(est, 2),
             "note": "Sent. The trade shows up in your ledger at the next sync (within about 5 minutes)."}

@@ -250,22 +250,37 @@ minutes per portfolio) return the same data as JSON.
   with cost basis and reports balances the ledger can't explain), Stash and anything else (type holdings once), or
   **Automatic** sync through SnapTrade (below).
 
-### How each account reaches the app
+### How each account reaches the app (free, near real time)
 
-Home → **Accounts** shows each account's holdings and value, how its data gets here, and how fresh it is. Every
-symbol page says which accounts hold it ("Robinhood 40 · Stash 2").
+Connect them in **Portfolio → Connections**; no files to edit. Prices are live everywhere; your holdings follow within
+minutes of each trade:
 
-| Account | Today | Automatic option |
+| Account | How | How fast |
 |---|---|---|
-| Robinhood | Account-activity CSV (trades, splits, dividends, interest). Newer trades appear when you import again | SnapTrade (paid) |
-| Coinbase | Transaction CSV, or a free **View-only API key**: then it syncs itself every 6 hours | Built in (free key) |
-| Stash | Typed in by hand: Stash has no export or API. Auto-invest and reinvested dividends change it without telling the app, so update it after each statement | SnapTrade, if it supports Stash (check their list) |
+| Robinhood stocks | **Trade-confirmation emails**: the app reads only emails from robinhood.com, stash.com and coinbase.com in your inbox (IMAP with an app password, read-only) and adds each executed order | ~2 minutes after the email |
+| Robinhood crypto | **Robinhood Crypto API** (official, free). The app makes the key pair; you paste the public half into robinhood.com/account/crypto → API trading | every 5 minutes |
+| Coinbase | **Coinbase API key** (free; View permission, plus Trade if you want to place orders here) | every 5 minutes |
+| Stash | Trade emails, plus an **auto-invest schedule** ("$20 into VOO every Monday") the app records at each day's close, plus a **statement check** that compares a monthly PDF with the ledger | ~2 minutes / daily / monthly |
 
-Syncs that are set up run in the background (Coinbase every 6 hours, SnapTrade twice a day) and raise a heads-up
-when they bring in something new; a failed sync shows its error on the Accounts card.
+Why these routes: Robinhood (stocks) and Stash offer individuals no API, and tools that log in with your password and
+2FA break their terms and keep your broker password on disk. Emails the reader doesn't understand are listed on the
+Connections card (subject and date only) rather than guessed; the patterns cover Robinhood's "Your order to buy 10
+shares of AAPL … was executed at an average price of $150.25" and similar wording, and may need extending for your
+brokers' exact emails. A trade already in the ledger (CSV, another sync, or a schedule) isn't added twice.
 
-Robinhood's and Stash's own logins aren't used: neither offers an API for individuals, and tools that log in as you
-with your password and 2FA break the brokers' terms and put your account at risk.
+Home → **Accounts** shows each account's value, where its data comes from and how fresh it is; the morning brief says
+when an account's data has gone stale. Every symbol page says which accounts hold it ("Robinhood 40 · Stash 2").
+
+### Trading from the app
+
+Crypto orders go straight to Coinbase or Robinhood from any coin's **Trade** window: pick where to send it, **Preview**
+(the broker's own price and fees, plus wash-sale, tax and concentration warnings), then **Confirm**. Safety:
+
+- Off until you switch it on (Portfolio → Trading), with a per-order limit ($250) and a daily limit ($500) you set.
+- Confirming sends exactly the previewed order: the preview carries a one-time code that expires after 90 seconds.
+- Sells can't exceed what that account holds; every attempt, sent or refused, is in the trade log.
+- Stocks and funds open in Robinhood or Stash with the order ready (neither offers a stock API for individuals); the
+  confirmation email then brings the trade in.
 
 ### Automatic account sync (SnapTrade)
 
@@ -382,6 +397,24 @@ sizes long-term gains you could take at a **0% federal rate**: sell and buy stra
 (the wash-sale rule covers losses only). The 0% limits default to the 2026 IRS figures (single $49,450, married
 jointly $98,900, head of household $66,200); they change yearly, so the field is editable. Your state may still tax
 the gain.
+
+## Plan tools
+
+- **Five sections**: Home, Plan (Hold plan, Income, Strategy), Discover (Pulse, Early wire, People, Filing radar, Smart
+  money, Analyze, Deep dive, Dashboard, Track record), News (Your news, Reading room), Portfolio.
+- **vs the market** (Home): every dollar you put in goes, on the same day, into VOO in a shadow portfolio; every sale takes
+  the same dollars out. Your gain against that one, overall and per account.
+- **Buy-the-dip list** (Hold plan): a price you'd pay for a stock or coin you're watching. Your phone gets a push when it
+  gets there, and it goes to the top of where freed or new money goes.
+- **Price lines reach your phone**: your sell-below and take-some-off lines, and dip prices, are checked every 2 minutes
+  (one push per line per day).
+- **Goal** (Hold plan): "$X by year Y": bad, typical and good outcomes from thousands of simulated markets, the chance of
+  getting there, and the monthly amount that gives even odds.
+- **What your funds really hold** (Portfolio): your money in each company, directly and through your funds, from each
+  fund's latest SEC holdings report (N-PORT). SPY and DIA, unit trusts that don't file one, use a fund on the same index.
+- **What your funds cost** (Portfolio): each fund's expense ratio in dollars a year and over 30 years, and a cheaper fund
+  on the same index where one exists (switching means selling, so check the tax first).
+- **Auto-invest schedules and statement check** (Portfolio): see the accounts table above.
 
 ## Income (dividends)
 
@@ -504,6 +537,9 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 | `APP_PASSWORD` | Password for the private app. When set, every page and API call needs a login |
 | `APP_SECRET` | Optional: signs login sessions (defaults to one derived from the password) |
 | `REQUIRE_LOGIN` | Set to `1` on a server so the app refuses to serve until `APP_PASSWORD` is set |
+| `MAIL_USER`, `MAIL_APP_PASSWORD`, `MAIL_IMAP_HOST` | Set from Portfolio → Connections: reads broker trade-confirmation emails (read-only IMAP; Gmail needs an app password) |
+| `COINBASE_API_KEY_NAME`, `COINBASE_API_PRIVATE_KEY` | Set from Connections: Coinbase sync every 5 minutes; with the Trade permission, orders from the app |
+| `ROBINHOOD_CRYPTO_API_KEY`, `ROBINHOOD_CRYPTO_PRIVATE_KEY` | Set from Connections: Robinhood Crypto API (holdings, trades, orders) |
 | `SNAPTRADE_CLIENT_ID`, `SNAPTRADE_CONSUMER_KEY` | Optional: automatic, read-only account sync through SnapTrade (personal key) |
 | `SNAPTRADE_USER_ID`, `SNAPTRADE_USER_SECRET` | Only with a commercial SnapTrade key: the user it registered |
 

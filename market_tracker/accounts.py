@@ -311,12 +311,35 @@ def advice(a: dict, today: date) -> str:
     age = (today - date.fromisoformat(a["last_trade"])).days if a["last_trade"] else None
     srcs = set(a["sources"])
     if a["name"] == "Robinhood" or "Robinhood CSV" in srcs:
-        return ("Updated by importing Robinhood's account-activity CSV: trades after your last import aren't here until you "
-                "import again (or connect it through SnapTrade).")
+        return ("New trades aren't here until you import the CSV again. Connect your email (Portfolio → Connections) and "
+                "each trade's confirmation brings it in within minutes.")
     if a["name"] == "Coinbase":
-        return "From a Coinbase CSV. Add a View-only API key to .env and it syncs itself every 6 hours."
+        return "From a CSV. Connect Coinbase (Portfolio → Connections, free View key) and it syncs every 5 minutes."
     if "Typed in" in srcs or a["name"] == "Stash":
         stale = f" Last change {age} days ago." if age is not None and age > STALE_DAYS else ""
-        return ("Typed in by hand (Stash has no export or API). Auto-invest and dividend reinvesting change it without "
-                "telling this app: update it after each statement." + stale)
+        return ("Typed in by hand (Stash has no export or API). Connect your email so Stash's confirmations come in, or add your "
+                "auto-invest schedule; check it against each statement." + stale)
     return "Added by hand."
+
+
+def stale_notes(overview_rows: list[dict], today: date | None = None, days: int = STALE_DAYS) -> list[dict]:
+    """Accounts whose data has gone stale: nothing automatic keeps them current and nothing new
+    has come in for `days` days. Shown in the morning brief with where to fix it."""
+    today = today or date.today()
+    out = []
+    for a in overview_rows:
+        if a.get("auto") and not (a["auto"].get("partial") and a["name"] == "Robinhood"):
+            last = a["auto"].get("last")
+            if last and not last.get("ok"):
+                out.append({"account": a["name"], "text": f"{a['name']}: the automatic sync is failing ({last.get('error')})"})
+            continue
+        if not a.get("last_trade") or not a.get("positions"):
+            continue
+        age = (today - date.fromisoformat(a["last_trade"])).days
+        if age < days:
+            continue
+        how = ("import the Robinhood CSV again, or connect your email" if a["name"] == "Robinhood" else
+               "check it against your latest statement, or connect your email / set its auto-invest schedule" if a["name"] == "Stash" else
+               "update it")
+        out.append({"account": a["name"], "text": f"{a['name']} hasn't changed in {age} days: {how} (Portfolio → Connections)"})
+    return out

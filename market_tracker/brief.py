@@ -149,7 +149,17 @@ def gather(today: date | None = None, now: datetime | None = None) -> dict:
             crypto = sentinel.crypto_cache.get(coins, lambda: cryptoradar.build(list(coins), now))
         except (http.DataUnavailable, ValueError, KeyError):
             crypto = None
-    return compose(today=today, plan=plan, quotes=quotes, early_data=early_data, crypto=crypto, now=now)
+    out = compose(today=today, plan=plan, quotes=quotes, early_data=early_data, crypto=crypto, now=now)
+    # Data that's gone stale makes every other line less true: say so, at the end.
+    try:
+        from . import accounts, db
+        with db.connect() as conn:
+            rows = accounts.overview(db.list_transactions(conn), db.income(conn), today)
+        for n in accounts.stale_notes(rows, today):
+            out["lines"].append({"section": "Your data", "text": n["text"], "level": 1, "symbol": ""})
+    except Exception:  # noqa: BLE001 - the brief never fails because of this
+        pass
+    return out
 
 
 def due(now: datetime, last_sent: str) -> bool:

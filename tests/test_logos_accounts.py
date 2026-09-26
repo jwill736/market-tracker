@@ -85,11 +85,11 @@ def test_overview_per_account(monkeypatch):
     got = {a["name"]: a for a in accounts.overview(txs, inc, date(2026, 9, 25))}
     rh = got["Robinhood"]
     assert rh["positions"] == [{"symbol": "AAPL", "quantity": 5, "cost": 500.0}] and rh["income_12m"] == 1.3
-    assert rh["sources"] == {"Robinhood CSV": 2} and "import again" in rh["advice"]
+    assert rh["sources"] == {"Robinhood CSV": 2} and "import the CSV again" in rh["advice"]
     st = got["Stash"]
     assert {p["symbol"] for p in st["positions"]} == {"VOO", "AAPL"} and st["sources"] == {"Typed in": 1, "Added by hand": 1}
     assert "Stash has no export" in st["advice"]
-    assert "View-only API key" in got["Coinbase"]["advice"]
+    assert "free View key" in got["Coinbase"]["advice"]
 
 
 def test_auto_sync_runs_when_due_and_records(monkeypatch):

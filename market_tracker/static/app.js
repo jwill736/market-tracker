@@ -13,7 +13,8 @@ const cls = (x) => x == null ? "" : x > 0 ? "up" : x < 0 ? "down" : "";
 const arrow = (x) => x == null ? "" : x > 0 ? "▲ " : x < 0 ? "▼ " : "";
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  // X-Plumbline marks requests from the app's own pages (other sites can't add it).
+  const res = await fetch(path, { headers: { "Content-Type": "application/json", "X-Plumbline": "1" }, ...opts });
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail || msg; } catch (_) { /* not JSON */ }
@@ -55,13 +56,27 @@ const hideTip = () => { tooltip.hidden = true; };
 // ---------------------------------------------------------------- tabs
 const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
-document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(btn.dataset.tab)));
+// Five sections; Plan, Discover and News hold several pages, shown as a second row.
+const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
+  news: ["mynews", "reading"], portfolio: ["portfolio"] };
+const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
+const lastPage = {};
+document.querySelectorAll("#tabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(lastPage[btn.dataset.group] || GROUP_PAGES[btn.dataset.group][0])));
+document.querySelectorAll("#subtabs button").forEach((btn) => btn.addEventListener("click", () => selectTab(btn.dataset.tab)));
 function selectTab(name) {
-  document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
-  const cur = document.querySelector(`#tabs button[data-tab="${name}"]`);
-  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });   // keeps the chosen tab visible in the phone's scrolling row
+  const group = groupOf(name);
+  if (group) {
+    lastPage[group] = name;
+    document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.group === group)));
+    const subs = document.querySelectorAll("#subtabs button");
+    subs.forEach((b) => { b.hidden = b.dataset.group !== group; b.setAttribute("aria-current", String(b.dataset.tab === name)); });
+    $("#subtabs").hidden = GROUP_PAGES[group].length < 2;
+    $("#subtabs").dataset.page = name;
+    const cur = document.querySelector(`#subtabs button[data-tab="${name}"]`);
+    if (cur && !cur.hidden) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
-  if (name === "portfolio") { loadPortfolio(); loadConnections(); }
+  if (name === "portfolio") { loadPortfolio(); loadConnections(); loadSchedules(); }
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") loadJournal();
   if (name === "pulse") loadPulse();
@@ -69,7 +84,7 @@ function selectTab(name) {
   if (name === "home") loadHome();
   if (name === "early") loadEarly();
   if (name === "people") { loadPeople(); loadPickers(); }
-  if (name === "hold") loadHold();
+  if (name === "hold") { loadHold(); loadTargets(); loadGoal(); }
   if (name === "income") loadIncome();
   if (name === "mynews") { loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
@@ -889,6 +904,124 @@ $("#st-sync").addEventListener("click", async () => {
     loadPortfolio(); loadHoldings();
   } catch (err) { out.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 });
+// ---------------------------------------------------------------- vs the market (Home)
+async function loadBenchmark() {
+  let d;
+  try { d = await api("/api/benchmark"); } catch (err) { $("#bm-body").textContent = err.message; return; }
+  const o = d.overall;
+  if (!o) { $("#bm-body").innerHTML = `<p class="muted">Import your accounts to compare.</p>`; return; }
+  const line = (name, r) => `<div class="bm-row"><span>${esc(name)}</span><span class="${cls(r.gain)}">${fmtMoney(r.gain, 0)}</span>
+    <span class="muted">${esc(d.benchmark)} ${fmtMoney(r.bench_gain, 0)}</span><b class="${cls(r.ahead)}">${r.ahead >= 0 ? "ahead" : "behind"} ${fmtMoney(Math.abs(r.ahead), 0)}</b></div>`;
+  $("#bm-meta").textContent = `since ${o.since}`;
+  $("#bm-body").innerHTML = `<p>${o.ahead >= 0 ? "You're ahead of" : "You're behind"} putting the same money into ${esc(d.benchmark)} on the same days by
+      <b class="${cls(o.ahead)}">${fmtMoney(Math.abs(o.ahead), 0)}</b>.</p>
+    <div class="bm-rows"><div class="bm-row muted small"><span></span><span>You</span><span>Same money in ${esc(d.benchmark)}</span><span></span></div>
+    ${Object.entries(d.accounts).map(([a, r]) => line(a, r)).join("")}${line("All", o)}</div>
+    ${o.unpriced.length ? `<p class="muted small">No price for ${o.unpriced.map(esc).join(", ")}: counted as $0.</p>` : ""}`;
+}
+
+// ---------------------------------------------------------------- buy-the-dip list and goal (Hold plan)
+async function loadTargets() {
+  try {
+    const rows = await api("/api/buy-targets");
+    $("#bt-list").innerHTML = rows.map((r) => `<li>${tick(r.symbol)} at <b>${fmtMoney(r.price)}</b>
+      <span class="small ${r.now != null && r.now <= r.price ? "up" : "muted"}">${r.now != null ? `now ${fmtMoney(r.now)} (${r.gap_pct > 0 ? r.gap_pct + "% above" : "at your price"})` : ""}</span>
+      ${r.note ? `<span class="muted small">${esc(r.note)}</span>` : ""} <button type="button" class="ghost small" data-bt-del="${esc(r.symbol)}">Remove</button></li>`).join("")
+      || `<li class="muted">Nothing yet. Add a stock you'd like to own at a lower price.</li>`;
+    document.querySelectorAll("[data-bt-del]").forEach((b) => b.addEventListener("click", async () => { await api("/api/buy-targets/" + encodeURIComponent(b.dataset.btDel), { method: "DELETE" }); loadTargets(); }));
+  } catch (err) { $("#bt-list").innerHTML = `<li class="muted">${esc(err.message)}</li>`; }
+}
+$("#bt-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("/api/buy-targets", { method: "POST", body: JSON.stringify({ symbol: $("#bt-sym").value.trim(), price: +$("#bt-price").value, note: $("#bt-note").value.trim() }) });
+    $("#bt-sym").value = ""; $("#bt-price").value = ""; $("#bt-note").value = ""; loadTargets(); }
+  catch (err) { alert(err.message); }
+});
+function paintGoal(d) {
+  if (!d.goal) { $("#gl-out").innerHTML = `<p class="muted">Set a goal to see the range of outcomes.</p>`; $("#gl-year").value = new Date().getFullYear() + 20; return; }
+  $("#gl-target").value = d.goal.target; $("#gl-year").value = d.goal.year; $("#gl-monthly").value = d.goal.monthly;
+  const p = d.projection;
+  $("#gl-meta").textContent = `${Math.round(p.chance * 100)}% chance`;
+  $("#gl-out").innerHTML = `<p>From ${fmtMoney(d.now_value, 0)} today, adding ${fmtMoney(d.goal.monthly, 0)} a month for ${p.years} years:</p>
+    <div class="tax-sums"><div><span class="muted small">Bad markets</span><b>${fmtMoney(p.bad, 0)}</b></div>
+      <div><span class="muted small">Typical</span><b>${fmtMoney(p.typical, 0)}</b></div><div><span class="muted small">Good markets</span><b>${fmtMoney(p.good, 0)}</b></div></div>
+    <p><b>${Math.round(p.chance * 100)}%</b> chance of reaching ${fmtMoney(p.target, 0)}.
+      ${p.monthly_for_even_odds != null ? `About ${fmtMoney(p.monthly_for_even_odds, 0)} a month gives even odds in a typical market.` : ""}</p>
+    <p class="muted small">Simulated with ${Math.round(p.assumptions.mean * 100)}% average growth and ${Math.round(p.assumptions.vol * 100)}% yearly swings, before inflation. A range, not a promise.</p>`;
+}
+async function loadGoal() { try { paintGoal(await api("/api/goal")); } catch (err) { $("#gl-out").textContent = err.message; } }
+$("#gl-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { paintGoal(await api("/api/goal", { method: "POST", body: JSON.stringify({ target: +$("#gl-target").value, year: +$("#gl-year").value, monthly: +$("#gl-monthly").value || 0 }) })); }
+  catch (err) { $("#gl-out").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- schedules, statement check, look-through, fees (Portfolio)
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+function paintScDays() {
+  const monthly = $("#sc-every").value === "month";
+  $("#sc-day").innerHTML = monthly ? Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}">on day ${i + 1}</option>`).join("")
+    : WEEKDAYS.slice(0, 5).map((w, i) => `<option value="${i}">on ${w}</option>`).join("");
+}
+$("#sc-every").addEventListener("change", paintScDays); paintScDays();
+async function loadSchedules() {
+  if (!$("#sc-start").value) $("#sc-start").value = localDate();
+  try {
+    const rows = await api("/api/schedules");
+    $("#sc-list").innerHTML = rows.map((r) => `<li>${esc(r.account)}: <b>${fmtMoney(r.amount, 2)}</b> into ${tick(r.symbol)}
+      ${r.every === "month" ? `every month on day ${r.day}` : `every ${r.every === "week" ? "" : "2 "}week${r.every === "week" ? "" : "s"} on ${WEEKDAYS[r.day]}`} since ${esc(r.start)}
+      <button type="button" class="ghost small" data-sc-del="${r.id}">Remove</button></li>`).join("") || `<li class="muted">No schedules.</li>`;
+    document.querySelectorAll("[data-sc-del]").forEach((b) => b.addEventListener("click", async () => { await api("/api/schedules/" + b.dataset.scDel, { method: "DELETE" }); loadSchedules(); }));
+  } catch { /* optional */ }
+}
+$("#sc-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api("/api/schedules", { method: "POST", body: JSON.stringify({ account: $("#sc-acct").value, symbol: $("#sc-sym").value.trim(), amount: +$("#sc-amt").value,
+      every: $("#sc-every").value, day: +$("#sc-day").value, start: $("#sc-start").value }) });
+    $("#sc-sym").value = ""; $("#sc-amt").value = "";
+    loadSchedules(); if (r.recorded.length) { loadHoldings(); alert(`Recorded ${r.recorded.length} past buy(s) from this schedule.`); }
+  } catch (err) { alert(err.message); }
+});
+$("#st-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = $("#st-file").files[0]; if (!f) return;
+  $("#st-out").innerHTML = `<p class="muted">Reading the statement…</p>`;
+  const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(f); });
+  try {
+    const r = await api("/api/statement-check", { method: "POST", body: JSON.stringify({ account: $("#st-acct").value, pdf_base64: b64 }) });
+    const li = (x, t) => `<li>${tick(x.symbol)} ${t}</li>`;
+    $("#st-out").innerHTML = `<p>Read ${r.read} holdings from the statement. ${r.match.length} match.</p>
+      ${r.differences.length ? `<p><b>Different</b> (fix with Stash / other):</p><ul class="hp-lines">${r.differences.map((x) => li(x, `statement ${x.statement} · ledger ${x.ledger}`)).join("")}</ul>` : ""}
+      ${r.not_in_ledger.length ? `<p><b>On the statement, not in the ledger</b>:</p><ul class="hp-lines">${r.not_in_ledger.map((x) => li(x, `${x.statement}`)).join("")}</ul>` : ""}
+      ${r.not_on_statement.length ? `<p><b>In the ledger, not found on the statement</b> (sold, or not read):</p><ul class="hp-lines">${r.not_on_statement.map((x) => li(x, `${x.ledger}`)).join("")}</ul>` : ""}
+      ${!r.differences.length && !r.not_in_ledger.length && !r.not_on_statement.length ? `<p class="up">Everything matches.</p>` : ""}`;
+  } catch (err) { $("#st-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+$("#lt-load").addEventListener("click", async () => {
+  $("#lt-out").innerHTML = `<p class="muted">Reading your funds' holdings reports…</p>`;
+  try {
+    const d = await api("/api/lookthrough");
+    const cap = holdState.data ? holdState.data.cap : 0.2;
+    $("#lt-out").innerHTML = `${d.funds.length ? `<p class="muted">${d.funds.map((f) => `${esc(f.symbol)}${f.source !== f.symbol ? ` (via ${esc(f.source)})` : ""} as of ${esc(f.period)}`).join(" · ")}</p>` : `<p class="muted">You don't hold any funds, so this is just your stocks.</p>`}
+      <table class="data"><thead><tr><th>Company</th><th class="num">Your money</th><th class="num">Share</th><th>How</th></tr></thead><tbody>
+      ${d.top.slice(0, 20).map((r) => `<tr class="${r.weight > cap ? "warn-row" : ""}"><td>${r.symbol.length <= 6 ? tick(r.symbol) : esc(r.name)}</td><td class="num">${fmtMoney(r.value, 0)}</td>
+        <td class="num">${(r.weight * 100).toFixed(1)}%</td><td class="muted">${Object.entries(r.via).map(([k, v]) => `${esc(k)} ${fmtMoney(v, 0)}`).join(" + ")}</td></tr>`).join("")}</tbody></table>
+      ${d.errors.length ? `<p class="muted small">${d.errors.map(esc).join("; ")}</p>` : ""}`;
+  } catch (err) { $("#lt-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+$("#fe-load").addEventListener("click", async () => {
+  $("#fe-out").innerHTML = `<p class="muted">Looking up expense ratios…</p>`;
+  try {
+    const d = await api("/api/fees");
+    $("#fe-out").innerHTML = d.funds.length ? `<p>Your funds cost about <b>${fmtMoney(d.per_year, 0)} a year</b>.</p><ul class="hp-lines">${d.funds.map((f) => `<li>${tick(f.symbol)}
+        ${(f.expense_ratio * 100).toFixed(2)}% = <b>${fmtMoney(f.per_year, 2)}</b> a year <span class="muted small">(${fmtMoney(f.drag_30y, 0)} over 30 years at 7%)</span>
+        ${f.cheaper.map((c) => `<div class="small">Same index: <b>${esc(c.symbol)}</b> at ${(c.expense_ratio * 100).toFixed(2)}% saves ${fmtMoney(c.saves_per_year, 2)} a year, about ${fmtMoney(c.saves_30y, 0)} over 30 years
+          <span class="muted">(switching means selling: check the tax first)</span></div>`).join("")}</li>`).join("")}</ul>`
+      : `<p class="muted">No funds with an expense ratio among your holdings.</p>`;
+  } catch (err) { $("#fe-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
 // ---------------------------------------------------------------- connections and trading settings
 function lastLine(l) {
   if (!l) return "not run yet";
@@ -1172,7 +1305,7 @@ setInterval(paintClock, 1000);
 paintClock();
 
 // Lists that aren't prices refresh themselves while their tab is open.
-const currentTab = () => document.querySelector('#tabs [aria-selected="true"]')?.dataset.tab;
+const currentTab = () => [...document.querySelectorAll(".tab")].find((t) => !t.hidden)?.id.replace(/^tab-/, "");
 setInterval(() => {
   if (document.hidden) return;
   const tab = currentTab(), now = Date.now();
@@ -1606,7 +1739,7 @@ function renderAccounts() {
       : a.last_trade ? `latest trade ${a.last_trade}` : "";
     const action = a.name === "Coinbase" && acctData.connections.coinbase_api ? `<button type="button" class="ghost small" data-acct-sync="coinbase">Sync now</button>`
       : a.auto && a.auto.how.startsWith("SnapTrade") ? `<button type="button" class="ghost small" data-acct-sync="snaptrade">Sync now</button>`
-      : `<button type="button" class="ghost small" data-acct-import="${esc(a.name === "Robinhood" ? "robinhood" : a.name === "Coinbase" ? "coinbase" : "holdings")}">Update</button>`;
+      : `<button type="button" class="ghost small" data-acct-import="${esc(a.name === "Robinhood" ? "robinhood" : a.name === "Coinbase" ? "coinbase" : "holdings")}">Connect</button>`;
     return `<div class="acct-row">
       <div class="acct-top"><span class="acct-badge acct-${ICON[a.name] || "other"}">${esc(a.name.slice(0, 1))}</span><b>${esc(a.name)}</b>
         <span class="acct-value">${fmtMoney(value, 0)}${priced ? "" : "*"}</span></div>
@@ -1619,6 +1752,10 @@ function renderAccounts() {
   $("#home-acct-meta").textContent = acctData.connections.snaptrade ? "SnapTrade connected" : "";
   document.querySelectorAll("[data-acct-import]").forEach((b) => b.addEventListener("click", () => {
     selectTab("portfolio");
+    // Connecting beats re-importing: open the account's connection first.
+    const cx = { robinhood: "#cx-email", coinbase: "#cx-coinbase", holdings: "#cx-email" }[b.dataset.acctImport];
+    const el = cx && $(cx);
+    if (el) { el.open = true; setTimeout(() => el.scrollIntoView({ block: "center" }), 50); return; }
     const seg = document.querySelector(`#imp-seg button[data-src="${b.dataset.acctImport}"]`);
     if (seg) { seg.click(); seg.scrollIntoView({ block: "center" }); }
   }));
@@ -1643,6 +1780,7 @@ function renderHomeLists() {
   bindLive("home", $("#tab-home"));
   if (!acctData || Date.now() - (acctData._at || 0) > 60000) loadAccounts().then(() => { if (acctData) acctData._at = Date.now(); });
   else renderAccounts();
+  if (!window._bmAt || Date.now() - window._bmAt > 600000) { window._bmAt = Date.now(); loadBenchmark(); }
   const syms = [...new Set([...holdingsList.map((h) => h.symbol), ...watchlist])];
   if (syms.length && Date.now() - homeState.sparksAt > 120000) {
     homeState.sparksAt = Date.now();
