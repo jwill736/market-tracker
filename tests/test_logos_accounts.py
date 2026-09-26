@@ -111,7 +111,8 @@ def test_auto_sync_runs_when_due_and_records(monkeypatch):
     monkeypatch.setitem(accounts.SYNCS, "coinbase", (lambda: True, boom))
     accounts.auto_sync(now + timedelta(hours=20))
     assert accounts.last_sync("coinbase") == {"at": (now + timedelta(hours=20)).isoformat(), "ok": False, "new": 0,
-                                              "income_new": 0, "differences": 0, "error": "Coinbase: 401"}
+                                              "income_new": 0, "differences": 0, "error": "Coinbase: 401",
+                                              "fail_since": (now + timedelta(hours=20)).isoformat()}
 
 
 def test_endpoints(monkeypatch):
