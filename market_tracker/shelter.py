@@ -101,7 +101,8 @@ def view(st: dict, accounts: list[str], positions: list[dict], income_12m: dict[
                                       "rather than here (don't sell to move it; that would realize the gain)."})
     ira = room[0]
     if untagged and len(untagged) == len(rows):
-        text = "Tell Plumbline which of your accounts are tax-sheltered (below): for most people that matters more than any stock pick."
+        text = ("Tell Plumbline which of your accounts are tax-sheltered (Accounts → Tax-sheltered accounts): for most people that "
+                "matters more than any stock pick.")
     elif untagged and not kinds & SHELTERED:
         text = f"Still to say what {', '.join(untagged)} {'is' if len(untagged) == 1 else 'are'}: then the app can tell whether you have any tax-sheltered room."
     elif not kinds & SHELTERED and not untagged:

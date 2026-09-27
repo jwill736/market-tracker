@@ -323,16 +323,22 @@ def decisions_daily(now: datetime | None = None, gather_fn=None) -> int:
         if db.get_meta(conn, "decisions_day", "") == day.isoformat():
             return 0
         db.set_meta(conn, "decisions_day", day.isoformat())
+    from . import golive
     items = (gather_fn or decisions.gather)(day)
     with db.connect() as conn:
         visible = decisions.sync(conn, items, day)
-        advice.record(conn, day.isoformat(), decisions.advice_items(visible), lambda s: market.get_quote(s).price)
+        settle = golive.settling(golive.live_since(conn, bool(db.ledger(conn)), day), day)
+        if not settle["settling"]:
+            advice.record(conn, day.isoformat(), decisions.advice_items(visible), lambda s: market.get_quote(s).price)
+    new = len([d for d in visible if d.get("new")])
+    if settle["settling"]:                          # first weeks: only connection and data problems are pushed
+        visible = [d for d in visible if d["kind"] in golive.ALWAYS_PUSH]
     msg = decisions.push_text(visible)
     if msg:
         from . import auth
         acts = decisions.push_actions(visible, os.environ.get("PLUMBLINE_URL", ""), auth.sign_action)
         notify.send(notify.Message(title=msg[0], body=msg[1], priority=4, tags=("compass",), actions=acts))
-    return len([d for d in visible if d.get("new")])
+    return new
 
 
 def letter_weekly(now: datetime | None = None, write_fn=None) -> int:
@@ -378,8 +384,10 @@ def scorecard_monthly(now: datetime | None = None, card_fn=None) -> int:
         if db.get_meta(conn, "scorecard_month", "") == month:
             return 0
         db.set_meta(conn, "scorecard_month", month)
+        from . import golive
+        since = golive.record_start(db.get_meta(conn, "live_since", "") or None)
         card = (card_fn or (lambda c: decisions.scorecard(c, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)],
-                                                          now.date(), cash.tbill_yield()[0])))(conn)
+                                                          now.date(), cash.tbill_yield()[0], since)))(conn)
     if not card["followed"] and not card["skipped"]:
         return 0
     base = os.environ.get("PLUMBLINE_URL", "").rstrip("/")

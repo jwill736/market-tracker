@@ -194,12 +194,14 @@ def _close_on_or_after(bars: list[tuple[str, float]], day: str) -> float | None:
     return None
 
 
-def scorecard(conn, history_fn, today: date, cash_yield: float = 0.04) -> dict:
+def scorecard(conn, history_fn, today: date, cash_yield: float = 0.04, since: str | None = None) -> dict:
     """history_fn(symbol) -> [(date, close)] oldest first. Every call you approved or skipped, scored
-    from the day you decided at 1, 3 and 12 months: points and dollars against doing nothing."""
+    from the day you decided at 1, 3 and 12 months: points and dollars against doing nothing.
+    since: calls decided before this day (the settling-in weeks, golive.py) don't count."""
     from .advice import BENCH
     conn.executescript(SCHEMA)
-    rows = [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE status IN ('approved', 'done', 'skipped') AND decided != ''")]
+    rows = [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE status IN ('approved', 'done', 'skipped') AND decided != ''")
+            if not since or r["decided"] >= since]
     cache: dict[str, list] = {}
 
     def bars(sym):
@@ -242,7 +244,7 @@ def scorecard(conn, history_fn, today: date, cash_yield: float = 0.04) -> dict:
         summary[g] = {h: {"n": len(v), "avg_edge": round(sum(e for e, _ in v) / len(v) * 100, 2) if v else None,
                           "helped_pct": round(sum(e > 0 for e, _ in v) / len(v) * 100) if v else None,
                           "dollars": round(sum(d for _, d in v), 2), "enough": len(v) >= SCORE_MIN} for h, v in by_h.items()}
-    out = {"summary": summary, "items": sorted(items, key=lambda x: x["decided"], reverse=True), "harvest_saved": round(saved, 2),
+    out = {"summary": summary, "items": sorted(items, key=lambda x: x["decided"], reverse=True), "harvest_saved": round(saved, 2), "since": since,
            "followed": sum(1 for r in rows if r["status"] in FOLLOWED), "skipped": sum(1 for r in rows if r["status"] == "skipped"),
            "min": SCORE_MIN}
     out["text"] = scorecard_text(out)
@@ -374,8 +376,14 @@ def gather(today: date | None = None) -> list[dict]:
         automate = recurring.plan(txs, scheds, today, idle)["suggest"]
     except Exception:  # noqa: BLE001 - the rest of the decisions don't wait on these
         pass
-    return build(plan, reviews=reviews, idle_cash=idle, health=health.problems(), freshness=freshness.check(today),
-                 optional=optional, bottom_note=note, today=today, shelter=shelter_d, automate=automate)
+    items = build(plan, reviews=reviews, idle_cash=idle, health=health.problems(), freshness=freshness.check(today),
+                  optional=optional, bottom_note=note, today=today, shelter=shelter_d, automate=automate)
+    from . import confidence, golive
+    try:
+        tr = golive.trust(confidence.current())
+    except Exception:  # noqa: BLE001 - can't check the numbers: don't act on them
+        tr = {"trusted": False, "text": "Couldn't check your holdings against your brokers just now; money decisions wait until it can."}
+    return golive.gate(items, tr, today)
 
 
 def spin_note() -> str:

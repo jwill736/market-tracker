@@ -3187,12 +3187,22 @@ async function loadHomeDecisions() {
   $("#hd-meta").textContent = open.length ? `${open.length} open` : "all decided";
   $("#hd-list").innerHTML = open.slice(0, 3).map((d) => decisionHtml(d, true)).join("") || `<p class="muted">Nothing open. Holding is the plan.</p>`;
   wireDecisions($("#hd-list"), r.decisions, loadHomeDecisions);
+  loadWorth();
+}
+async function loadWorth() {
+  try {
+    const w = await api("/api/worth");
+    $("#hd-worth").hidden = false;
+    $("#hd-worth").innerHTML = `<b>Is Plumbline worth it?</b> ${esc(w.text)}`;
+  } catch { $("#hd-worth").hidden = true; }
 }
 $("#hd-all").addEventListener("click", () => selectTab("decisions"));
 async function loadDecisions() {
   let r;
   try { r = await api("/api/decisions"); } catch (err) { $("#dc-list").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
   $("#dc-meta").textContent = `updated ${String(r.as_of).replace("T", " ")}:00`;
+  $("#dc-settle").hidden = !(r.settling && r.settling.settling && r.settling.since);
+  if (r.settling) $("#dc-settle").textContent = r.settling.text;
   $("#dc-list").innerHTML = r.decisions.map((d) => decisionHtml(d, false)).join("") || `<p class="muted">Nothing open.</p>`;
   wireDecisions($("#dc-list"), r.decisions, loadDecisions);
   if (pendingDo) {                     // opened from a push's "Do it" button
