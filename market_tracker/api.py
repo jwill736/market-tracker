@@ -2046,6 +2046,152 @@ async def tenk_most_changed(n: int = Query(25, ge=1, le=100)):
     return {"as_of": data.get("as_of"), "universe": data.get("universe"), "companies": tenkrank.most_changed(data, n)}
 
 
+# ------------------------------------------------------------------ what to buy: idea log, screen, sleepers, chatter, money flow, economy
+
+@app.get("/api/ideas")
+async def ideas_view():
+    """Every logged idea, scored against VOO at 3, 6 and 12 months, and the leaderboard by kind."""
+    from . import ideas
+    today = date.today()
+
+    def run():
+        with db.connect() as conn:
+            rows = ideas.logged(conn)
+        return dict(ideas.score(rows, lambda s: _closes(s, 800), today), sources=ideas.SOURCES)
+    with db.connect() as conn:
+        conn.executescript(ideas.SCHEMA)
+        n = conn.execute("SELECT COUNT(*), COALESCE(MAX(id), 0), SUM(decision != '') FROM ideas").fetchone()
+    return await asyncio.to_thread(_analysis_cache.get, ("ideas", tuple(n), today.isoformat()), run)
+
+
+class IdeaIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=3, max_length=300)
+    wrong_if: str = Field(default="", max_length=200)
+
+
+@app.post("/api/ideas", status_code=201)
+def add_idea(body: IdeaIn):
+    """Log your own idea at today's price, to be scored like the app's."""
+    from . import ideas
+    sym = market.normalize_symbol(body.symbol)
+    try:
+        price = market.get_quote(sym).price
+    except (http.DataUnavailable, KeyError, ValueError):
+        raise HTTPException(502, f"No price for {sym}.")
+    with db.connect() as conn:
+        n = ideas.log(conn, date.today().isoformat(), [{"symbol": sym, "source": "manual", "price": price, "reason": body.reason,
+                                                        "wrong_if": body.wrong_if}])
+    if not n:
+        raise HTTPException(409, f"{sym} is already logged as your idea this month.")
+    return {"logged": sym, "price": price}
+
+
+class DecisionIn(BaseModel):
+    decision: Literal["bought", "passed"]
+
+
+@app.post("/api/ideas/{idea_id}/decision")
+def idea_decision(idea_id: int, body: DecisionIn):
+    from . import ideas
+    with db.connect() as conn:
+        if not ideas.decide(conn, idea_id, body.decision, date.today().isoformat()):
+            raise HTTPException(409, "Already decided (a decision can be recorded once).")
+    return {"id": idea_id, "decision": body.decision}
+
+
+@app.get("/api/screen")
+async def screen_view():
+    """The weekly quality, value and momentum screen and the backlog screen."""
+    from . import screen
+    data = await asyncio.to_thread(screen.load)
+    if not data:
+        raise HTTPException(503, "The weekly screen hasn't run yet (the 'Stock screen' job fills it).")
+    return {k: v for k, v in data.items() if k != "lookup"}
+
+
+@app.get("/api/priced-in/{symbol}")
+async def priced_in_view(symbol: str):
+    """Is it already priced in? Valuation against its own history, run-up, dilution, crowded themes."""
+    from . import hype, screen
+    sym = market.normalize_symbol(symbol)
+
+    def run():
+        try:
+            hype.themes()
+        except http.DataUnavailable:
+            pass
+        return hype.for_symbol(sym, screen.load())
+    return await asyncio.to_thread(_analysis_cache.get, ("pricedin", sym, date.today().isoformat()), run)
+
+
+@app.get("/api/themes")
+async def themes_view():
+    """How crowded each popular theme is: new fund registrations mentioning it, last 6 months vs the 6 before."""
+    from . import hype
+    try:
+        return {"themes": await asyncio.to_thread(hype.themes)}
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"SEC full-text search: {exc}")
+
+
+@app.get("/api/macro")
+async def macro_view():
+    """The economy panel: rates, credit spreads, recession gauges, oil, orders; and how fast to put new money in."""
+    from . import macro
+    try:
+        return await asyncio.to_thread(macro.build)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"FRED: {exc}")
+
+
+@app.get("/api/moneyflow")
+async def moneyflow_view():
+    """Spending waves and who gets paid, and small suppliers that haven't followed a big customer's move."""
+    from . import idealab
+    return await asyncio.to_thread(_analysis_cache.get, ("moneyflow", date.today().isoformat()), idealab.money_flow)
+
+
+@app.get("/api/contracts/{symbol}")
+async def contracts_view(symbol: str):
+    """Federal contract money obligated to the company over the last year, against its revenue."""
+    from . import idealab
+    sym = market.normalize_symbol(symbol)
+    if market.asset_class(sym) != "stock":
+        raise HTTPException(404, "Only companies get federal contracts.")
+    try:
+        return await asyncio.to_thread(idealab.contracts_for, sym)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/sleepers")
+async def sleepers_view():
+    """Small and mid caps where several pieces of evidence line up and few are watching."""
+    from . import discover, idealab
+
+    def run():
+        out = idealab.sleepers()
+        positions, _ = _valued_positions()
+        from . import ideas
+        with db.connect() as conn:
+            spec = {r["symbol"] for r in ideas.logged(conn) if r["source"] in ("sleeper", "chatter") and r["decision"] == "bought"}
+        return dict(out, bucket=discover.bucket(positions, spec))
+    return await asyncio.to_thread(_analysis_cache.get, ("sleepers", _ledger_key(), date.today().isoformat()), run)
+
+
+@app.get("/api/chatter")
+async def chatter_view():
+    """What Reddit and StockTwits are talking about, with the warnings next to each name."""
+    from . import idealab
+    return await asyncio.to_thread(_analysis_cache.get, ("chatter", datetime_hour()), idealab.chatter)
+
+
+def datetime_hour() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%dT%H")
+
+
 # ------------------------------------------------------------------ earnings recap, dividend safety, style bets, weekly recap
 
 @app.get("/api/earnings/{symbol}")

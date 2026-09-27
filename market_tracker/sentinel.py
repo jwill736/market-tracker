@@ -197,6 +197,7 @@ class Sentinel:
                 await asyncio.to_thread(health_check)
                 await asyncio.to_thread(settle_orders)
                 await asyncio.to_thread(log_advice_daily)
+                await asyncio.to_thread(log_ideas_daily)
                 await asyncio.to_thread(big_moves_check)
                 held_now = my_symbols()[0]
                 if held_now:
@@ -275,6 +276,20 @@ def send_weekly_if_due(now: datetime | None = None, gather_fn=None) -> bool:
     if cadence != "daily":
         notify.send(notify.Message(title=r["title"], body=weekly.push_text(r), priority=3, tags=("calendar",)))
     return True
+
+
+def log_ideas_daily(today: date | None = None, items_fn=None) -> int:
+    """Once a day: write the screens' ideas to the idea log so each gets scored against VOO."""
+    from . import idealab, ideas
+    today = today or date.today()
+    with db.connect() as conn:
+        if db.get_meta(conn, "ideas_logged", "") == today.isoformat():
+            return 0
+    items = (items_fn or idealab.daily_items)(today)
+    with db.connect() as conn:
+        n = ideas.log(conn, today.isoformat(), items)
+        db.set_meta(conn, "ideas_logged", today.isoformat())
+    return n
 
 
 def crypto_headsups(held: list[str]) -> int:

@@ -585,6 +585,29 @@ def cmd_tenk_rank(args) -> int:
     return 0
 
 
+def cmd_screen(args) -> int:
+    """Score every listed company on quality, value and momentum, and find growing backlogs (the weekly job runs this)."""
+    import json
+
+    from . import screen, tenkrank
+    try:
+        sp500 = {c["symbol"] for c in tenkrank.universe()}
+    except http.DataUnavailable:
+        sp500 = None
+    data = screen.build(sp500=sp500)
+    tmp = args.out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+    os.replace(tmp, args.out)
+    print(f"{data['universe']} companies scored ({data['quarter']}); top large companies:")
+    for r in data["top_large"][:10]:
+        g = r["grades"]
+        print(f"  {r['symbol']:6} {r['score']:5.1f}  quality {g['quality']} value {g['value']} momentum {g['momentum']} low dilution {g['low_issuance']}  ({r['name'][:30]})")
+    print("growing backlogs:", ", ".join(b["symbol"] for b in data["backlog"][:10]) or "none")
+    print("small and mid caps passing:", len(data["small_mid"]))
+    return 0
+
+
 def cmd_mcp(args) -> int:
     try:
         import mcp  # noqa: F401
@@ -704,6 +727,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--budget-minutes", type=float, default=240)
     s.add_argument("--limit", type=int, default=0, help="Only the first N companies (for a quick check)")
     s.set_defaults(func=cmd_tenk_rank)
+
+    s = sub.add_parser("screen", help="Weekly quality/value/momentum and backlog screen of every listed company")
+    s.add_argument("--out", default="screen.json")
+    s.set_defaults(func=cmd_screen)
 
     s = sub.add_parser("mcp", help="Read-only Claude connector (MCP over stdio) for Claude Desktop or Claude Code")
     s.set_defaults(func=cmd_mcp)
