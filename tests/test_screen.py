@@ -75,7 +75,9 @@ def test_build_end_to_end():
     finally:
         sec.ticker_map = orig
     assert d["quarter"] == "CY2026Q2" and d["annual"] == 2025 and d["universe"] == 40
-    assert {r["symbol"] for r in d["top_large"]} == {"T40", "T39"} and "T40B" not in d["lookup"]
+    assert {r["symbol"] for r in d["top_large"]} == {"T40", "T39"} and d["universe"] == 40      # one row per company
+    alias = screen.lookup(d, "T40B")                                                                  # the second class shares the grades
+    assert alias["score"] == screen.lookup(d, "T40")["score"] and alias["price"] == listed["T40B"]["price"]
     assert screen.lookup(d, "T40")["sector"] == "Energy" and screen.lookup(d, "NOPE") is None
 
 
@@ -93,3 +95,17 @@ def test_predecessor_filer_fills_a_new_holding_company():
     assert f["assets"] == 460.0 and f["assets_ya"] == 450.0 and f["net_income"] == 30.0
     assert (f["shares"], f["shares_ya"]) == (4.2, 4.3)                 # cover-page counts, like for like
     assert screen.name_key("Exxon Mobil Corp") == screen.name_key("ExxonMobil Holdings Corporation Common Stock") == "EXXONMOBIL"
+
+
+def test_fourth_quarter_uses_full_year_share_counts_and_sales():
+    asked = []
+
+    def get(url):
+        asked.append(url.split("/")[-3] + "/" + url.split("/")[-1])
+        return {"data": []}
+    screen.gather(2025, 4, get)
+    assert "WeightedAverageNumberOfDilutedSharesOutstanding/CY2025.json" in asked and "Revenues/CY2024.json" in asked
+    assert not any(a.endswith("CY2025Q4.json") for a in asked)
+    asked.clear()
+    screen.gather(2026, 2, get)
+    assert "WeightedAverageNumberOfDilutedSharesOutstanding/CY2026Q2.json" in asked

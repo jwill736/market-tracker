@@ -164,22 +164,34 @@ def summarize(periods: list[dict]) -> dict:
     return out
 
 
+def _t(x: float | None) -> str:
+    if x is None:
+        return ""
+    return f" (t = {x:.1f}: {'statistically solid' if abs(x) >= 2 else 'could be luck'})"
+
+
 def verdict(summary: dict, survivorship: float | None) -> str:
-    big = summary["large"]
-    if not big.get("3m"):
+    """Every group against SPY in one paragraph, weakest claims labelled as such."""
+    if not summary["large"].get("3m"):
         return "Not enough history to judge."
-    g = big["growth"]
-    t = big["3m"]["t"]
-    line = (f"Top 30 large companies, rebalanced every quarter for {g['quarters'] / 4:.0f} years: {g['cagr']:+.1f}% a year against SPY's "
-            f"{g['cagr_spy']:+.1f}% (${g['screen']:,} vs ${g['spy']:,} from $10,000); beat SPY in {big['3m']['beat_pct']}% of quarters.")
-    if t is not None:
-        line += (" The edge is statistically solid (t = %.1f)." % t if abs(t) >= 2 else
-                 " The edge is not statistically distinguishable from luck (t = %.1f)." % t)
-    b = summary["bottom"].get("3m")
-    if b:
-        line += f" The bottom 50 averaged {b['avg_edge']:+.1f} points a quarter against SPY" + (" (the ranking separates winners from losers)." if b["avg_edge"] < big["3m"]["avg_edge"] else " (no better than the top: the ranking isn't separating).")
+    parts = []
+    for g in ("large", "all", "small_mid"):
+        row = summary[g]
+        gr, q = row["growth"], row["3m"]
+        if not q or gr["cagr"] is None:
+            continue
+        ahead = gr["cagr"] - gr["cagr_spy"]
+        parts.append(f"{row['label']}: {gr['cagr']:+.1f}% a year against SPY's {gr['cagr_spy']:+.1f}% "
+                     f"({'ahead' if ahead >= 0 else 'behind'} by {abs(ahead):.1f}), beat SPY in {q['beat_pct']}% of quarters{_t(q.get('t'))}.")
+    years = summary["large"]["growth"]["quarters"] / 4
+    line = f"Rebalanced every quarter for {years:.0f} years. " + " ".join(parts)
+    ev, b = summary["everyone"]["growth"], summary["bottom"]["3m"]
+    if ev["cagr"] is not None and b:
+        line += (f" The average screened stock, equal-weighted, made {ev['cagr']:+.1f}% a year, so beating SPY at all took picking well;"
+                 f" the bottom 50 trailed SPY by {-b['avg_edge']:.1f} points a quarter.")
     if survivorship:
-        line += f" Survivorship: up to {survivorship:.0f}% of large SEC filers from those dates have no ticker today and are missing, which flatters these numbers."
+        line += (f" Survivorship: up to {survivorship:.0f}% of large SEC filers from those dates have no ticker today and are missing,"
+                 " which flatters every number here.")
     return line
 
 

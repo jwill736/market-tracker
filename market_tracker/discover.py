@@ -8,7 +8,9 @@ several independent pieces of evidence line up:
 - little attention: among the quietest third of this week's candidates by headline count (a quiet name
   counts as one more piece of evidence; absolute counts mean little, since news aggregators write
   something about almost every listed company every day);
-- not already a rocket: 12-month return below the top 10% and less than 30% above the 200-day average.
+- not already a rocket: 12-month return below the top 10% and less than 30% above the 200-day average;
+- not heavily shorted: 15%+ of shares sold short (or 10+ days to cover) takes a piece of evidence away,
+  since short sellers are mostly informed professionals (see shorts.py).
 One piece of evidence is a lead; three is a sleeper. Smaller companies are where these signals
 have historically been strongest, and also where they fail hardest.
 
@@ -34,8 +36,10 @@ FUND_WORDS = ("ETF", " FUND", "TRUST", "PROSHARES", "ISHARES", "DIREXION", "SPDR
 APEWISDOM = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
 
 
-def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn, news_fn, insider_fn=None, limit: int = 15) -> list[dict]:
-    """screen_data: weekly screen; insider_cands: {symbol: {cik, company, value, reasons, insider?, trade_date?}}."""
+def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn, news_fn, insider_fn=None, limit: int = 15,
+             shorts_fn=None) -> list[dict]:
+    """screen_data: weekly screen; insider_cands: {symbol: {cik, company, value, reasons, insider?, trade_date?}};
+    shorts_fn(symbols) -> {symbol: shorts.assess(...)}."""
     backlog = {b["symbol"]: b for b in (screen_data or {}).get("backlog", [])}
     pool = {r["symbol"]: r for r in (screen_data or {}).get("small_mid", [])}
     for s in list(insider_cands) + list(backlog):
@@ -73,6 +77,10 @@ def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn
         ev = dict(zip(cands, ex.map(evidence, cands)))
         live = [s for s in cands if ev[s]]
         counts = dict(zip(live, ex.map(headlines, live)))
+    try:
+        short = (shorts_fn or (lambda syms: {}))(live)
+    except Exception:  # noqa: BLE001 - short interest unknown: judged without it
+        short = {}
     known = sorted(v for v in counts.values() if v is not None)
     quiet_line = known[max(0, int(len(known) * QUIET_SHARE) - 1)] if len(known) >= 6 else None
     found = []
@@ -85,14 +93,24 @@ def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn
             why.append(f"quiet: {c} headlines this week, among the quietest third of these companies")
         elif c is not None:
             why.append(f"{c} headlines this week")
+        sh = short.get(s)
+        if sh and sh["level"] == "heavy":
+            n -= 1
+            why.append(sh["text"] + " Counts against it.")
+        elif sh and sh["level"] == "elevated":
+            why.append(sh["text"])
+        if n <= 0:
+            continue
         r = pool[s]
         found.append(dict(symbol=s, name=r.get("name", ""), sector=r.get("sector"), cap=r.get("cap"), score=r.get("score"), evidence=n,
-                          level="sleeper" if n >= 3 else "strong lead" if n == 2 else "lead", why=why))
+                          level="sleeper" if n >= 3 else "strong lead" if n == 2 else "lead", why=why,
+                          short=(sh or {}).get("level")))
     return sorted(found, key=lambda x: (-x["evidence"], -(x["score"] or 0)))[:limit]
 
 
-def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20) -> list[dict]:
-    """ape: ApeWisdom's all-stocks page; trending: StockTwits trending [{symbol, title?, summary?}]."""
+def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20, shorts_fn=None) -> list[dict]:
+    """ape: ApeWisdom's all-stocks page; trending: StockTwits trending [{symbol, title?, summary?}];
+    shorts_fn(symbols) -> {symbol: shorts.assess(...)}."""
     rows: dict[str, dict] = {}
     for r in ape.get("results", []):
         t = (r.get("ticker") or "").upper()
@@ -122,9 +140,19 @@ def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20) -> list
         if row.get("score") is not None and row["score"] < 40:
             warn.append(f"weak screen grade ({row['score']:.0f}/100)")
         heat = e["reddit"] * (1 + min(e["rising"] or 1, 5)) + (50 if e["stocktwits"] else 0)
-        out.append(dict(e, score=row.get("score"), cap=row.get("cap"), warnings=warn, heat=round(heat),
-                        caution="high" if len(warn) >= 2 else "medium" if warn else "low"))
-    return sorted(out, key=lambda x: -x["heat"])[:limit]
+        out.append(dict(e, score=row.get("score"), cap=row.get("cap"), warnings=warn, heat=round(heat)))
+    out = sorted(out, key=lambda x: -x["heat"])[:limit]
+    try:
+        short = (shorts_fn or (lambda syms: {}))([x["symbol"] for x in out])
+    except Exception:  # noqa: BLE001
+        short = {}
+    for x in out:
+        sh = short.get(x["symbol"])
+        if sh and sh["level"] == "heavy":
+            x["warnings"].append(f"heavily shorted ({sh['pct']:.0%} of shares)" if sh.get("pct") is not None else "heavily shorted")
+        x["short"] = (sh or {}).get("level")
+        x["caution"] = "high" if len(x["warnings"]) >= 2 else "medium" if x["warnings"] else "low"
+    return out
 
 
 def load_ape(get=None) -> dict:

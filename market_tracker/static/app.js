@@ -2947,6 +2947,31 @@ async function loadEarnings(sym) {
   } catch { /* funds and companies without a results release: no card */ }
 }
 
+// ---------------------------------------------------------------- size it: a dollar amount for an idea
+const sizeBtn = (sym, src) => `<button type="button" class="secondary small size-btn" data-size="${esc(sym)}" data-src="${esc(src)}">Size it</button>`;
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-size]");
+  if (!b) return;
+  // Under the item; for a table row, under the table (inside a sideways-scrolling table it would be cut off on a phone).
+  const host = b.closest(".table-scroll") || b.closest(".id-item, .sl-item, .ch-item, .mv-row") || b.parentElement;
+  const next = host.nextElementSibling;
+  if (next && next.classList.contains("size-holder")) {
+    next.remove();
+    if (next.dataset.sym === b.dataset.size) return;
+  }
+  const box = document.createElement("div");
+  box.className = "size-holder";
+  box.dataset.sym = b.dataset.size;
+  box.innerHTML = `<div class="size-out muted">Working out the amount for ${esc(b.dataset.size)}…</div>`;
+  host.after(box);
+  try {
+    const r = await api(`/api/size/${encodeURIComponent(b.dataset.size)}?source=${encodeURIComponent(b.dataset.src)}`);
+    const head = r.locked_until ? `<b>${esc(r.symbol)}: wait first</b>` : `<b>${esc(r.symbol)}: ${fmtMoney(r.amount, 0)}</b>${r.shares ? ` <span class="muted">≈ ${r.shares} share${r.shares === 1 ? "" : "s"} at ${fmtMoney(r.price, 2)}</span>` : ""}`;
+    box.querySelector(".size-out").classList.remove("muted");
+    box.querySelector(".size-out").innerHTML = `${head}<ul>${r.lines.map((ln) => `<li>${esc(ln)}</li>`).join("")}</ul>`;
+  } catch (err) { box.querySelector(".size-out").innerHTML = `<span class="down">${esc(err.message)}</span>`; }
+});
+
 // ---------------------------------------------------------------- ideas: the weekly screen
 const screenState = { data: null, which: "top_large" };
 const pctTxt = (x) => x == null ? "—" : Math.round(x * 100) + "%";
@@ -2960,15 +2985,15 @@ function renderScreen() {
   $("#sc-meta").textContent = `${d.universe.toLocaleString()} companies · ${d.quarter} · built ${String(d.as_of).slice(0, 10)}`;
   const rows = d[screenState.which] || [];
   $("#sc-out").innerHTML = `<div class="table-scroll"><table class="data sc-table"><thead><tr><th>Company</th><th>Grade</th><th title="Operating profit on assets">Quality</th>
-    <th>Value</th><th>Momentum</th><th title="Not issuing new shares">No dilution</th><th>12 mo</th><th></th></tr></thead><tbody>
+    <th>Value</th><th>Momentum</th><th title="Not issuing new shares">No dilution</th><th>12 mo</th><th></th><th></th></tr></thead><tbody>
     ${rows.slice(0, 30).map((r) => `<tr><td><button type="button" class="linkish" data-open="${esc(r.symbol)}">${tick(r.symbol)}</button> <span class="muted">${esc((r.name || "").slice(0, 28))}</span></td>
       <td><b>${r.score != null ? r.score.toFixed(0) : "—"}</b>${r.flaws && r.flaws.length ? ` <span class="chip-warn" title="One grade in the bottom 10% of its sector">flaw</span>` : ""}</td>
       <td>${gradeCell(r.grades.quality)}</td><td>${gradeCell(r.grades.value)}</td><td>${gradeCell(r.grades.momentum)}</td><td>${gradeCell(r.grades.low_issuance)}</td>
       <td class="${cls(r.return_12m)}">${r.return_12m != null ? fmtPct(r.return_12m * 100, 0) : "—"}</td>
-      <td class="muted">${esc(r.sector || "")}</td></tr>`).join("")}</tbody></table></div>
+      <td class="muted">${esc(r.sector || "")}</td><td>${sizeBtn(r.symbol, "qvm")}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted">Grades are percentiles within the sector (100 = best). Quality is operating profit on assets; banks and insurers are compared on return on equity, and companies that report no operating profit on net income over assets.</p>`;
   $("#bl-out").innerHTML = (d.backlog || []).map((b) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(b.symbol)}">${tick(b.symbol)}</button>
-      <span class="muted">${esc((b.name || "").slice(0, 32))}</span> <span class="muted">grade ${b.score != null ? b.score.toFixed(0) : "—"}</span></div>
+      <span class="muted">${esc((b.name || "").slice(0, 32))}</span> <span class="muted">grade ${b.score != null ? b.score.toFixed(0) : "—"}</span>${sizeBtn(b.symbol, "backlog")}</div>
       <div>${esc(b.why)}</div></div>`).join("") || `<p class="muted">None this week.</p>`;
   document.querySelectorAll("#tab-ideas [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
 }
@@ -3011,6 +3036,25 @@ async function loadScreenBacktest() {
       <td>${fmtMoney(g.growth.screen, 0)} <span class="muted">(SPY ${fmtMoney(g.growth.spy, 0)})</span></td></tr>`).join("")}</tbody></table></div>`;
 }
 
+// ---------------------------------------------------------------- ideas: events (raised guidance, spin-offs)
+async function loadEvents() {
+  $("#ev-pead").innerHTML = `<p class="muted">Reading this week's results releases (a minute the first time)…</p>`;
+  let r;
+  try { r = await api("/api/idea-events"); } catch (err) { $("#ev-pead").innerHTML = `<p class="down">${esc(err.message)}</p>`; $("#ev-spin").innerHTML = ""; return; }
+  $("#ev-meta").textContent = r.errors.length ? r.errors.join("; ") : `as of ${r.as_of}`;
+  $("#ev-pead").innerHTML = r.pead.map((x) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button>
+      <span class="muted">${x.cap ? fmtMoney(x.cap / 1e9, 1) + "B" : ""}${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</span>${sizeBtn(x.symbol, "pead")}</div>
+      <div>${esc(x.why)}</div>${x.outlook ? `<div class="muted">“${esc(x.outlook)}”</div>` : ""}</div>`).join("")
+    || `<p class="muted">Nobody raised guidance to a big positive reaction in the last ten days.</p>`;
+  const trading = r.spinoffs.filter((x) => x.stage === "trading"), coming = r.spinoffs.filter((x) => x.stage !== "trading");
+  $("#ev-spin").innerHTML = (trading.map((x) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(x.ticker)}">${tick(x.ticker)}</button>
+      <span class="muted">${esc(x.name)}</span>${x.loggable ? sizeBtn(x.ticker, "spinoff") : ""}</div>
+      <div>Trading since ${esc(x.trading_since)} (${x.days_trading} days): <span class="${cls(x.return_pct)}">${fmtPct(x.return_pct)}</span>${x.spy_pct != null ? ` vs SPY ${fmtPct(x.spy_pct)}` : ""}${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</div></div>`).join("")
+    || `<p class="muted">No spin-off started trading in the last year and a half.</p>`)
+    + (coming.length ? `<p class="muted">Registered, not trading yet: ${coming.slice(0, 12).map((x) => `${esc(x.name)}${x.ticker ? ` (${esc(x.ticker)})` : ""}, filed ${esc(x.last_filed)}`).join(" · ")}</p>` : "");
+  document.querySelectorAll("#ev-pead [data-open], #ev-spin [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
 // ---------------------------------------------------------------- ideas: the scorecard
 async function loadIdeas() {
   let r;
@@ -3021,11 +3065,14 @@ async function loadIdeas() {
   $("#id-board").innerHTML = r.leaderboard.length ? `<div class="table-scroll"><table class="data"><thead><tr><th>Kind of idea</th><th>Logged</th><th>3 months</th><th>6 months</th><th>12 months</th></tr></thead><tbody>
     ${r.leaderboard.map((b) => `<tr><td>${esc(b.label)}</td><td>${b.ideas}</td><td>${cell(b["3m"])}</td><td>${cell(b["6m"])}</td><td>${cell(b["12m"])}</td></tr>`).join("")}</tbody></table></div>
     ${r.decisions.bought.n || r.decisions.passed.n ? `<p class="muted">Ideas you bought: ${r.decisions.bought.n} (${fmtPct(r.decisions.bought.avg_edge)} vs VOO so far) · passed on: ${r.decisions.passed.n} (${fmtPct(r.decisions.passed.avg_edge)}).</p>` : ""}` : "";
+  const broken = Object.fromEntries((r.broken || []).map((x) => [x.id, x.reasons]));
   $("#id-list").innerHTML = `<h3 class="small">Latest ideas</h3>` + (r.items.slice(0, 40).map((i) => `<div class="id-item"><div class="row">
       <button type="button" class="linkish" data-open="${esc(i.symbol)}">${tick(i.symbol)}</button> <span class="muted">${esc(r.sources[i.source] || i.source)} · ${esc(i.day)} at ${fmtMoney(i.price, 2)}</span>
       ${i.so_far ? `<span class="${cls(i.so_far.edge)}">${fmtPct(i.so_far.edge)} vs VOO so far</span>` : ""}
-      ${i.decision ? `<span class="chip">${esc(i.decision)}</span>` : `<span class="id-dec"><button type="button" class="secondary small" data-dec="bought" data-id="${i.id}">I bought it</button> <button type="button" class="secondary small" data-dec="passed" data-id="${i.id}">Passed</button></span>`}</div>
-      <div class="muted">${esc(i.reason)}${i.wrong_if ? ` · wrong if: ${esc(i.wrong_if)}` : ""}</div></div>`).join("") || `<p class="muted">Nothing yet: the screens log their ideas once a day.</p>`);
+      ${i.decision ? `<span class="chip">${esc(i.decision)}</span>` : `<span class="id-dec"><button type="button" class="secondary small" data-dec="bought" data-id="${i.id}">I bought it</button> <button type="button" class="secondary small" data-dec="passed" data-id="${i.id}">Passed</button></span>`}
+      ${i.decision !== "passed" ? sizeBtn(i.symbol, i.source) : ""}</div>
+      <div class="muted">${esc(i.reason)}${i.wrong_if ? ` · wrong if: ${esc(i.wrong_if)}` : ""}</div>
+      ${broken[i.id] ? `<div class="id-broken">Case broken: ${esc(broken[i.id].join("; "))}</div>` : ""}</div>`).join("") || `<p class="muted">Nothing yet: the screens log their ideas once a day.</p>`);
   document.querySelectorAll("#id-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
   document.querySelectorAll("#id-list [data-dec]").forEach((el) => el.addEventListener("click", async () => {
     try { await api(`/api/ideas/${el.dataset.id}/decision`, { method: "POST", body: JSON.stringify({ decision: el.dataset.dec }) }); loadIdeas(); }
@@ -3051,7 +3098,7 @@ async function loadSleepers() {
   const LV = { sleeper: "Sleeper: 3+ signals", "strong lead": "Strong lead: 2 signals", lead: "Lead: 1 signal" };
   $("#sl-out").innerHTML = (r.note ? `<p class="muted">${esc(r.note)}</p>` : "") + (r.sleepers.map((x) => `<div class="sl-item sl-${esc(x.level.replace(" ", "-"))}">
       <div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button> <span class="muted">${esc((x.name || "").slice(0, 32))}</span>
-        <span class="tk-level">${esc(LV[x.level])}</span> <span class="muted">${x.cap ? fmtMoney(x.cap / 1e9, 1) + "B" : ""} · ${esc(x.sector || "")}</span></div>
+        <span class="tk-level">${esc(LV[x.level])}</span> <span class="muted">${x.cap ? fmtMoney(x.cap / 1e9, 1) + "B" : ""} · ${esc(x.sector || "")}</span>${sizeBtn(x.symbol, "sleeper")}</div>
       <ul class="hp-lines">${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`).join("") || `<p class="muted">Nothing lines up this week. That's a fine answer.</p>`);
   document.querySelectorAll("#sl-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
 }
@@ -3064,7 +3111,7 @@ async function loadChatter() {
   const CAU = { high: "High caution", medium: "Caution", low: "Fewer warnings" };
   $("#ch-out").innerHTML = r.rows.map((x) => `<div class="ch-item ch-${esc(x.caution)}"><div class="row">
       <button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button> <span class="muted">${esc((x.name || "").slice(0, 30))}</span>
-      <span class="tk-level">${esc(CAU[x.caution])}</span></div>
+      <span class="tk-level">${esc(CAU[x.caution])}</span>${sizeBtn(x.symbol, "chatter")}</div>
       <div>${x.reddit ? `${x.reddit} Reddit mentions${x.rising ? ` (${x.rising}× yesterday)` : ""}` : ""}${x.stocktwits ? `${x.reddit ? " · " : ""}trending on StockTwits${x.reason ? ": " + esc(x.reason.slice(0, 140)) : ""}` : ""}</div>
       ${x.warnings.length ? `<div class="muted">${esc(x.warnings.join(" · "))}</div>` : ""}</div>`).join("") || `<p class="muted">No chatter data right now.</p>`;
   document.querySelectorAll("#ch-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
@@ -3093,7 +3140,7 @@ async function loadMoneyFlow() {
         title="${esc(x.priced_in || "not on the screen")}${x.score != null ? ", grade " + Math.round(x.score) : ""}">${esc(x.symbol)}${x.priced_in === "Already ran hard" ? " ▲" : ""}</button>`).join(" ")}</div>`).join("")}</div></div>`).join("")
     + `<p class="muted">▲ = already ran hard (top 10% of 12-month returns, or 30%+ above its 200-day average). Supplier lists are hand-picked well-known names, not recommendations.</p>`;
   $("#lag-out").innerHTML = r.lagging.map((x) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button>
-      <span class="muted">${fmtMoney(x.cap / 1e9, 1)}B${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</span></div><div>${esc(x.why)}</div></div>`).join("")
+      <span class="muted">${fmtMoney(x.cap / 1e9, 1)}B${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</span>${sizeBtn(x.symbol, "supplier")}</div><div>${esc(x.why)}</div></div>`).join("")
     || `<p class="muted">No big customer moved 10%+ this month without its small suppliers following.</p>`;
   document.querySelectorAll("#tab-moneyflow [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
 }

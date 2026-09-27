@@ -218,14 +218,17 @@ def gather(y: int, q: int, get=None) -> tuple[dict[str, dict[int, float]], str, 
     """Every number the screen uses for calendar quarter (y, q), for every filer at once."""
     per, per_ya, per_i, per_i_ya = f"CY{y}Q{q}", f"CY{y - 1}Q{q}", f"CY{y}Q{q}I", f"CY{y - 1}Q{q}I"
     yr = y if q == 4 else y - 1
+    # Nobody files a fourth-quarter 10-Q, so fourth-quarter share counts and sales exist only for the few
+    # companies that report the quarter separately: use the full year instead.
+    dur, dur_ya = (f"CY{y}", f"CY{y - 1}") if q == 4 else (per, per_ya)
     F = {
         "assets": frame("Assets", per_i, get=get), "assets_ya": frame("Assets", per_i_ya, get=get),
         "equity": frame_any(["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], per_i, get),
-        "shares": frame(SHARES_Q, per, "shares", get=get), "shares_ya": frame(SHARES_Q, per_ya, "shares", get=get),
+        "shares": frame(SHARES_Q, dur, "shares", get=get), "shares_ya": frame(SHARES_Q, dur_ya, "shares", get=get),
         "shares_dei": frame("EntityCommonStockSharesOutstanding", per_i, "shares", "dei", get),
         "shares_dei_ya": frame("EntityCommonStockSharesOutstanding", per_i_ya, "shares", "dei", get),
         "operating_income": frame("OperatingIncomeLoss", f"CY{yr}", get=get), "net_income": frame_any(NET_INCOME, f"CY{yr}", get),
-        "revenue": frame_any(REVENUE, f"CY{yr}", get), "rev_q": frame_any(REVENUE, per, get), "rev_q_ya": frame_any(REVENUE, per_ya, get),
+        "revenue": frame_any(REVENUE, f"CY{yr}", get), "rev_q": frame_any(REVENUE, dur, get), "rev_q_ya": frame_any(REVENUE, dur_ya, get),
         "rpo": frame("RevenueRemainingPerformanceObligation", per_i, get=get),
         "rpo_ya": frame("RevenueRemainingPerformanceObligation", per_i_ya, get=get),
     }
@@ -288,11 +291,15 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
     seen: set[int] = set()
     firsts: list[tuple[str, int]] = []
     # One listing per company (Alphabet trades as GOOGL and GOOG): the most valuable line, then the shortest ticker.
+    aliases: dict[int, list[str]] = {}
     for sym, info in sorted(lst.items(), key=lambda kv: (-kv[1]["cap"], len(kv[0]), kv[0])):
         if info["cap"] < MIN_CAP:
             continue
         cik = tmap.cik_for(sym)
-        if not cik or int(cik) in seen:
+        if not cik:
+            continue
+        if int(cik) in seen:
+            aliases.setdefault(int(cik), []).append(sym)
             continue
         seen.add(int(cik))
         firsts.append((sym, int(cik)))
@@ -326,15 +333,23 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
     ranked = sorted((s for s in rows if rows[s]["score"] is not None), key=lambda s: -rows[s]["score"])
     large = [s for s in ranked if (sp500 and s in sp500) or (not sp500 and rows[s]["cap"] >= 1e10)]
     mid = [s for s in ranked if SLEEPER_MAX_CAP > rows[s]["cap"] >= MIN_CAP and not rows[s]["flaws"]]
+    lookup = {s: _lookup_row(r) for s, r in rows.items()}
+    for s, r in rows.items():
+        for a in aliases.get(r["cik"], []):          # BRK-B and GOOG share BRK-A's and GOOGL's grades, at their own price
+            lookup[a] = _lookup_row(dict(r, price=lst[a]["price"]))
     return {"as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"), "quarter": per, "annual": yr, "universe": len(rows),
             "top_large": [_public(s, rows[s]) for s in large[:30]],
             "top_all": [_public(s, rows[s]) for s in ranked if rows[s]["cap"] >= 2e9][:50],
             "small_mid": [_public(s, rows[s]) for s in mid[:150]],
             "backlog": backlog_picks(rows),
-            "lookup": {s: [r["score"], r["grades"].get("quality") if r.get("grades") else None, r["grades"].get("value") if r.get("grades") else None,
-                           r["grades"].get("momentum") if r.get("grades") else None, _r(r.get("issuance")), _r(r.get("asset_growth")),
-                           r.get("return_12m_pct"), _r(r.get("above_200d")), round(r["cap"]), r["sector"], _r(r.get("rpo_growth")),
-                           _r(r.get("revenue_growth")), r.get("price")] for s, r in rows.items()}}
+            "lookup": lookup}
+
+
+def _lookup_row(r: dict) -> list:
+    g = r.get("grades") or {}
+    return [r["score"], g.get("quality"), g.get("value"), g.get("momentum"), _r(r.get("issuance")), _r(r.get("asset_growth")),
+            r.get("return_12m_pct"), _r(r.get("above_200d")), round(r["cap"]), r["sector"], _r(r.get("rpo_growth")),
+            _r(r.get("revenue_growth")), r.get("price")]
 
 
 LOOKUP_FIELDS = ["score", "quality", "value", "momentum", "issuance", "asset_growth", "return_12m_pct", "above_200d", "cap", "sector",

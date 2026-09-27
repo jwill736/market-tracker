@@ -2055,13 +2055,24 @@ async def ideas_view():
     today = date.today()
 
     def run():
+        from . import earnings, screen, thesis
+        from .providers import sec
         with db.connect() as conn:
             rows = ideas.logged(conn)
-        return dict(ideas.score(rows, lambda s: _closes(s, 800), today), sources=ideas.SOURCES)
+        out = dict(ideas.score(rows, lambda s: _closes(s, 800), today), sources=ideas.SOURCES)
+        try:
+            positions, _ = _valued_positions()
+            held = {p["symbol"] for p in positions if p.get("quantity")}
+            data = screen.load()
+            out["broken"] = thesis.check(out["items"], held, today, lambda s: screen.lookup(data, s),
+                                         trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap)
+        except (http.DataUnavailable, ValueError) as exc:
+            out["broken"], out["broken_error"] = [], str(exc)
+        return out
     with db.connect() as conn:
         conn.executescript(ideas.SCHEMA)
         n = conn.execute("SELECT COUNT(*), COALESCE(MAX(id), 0), SUM(decision != '') FROM ideas").fetchone()
-    return await asyncio.to_thread(_analysis_cache.get, ("ideas", tuple(n), today.isoformat()), run)
+    return await asyncio.to_thread(_analysis_cache.get, ("ideas", tuple(n), _ledger_key(), today.isoformat()), run)
 
 
 class IdeaIn(BaseModel):
@@ -2098,6 +2109,46 @@ def idea_decision(idea_id: int, body: DecisionIn):
         if not ideas.decide(conn, idea_id, body.decision, date.today().isoformat()):
             raise HTTPException(409, "Already decided (a decision can be recorded once).")
     return {"id": idea_id, "decision": body.decision}
+
+
+@app.get("/api/size/{symbol}")
+async def size_view(symbol: str, source: str = Query("", max_length=20)):
+    """How many dollars to put into an idea: per-stock, speculative, sector and volatility limits."""
+    import json as _json
+    from datetime import datetime, timezone
+
+    from . import ideas, screen, sizing
+    sym = market.normalize_symbol(symbol)
+
+    def run():
+        with db.connect() as conn:
+            logged = ideas.logged(conn)
+            cash = float(db.get_meta(conn, "cash", "0") or 0)
+            cooling = _json.loads(db.get_meta(conn, "cooling", "{}") or "{}")
+        src = source or next((r["source"] for r in logged if r["symbol"] == sym), "manual")
+        if src not in ideas.SOURCES:
+            raise HTTPException(400, f"Unknown kind of idea: {src}")
+        positions, _ = _valued_positions()
+        data = screen.load()
+        spec = {r["symbol"] for r in logged if r["source"] in sizing.SPECULATIVE and r["decision"] == "bought"}
+        try:
+            price = market.get_quote(sym).price
+        except (http.DataUnavailable, KeyError, ValueError):
+            raise HTTPException(502, f"No price for {sym}.")
+        try:
+            vol = sizing.annual_vol([c for _, c in _closes(sym, 300)])
+        except (http.DataUnavailable, KeyError, ValueError):
+            vol = None
+        now = datetime.now(timezone.utc)
+        started = None
+        if src == "chatter":
+            if sym not in cooling:
+                cooling[sym] = now.isoformat()
+                with db.connect() as conn:
+                    db.set_meta(conn, "cooling", _json.dumps(cooling))
+            started = datetime.fromisoformat(cooling[sym])
+        return sizing.size(sym, src, price, positions, cash, lambda s: (screen.lookup(data, s) or {}).get("sector"), spec, vol, started, now)
+    return await asyncio.to_thread(run)
 
 
 @app.get("/api/screen")
@@ -2176,6 +2227,13 @@ async def contracts_view(symbol: str):
         return await asyncio.to_thread(idealab.contracts_for, sym)
     except http.DataUnavailable as exc:
         raise HTTPException(502, str(exc))
+
+
+@app.get("/api/idea-events")
+async def idea_events_view():
+    """Raised guidance the market agreed with (last ten days), and spin-offs registered or newly trading."""
+    from . import idealab
+    return await asyncio.to_thread(_analysis_cache.get, ("events", date.today().isoformat()), idealab.events)
 
 
 @app.get("/api/sleepers")

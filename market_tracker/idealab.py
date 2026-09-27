@@ -13,6 +13,11 @@ def _lookup_fn(data):
     return lambda s: screen.lookup(data, s)
 
 
+def _shorts_fn(data):
+    from . import shorts
+    return lambda syms: shorts.for_symbols(syms, _lookup_fn(data))
+
+
 def _closes(sym: str, days: int = 300) -> list[float]:
     return [b.close for b in market.get_history(sym, days)]
 
@@ -51,7 +56,7 @@ def sleepers(today: date | None = None) -> dict:
         cands = insider_candidates(today)
     except http.DataUnavailable:
         cands = {}
-    rows = discover.sleepers(data, cands, _lookup_fn(data), news_count, classify_insider)
+    rows = discover.sleepers(data, cands, _lookup_fn(data), news_count, classify_insider, shorts_fn=_shorts_fn(data))
     return {"as_of": today.isoformat(), "screen_as_of": (data or {}).get("as_of"), "sleepers": rows,
             "note": None if data else "The weekly screen hasn't run yet, so only insider-buying leads are shown."}
 
@@ -73,7 +78,7 @@ def chatter() -> dict:
     except http.DataUnavailable as exc:
         trend = []
         errors.append(f"StockTwits: {exc}")
-    return {"rows": discover.chatter(ape, trend, _lookup_fn(data)), "errors": errors}
+    return {"rows": discover.chatter(ape, trend, _lookup_fn(data), shorts_fn=_shorts_fn(data)), "errors": errors}
 
 
 def money_flow() -> dict:
@@ -106,6 +111,25 @@ def contracts_for(sym: str) -> dict:
     return moneyflow._cached(f"gov:{sym}", lambda: moneyflow.contracts(name, rev))
 
 
+def events(today: date | None = None) -> dict:
+    """Raised guidance the market agreed with, and spin-offs (registered and newly trading)."""
+    from . import pead, spinoffs
+    today = today or date.today()
+    data = screen.load()
+    errors = []
+    try:
+        drift = pead.build(today, _lookup_fn(data))
+    except http.DataUnavailable as exc:
+        drift = []
+        errors.append(f"Results releases: {exc}")
+    try:
+        spins = spinoffs.build(today, lookup_fn=_lookup_fn(data))
+    except http.DataUnavailable as exc:
+        spins = []
+        errors.append(f"Spin-offs: {exc}")
+    return {"as_of": today.isoformat(), "pead": drift, "spinoffs": spins, "errors": errors}
+
+
 def daily_items(today: date | None = None) -> list[dict]:
     """Today's ideas from every screen, for the idea log (each name is kept once a month per screen)."""
     today = today or date.today()
@@ -128,6 +152,19 @@ def daily_items(today: date | None = None) -> list[dict]:
         for r in chatter()["rows"][:5]:
             items.append({"symbol": r["symbol"], "source": "chatter", "reason": f"{r['reddit']} Reddit mentions" + (", trending on StockTwits" if r.get("stocktwits") else ""),
                           "wrong_if": "Logged to measure chatter, not as a recommendation"})
+    except (http.DataUnavailable, KeyError, ValueError):
+        pass
+    try:
+        ev = events(today)
+        for r in ev["pead"]:
+            items.append({"symbol": r["symbol"], "source": "pead", "reason": r["why"][:300],
+                          "wrong_if": "The next release lowers the outlook, or it trails VOO by 10+ points after 3 months",
+                          "data": {"filed": r["filed"], "move_pct": r["move_pct"]}})
+        for r in ev["spinoffs"]:
+            if r["loggable"]:
+                items.append({"symbol": r["ticker"], "source": "spinoff",
+                              "reason": f"Spin-off trading since {r['trading_since']} ({r['name'][:80]})",
+                              "wrong_if": "It trails VOO by 15+ points after 12 months", "data": {"cik": r["cik"]}})
     except (http.DataUnavailable, KeyError, ValueError):
         pass
     for it in items:
