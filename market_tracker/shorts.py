@@ -13,6 +13,7 @@ short interest as a share of float.
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
 
 from . import http
 
@@ -20,6 +21,7 @@ FINRA = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortIntere
 HEAVY_PCT, HEAVY_DAYS = 0.15, 10.0
 ELEVATED_PCT, ELEVATED_DAYS = 0.08, 6.0
 BATCH = 50
+LOOKBACK_DAYS = 45
 CACHE_SECONDS = 12 * 3600
 _cache: dict[str, tuple[float, dict | None]] = {}
 
@@ -34,7 +36,7 @@ def _post(url: str, body: dict) -> list[dict]:
         raise http.DataUnavailable(f"FINRA short interest: {exc}") from exc
 
 
-def latest(symbols: list[str], post=None) -> dict[str, dict]:
+def latest(symbols: list[str], post=None, now_date: date | None = None) -> dict[str, dict]:
     """{symbol: {settlement, short, days_to_cover, avg_volume}} for the latest report of each."""
     post = post or _post
     want = sorted({s.upper() for s in symbols if s})
@@ -50,10 +52,15 @@ def latest(symbols: list[str], post=None) -> dict[str, dict]:
             todo.append(s)
     for i in range(0, len(todo), BATCH):
         chunk = todo[i:i + BATCH]
-        rows = post(FINRA, {"limit": len(chunk) * 4, "sortFields": ["-settlementDate"],
-                            "domainFilters": [{"fieldName": "symbolCode", "values": [s.replace("-", ".") for s in chunk]}]})
+        # FINRA refuses sorting on this dataset and returns the oldest reports first, so ask for the last
+        # 45 days (three or four twice-monthly reports) and keep the latest per symbol.
+        today = (now_date or date.today())
+        rows = post(FINRA, {"limit": len(chunk) * 5,
+                            "domainFilters": [{"fieldName": "symbolCode", "values": [s.replace("-", ".") for s in chunk]}],
+                            "dateRangeFilters": [{"fieldName": "settlementDate", "startDate": (today - timedelta(days=LOOKBACK_DAYS)).isoformat(),
+                                                  "endDate": today.isoformat()}]})
         got: dict[str, dict] = {}
-        for r in rows:
+        for r in sorted(rows, key=lambda r: r.get("settlementDate") or "", reverse=True):
             sym = (r.get("symbolCode") or "").upper().replace(".", "-")
             if sym in got or not r.get("settlementDate"):
                 continue

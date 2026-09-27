@@ -4,6 +4,7 @@ from market_tracker import discover, shorts
 def _post_factory(calls):
     def post(url, body):
         calls.append(body)
+        assert "sortFields" not in body and body["dateRangeFilters"][0]["fieldName"] == "settlementDate"   # FINRA rejects sorting
         syms = body["domainFilters"][0]["values"]
         rows = []
         for s in syms:
@@ -12,7 +13,7 @@ def _post_factory(calls):
             for d, q in (("2026-09-15", 30e6 if s == "HOT" else 1e6), ("2026-08-29", 25e6)):
                 rows.append({"symbolCode": s, "settlementDate": d, "currentShortPositionQuantity": q,
                              "daysToCoverQuantity": 12.0 if s == "HOT" else 1.5, "averageDailyVolumeQuantity": 2e6})
-        return sorted(rows, key=lambda r: r["settlementDate"], reverse=True)
+        return sorted(rows, key=lambda r: r["settlementDate"])                 # oldest first, as FINRA sends them
     return post
 
 
