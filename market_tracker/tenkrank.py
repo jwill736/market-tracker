@@ -23,6 +23,8 @@ from datetime import date, datetime, timezone
 from . import filings, http
 
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+# Wikimedia asks for a descriptive User-Agent with a way to reach the operator; the project page, never an email.
+WIKI_UA = "Plumbline/1.0 (https://github.com/jwill736/market-tracker; personal portfolio app) python-httpx"
 FILE = "tenk_rank.json"
 FRESH_DAYS = 400            # a 10-K filed within this many days counts as this year's
 MIN_UNIVERSE = 450
@@ -34,7 +36,7 @@ def parse_universe(page: str) -> list[dict]:
     if not m:
         return []
     out = []
-    for row in re.findall(r"<tr>(.*?)</tr>", m.group(0), re.S):
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", m.group(0), re.S):
         cells = [htmllib.unescape(re.sub(r"<[^>]+>", "", c)).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
         if len(cells) >= 7 and re.fullmatch(r"[A-Z][A-Z.\-]{0,6}", cells[0]):
             cik = next((c for c in cells if re.fullmatch(r"\d{6,10}", c)), "")
@@ -42,18 +44,51 @@ def parse_universe(page: str) -> list[dict]:
     return out
 
 
+def universe_from_nport(get=None) -> list[dict]:
+    """The S&P 500 from iShares Core S&P 500's (IVV) latest SEC holdings report, names matched to tickers."""
+    from . import lookthrough
+    from .providers import sec
+    series = lookthrough.fund_series(get).get("IVV")
+    url = lookthrough.latest_filing(series, get) if series else None
+    if not url:
+        return []
+    _, rows = lookthrough.parse_nport((get or http.get)(url, headers=lookthrough._sec_headers(), ttl=0, as_json=False))
+    tmap = sec.ticker_map()
+    out, seen = [], set()
+    for r in rows:
+        if r["category"] not in ("EC", ""):
+            continue
+        t = tmap.ticker_for_issuer(r["name"])
+        if t and t not in seen:
+            seen.add(t)
+            out.append({"symbol": t, "name": r["name"].title(), "sector": "", "cik": filings.cik_of(t) or ""})
+    return out
+
+
 def universe(get=None, previous: dict | None = None) -> list[dict]:
+    """Wikipedia's constituents table (it has the sectors and CIKs); SEC's IVV holdings if that fails."""
+    why = []
     try:
-        page = (get or (lambda u: http.get(u, ttl=0, as_json=False, headers={"User-Agent": "Mozilla/5.0 (market-tracker)"})))(WIKI_URL)
+        page = (get or (lambda u: http.get(u, ttl=0, as_json=False, headers={"User-Agent": WIKI_UA})))(WIKI_URL)
         rows = parse_universe(page)
-    except http.DataUnavailable:
+        why.append(f"Wikipedia: {len(rows)} rows")
+    except http.DataUnavailable as exc:
         rows = []
+        why.append(f"Wikipedia: {str(exc)[-80:]}")
     if len(rows) >= MIN_UNIVERSE:
+        return rows
+    try:
+        rows = universe_from_nport(None if get is None else get)
+        why.append(f"IVV holdings: {len(rows)} matched")
+    except (http.DataUnavailable, KeyError, ValueError) as exc:
+        rows = []
+        why.append(f"IVV holdings: {str(exc)[-80:]}")
+    if len(rows) >= 400:
         return rows
     old = [{k: c.get(k, "") for k in ("symbol", "name", "sector", "cik")} for c in (previous or {}).get("companies", [])]
     if len(old) >= MIN_UNIVERSE:
         return old
-    raise http.DataUnavailable(f"S&P 500 list: {len(rows)} rows from Wikipedia and no earlier list to fall back on")
+    raise http.DataUnavailable("S&P 500 list: " + "; ".join(why) + "; no earlier list to fall back on")
 
 
 def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict:

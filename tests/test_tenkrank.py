@@ -55,3 +55,19 @@ def test_run_reuses_unchanged_companies_and_reads_new_ones(monkeypatch):
     c1 = next(c for c in out["companies"] if c["symbol"] == "C1")
     assert c1["acc"] == "C1-2" and c1["new_count"] == 1 and 0 < c1["risk_new"] < 0.1 and "cyber breach" in c1["sample"][0]
     assert len(out["companies"]) == 460
+
+
+def test_universe_falls_back_to_fund_holdings(monkeypatch):
+    from market_tracker import http
+    fake = [{"symbol": f"T{i}", "name": f"Co {i}", "sector": "", "cik": ""} for i in range(495)]
+    monkeypatch.setattr(tenkrank, "universe_from_nport", lambda get=None: fake)
+
+    def refused(url):
+        raise http.DataUnavailable(f"{url}: 403 Forbidden")
+    assert tenkrank.universe(refused) == fake
+    monkeypatch.setattr(tenkrank, "universe_from_nport", lambda get=None: [])
+    try:
+        tenkrank.universe(refused)
+        raise AssertionError("expected DataUnavailable")
+    except http.DataUnavailable as exc:
+        assert "403 Forbidden" in str(exc) and "IVV holdings: 0 matched" in str(exc)

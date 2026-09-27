@@ -499,7 +499,8 @@ def _():
     brk = next((c for c in cos if c["symbol"] == "BRK-B"), None)
     e = tenkrank.score_one(next(c for c in cos if c["symbol"] == "MSFT"), None)
     assert e.get("risk_new") is not None and e["risk_words"] > 3000, e
-    return f"{len(cos)} companies (BRK-B {'found' if brk else 'missing'}); MSFT 10-K {e['filed']}: {e['risk_new']:.0%} of Risk Factors new"
+    src = "Wikipedia" if any(c["sector"] for c in cos) else "IVV holdings (Wikipedia unavailable)"
+    return f"{len(cos)} companies from {src} (BRK-B {'found' if brk else 'missing'}); MSFT 10-K {e['filed']}: {e['risk_new']:.0%} of Risk Factors new"
 
 
 def main() -> int:
