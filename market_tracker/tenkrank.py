@@ -104,7 +104,9 @@ def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict
     risk = filings.compare(filings.section(a, "risk"), filings.section(b, "risk"))
     legal = filings.compare(filings.section(a, "legal"), filings.section(b, "legal"))
     if not risk["words"] or risk["words"] < 300:
-        return dict(co, acc=cur["accession"], prev_acc=prev["accession"], filed=cur["filed"], error="Risk Factors not found")
+        seen = [re.sub(r"\s+", " ", b[max(0, m.start() - 10): m.end() + 40]) for m in re.finditer(r"item\s*1a", b, re.I)][:3]
+        return dict(co, acc=cur["accession"], prev_acc=prev["accession"], filed=cur["filed"],
+                    error=f"Risk Factors not found ({risk['words']} words; 'Item 1A' appears as: {seen})")
     return dict(co, acc=cur["accession"], prev_acc=prev["accession"], filed=cur["filed"], prev_filed=prev["filed"],
                 url=cur["url"], risk_new=risk["new_share"], risk_sim=risk["similarity"], risk_words=risk["words"],
                 new_count=risk["new_count"], legal_new=legal["new_share"], sample=risk["new"][:2],

@@ -36,6 +36,8 @@ WATCH_WORDS = re.compile(r"investigat|subpoena|material weakness|going concern|r
 def html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<(script|style|ix:header)[^>]*>.*?</\1>", " ", html)
     html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table)>", "\n", html)
+    # Inline tags join what they wrap: small-caps headings are often "R<span>ISK</span> F<span>ACTORS</span>".
+    html = re.sub(r"(?i)</?(span|font|a|b|i|u|em|strong|small|sup|sub|ix:[a-z]+)\b[^>]*>", "", html)
     text = htmllib.unescape(re.sub(r"<[^>]+>", " ", html))
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
