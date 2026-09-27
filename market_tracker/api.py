@@ -2162,6 +2162,86 @@ async def screen_view():
     return {k: v for k, v in data.items() if k != "lookup"}
 
 
+@app.get("/api/decisions")
+async def decisions_view():
+    """What to do this week, ranked, with amounts, reasons and how strong the evidence is."""
+    from . import decisions
+
+    def run():
+        return decisions.gather()
+    items = await asyncio.to_thread(_analysis_cache.get, ("decisions", _ledger_key(), datetime_hour()), run)
+    with db.connect() as conn:
+        visible = decisions.sync(conn, items, date.today())
+        past = decisions.history(conn, 20)
+    return {"as_of": datetime_hour(), "decisions": visible, "history": past, "evidence": decisions.EVIDENCE}
+
+
+class DecideIn(BaseModel):
+    key: str = Field(min_length=3, max_length=200)
+    status: Literal["approved", "skipped", "later", "done"]
+
+
+@app.post("/api/decisions/decide")
+def decisions_decide(body: DecideIn):
+    from . import decisions
+    with db.connect() as conn:
+        try:
+            return decisions.decide(conn, body.key, body.status, date.today())
+        except KeyError:
+            raise HTTPException(404, "No such decision")
+
+
+class AskPlumblineIn(BaseModel):
+    question: str = Field(min_length=2, max_length=2000)
+    conversation: str | None = Field(default=None, max_length=64)
+
+
+def _claude_errors(fn):
+    import anthropic
+    try:
+        return fn()
+    except anthropic.AuthenticationError:
+        raise HTTPException(400, "No working Anthropic API key: add ANTHROPIC_API_KEY to .env (Ask and the deep dive use it).")
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "Anthropic's rate limit: try again in a minute.")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(502, f"Claude API error {exc.status_code}: {exc.message}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(502, "Couldn't reach the Claude API.")
+    except TypeError as exc:                    # the SDK found no credentials at all
+        if "auth" in str(exc).lower() or "api_key" in str(exc).lower():
+            raise HTTPException(400, "No Anthropic API key: add ANTHROPIC_API_KEY to .env to use Ask.")
+        raise
+
+
+@app.post("/api/ask")
+async def ask_view(body: AskPlumblineIn):
+    """Ask Plumbline: Claude answers from your own data through the app's read-only tools."""
+    from . import assistant
+    return await asyncio.to_thread(_claude_errors, lambda: assistant.ask(body.question.strip(), body.conversation))
+
+
+@app.get("/api/letter")
+def letter_view():
+    """This week's letter, if it's been written."""
+    import json as _json
+    with db.connect() as conn:
+        return _json.loads(db.get_meta(conn, "letter_latest", "null") or "null") or {"answer": None}
+
+
+@app.post("/api/letter")
+async def letter_write():
+    """Write this week's letter (Claude, from the decisions and the weekly recap)."""
+    import json as _json
+
+    from . import assistant
+    out = await asyncio.to_thread(_claude_errors, assistant.letter)
+    out["written"] = datetime_hour()
+    with db.connect() as conn:
+        db.set_meta(conn, "letter_latest", _json.dumps(out))
+    return out
+
+
 class UsageIn(BaseModel):
     page: str = Field(min_length=1, max_length=30, pattern=r"^[a-z]+$")
 
@@ -2196,7 +2276,7 @@ def usage_hide(body: HideIn):
         return {"hidden": usage.set_hidden(conn, body.page, body.hide)}
 
 
-PAGES = ["home", "hold", "income", "plan", "review", "ideas", "sleepers", "chatter", "moneyflow", "economy", "pulse", "early", "people",
+PAGES = ["home", "decisions", "ask", "hold", "income", "plan", "review", "ideas", "sleepers", "chatter", "moneyflow", "economy", "pulse", "early", "people",
          "radar", "smart", "analyze", "research", "dashboard", "journal", "mynews", "reading", "portfolio", "accounts", "taxes"]
 
 
@@ -2210,6 +2290,15 @@ async def paper_view():
         return {"lists": paper.performance(books, lambda s: _closes(s, 800), date.today()), "books": len(books),
                 "note": None if books else "The first paper books are recorded on the idea-log job's first run of the month."}
     return await asyncio.to_thread(_analysis_cache.get, ("paper", date.today().isoformat()), run)
+
+
+@app.get("/api/signal-backtests")
+async def signal_backtests_view():
+    """Opportunistic insider buying since 2013 and spin-offs since 2005, replayed against SPY."""
+    from . import insider_backtest, spinoff_backtest
+    ins, spin = await asyncio.gather(asyncio.to_thread(insider_backtest.load), asyncio.to_thread(spinoff_backtest.load))
+    return {"insider": {k: v for k, v in (ins or {}).items() if k != "recent"} or None,
+            "spinoff": {k: v for k, v in (spin or {}).items() if k != "cases"} | {"cases": (spin or {}).get("cases", [])[:20]} if spin else None}
 
 
 @app.get("/api/freshness")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 
-CORE = {"home", "hold", "portfolio", "accounts"}      # never suggested for hiding
+CORE = {"home", "decisions", "hold", "portfolio", "accounts"}      # never suggested for hiding
 WINDOW = 30
 KEEP_DAYS = 60
 

@@ -65,7 +65,7 @@ function recordUsage(page) {
   api("/api/usage", { method: "POST", body: JSON.stringify({ page }) }).catch(() => {});
 }
 api("/api/usage").then((u) => { usageState.hidden = u.hidden || []; }).catch(() => {});
-const PAGE_NAMES = { home: "Home", hold: "Hold plan", income: "Income", plan: "Strategy", review: "Review", ideas: "What to buy", sleepers: "Sleepers",
+const PAGE_NAMES = { home: "Home", decisions: "Decisions", ask: "Ask", hold: "Hold plan", income: "Income", plan: "Strategy", review: "Review", ideas: "What to buy", sleepers: "Sleepers",
   chatter: "Chatter", moneyflow: "Money flow", economy: "Economy", pulse: "Market pulse", early: "Early wire", people: "People", radar: "Filing radar",
   smart: "Smart money", analyze: "Analyze", research: "Research", dashboard: "Dashboard", journal: "Track record", mynews: "My news",
   reading: "Reading room", portfolio: "Portfolio", accounts: "Accounts", taxes: "Taxes" };
@@ -84,7 +84,7 @@ async function loadUsage() {
   }));
 }
 
-const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], ideas: ["ideas", "sleepers", "chatter", "moneyflow", "economy"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
+const GROUP_PAGES = { home: ["home", "decisions", "ask"], plan: ["hold", "income", "plan", "review"], ideas: ["ideas", "sleepers", "chatter", "moneyflow", "economy"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
   news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
@@ -113,6 +113,8 @@ function selectTab(name) {
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
   if (name === "home") loadHome();
+  if (name === "decisions") { loadDecisions(); loadLetter(); }
+  if (name === "ask") setTimeout(() => $("#ask-q").focus(), 50);
   if (name === "early") loadEarly();
   if (name === "people") { loadPeople(); loadPickers(); }
   if (name === "hold") { loadHold(); loadTargets(); loadGoal(); }
@@ -120,8 +122,8 @@ function selectTab(name) {
   if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
-  if (name === "ideas") { loadScreen(); loadScreenBacktest(); loadIdeas(); loadEvents(); }
-  if (name === "sleepers") loadSleepers();
+  if (name === "ideas") { loadScreen(); loadScreenBacktest(); loadIdeas(); loadEvents(); loadSignalBacktests(); loadPaper(); }
+  if (name === "sleepers") { loadSleepers(); loadSignalBacktests(); }
   if (name === "chatter") loadChatter();
   if (name === "moneyflow") loadMoneyFlow();
   if (name === "economy") loadEconomy();
@@ -1659,7 +1661,7 @@ async function loadHome(quiet = false) {
   loadMoved();
   renderHomeLists();
   loadHomeFeeds();
-  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); loadHomeIdeas(); }
+  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); loadHomeIdeas(); loadHomeDecisions(); }
   if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
   try {
     const d = await api("/api/portfolio/history?range=" + homeState.range);
@@ -2707,7 +2709,7 @@ async function loadNewsDesk(refresh = false) {
 $("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));
 
 // ---------------------------------------------------------------- setup and what's been checked
-const GO = { offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
+const GO = { ask: ["ask", "#ask-q"], decisions: ["decisions", "#dc-list"], offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
   "cx-rh": ["accounts", "#cx-rh"], "cx-email": ["accounts", "#cx-email"], statement: ["portfolio", "#st-form"], live: ["accounts", "#live"],
   brokers: ["accounts", "#brokers"], transfers: ["accounts", "#transfers"], health: ["accounts", "#health"], connections: ["accounts", "#cx-email"] };
 function goTo(where) {
@@ -3033,7 +3035,8 @@ function screenNote() {
   if (!g || !g.growth || g.growth.cagr == null) { $("#sc-note").textContent = ""; return; }
   const diff = g.growth.cagr - g.growth.cagr_spy, t = g["3m"] && g["3m"].t;
   $("#sc-note").textContent = screenState.which === "bottom"
-    ? `The avoid list: in the replay since 2012 this group trailed SPY by ${Math.abs(g["3m"].avg_edge).toFixed(1)} points a quarter. If you hold one, look hard at why.`
+    ? `In the replay since 2012 this group ${g["3m"].avg_edge < 0 ? "trailed" : "led"} SPY by ${Math.abs(g["3m"].avg_edge).toFixed(1)} points a quarter`
+      + (t != null && Math.abs(t) < 2 ? ", within luck: if you hold one, reread why, but don't sell on the grade alone." : ". If you hold one, look hard at why.")
     : `In the replay since 2012, the ${g.label.toLowerCase()} ${diff >= 0 ? "beat" : "trailed"} SPY by ${Math.abs(diff).toFixed(1)} points a year`
       + (t != null && Math.abs(t) < 2 ? ", not enough to rule out luck" : "") + (diff < 0 ? ": for these, VOO has been hard to beat." : ".");
 }
@@ -3042,6 +3045,103 @@ document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener(
   document.querySelectorAll("#sc-which button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   if (screenState.data) renderScreen();
 }));
+
+// ---------------------------------------------------------------- Decisions: what Plumbline thinks you should do
+const EV_WORD = { rule: "rule", mixed: "tested", unproven: "unproven" };
+function decisionHtml(d, compact) {
+  const act = d.action;
+  const doLabel = !act ? "" : act.type === "trade" ? (act.side === "buy" ? `Buy${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}` : `Sell${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}`) : "Fix it";
+  return `<div class="dc-item" data-key="${esc(d.key)}">
+    <div class="dc-head">${d.new ? `<span class="dc-new">New</span>` : ""}<span class="dc-title">${esc(d.title)}</span>
+      <span class="dc-ev ${esc(d.evidence.level)}" title="${esc(d.evidence.label)}">${esc(EV_WORD[d.evidence.level] || d.evidence.level)}</span></div>
+    ${compact ? `<div class="muted small">${esc(d.why[0] || "")}</div>` : `<ul class="dc-why">${d.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`}
+    <div class="dc-buttons">${act ? `<button type="button" class="small" data-dc="do">${esc(doLabel)}</button>` : ""}
+      ${d.kind === "hold" ? "" : `<button type="button" class="secondary small" data-dc="later">Later</button><button type="button" class="secondary small" data-dc="skipped">Skip</button>`}
+      <button type="button" class="linkish small" data-dc="ask">Ask why</button></div></div>`;
+}
+function wireDecisions(root, items, reload) {
+  root.querySelectorAll(".dc-item").forEach((el) => {
+    const d = items.find((x) => x.key === el.dataset.key);
+    el.querySelectorAll("[data-dc]").forEach((b) => b.addEventListener("click", async () => {
+      const what = b.dataset.dc;
+      if (what === "ask") { selectTab("ask"); askQuestion(`Why do you recommend: "${d.title}"? What would you do instead if I disagree?`); return; }
+      if (what === "do") {
+        const a = d.action;
+        if (a.type === "open") { selectTab(a.page); return; }
+        openTradeTicket(a.symbol, a.side);
+        if (a.dollars) {
+          const unit = $("#tt-unit"), qty = $("#tt-qty");
+          if (unit) { unit.value = "dollars"; unit.dispatchEvent(new Event("change")); }
+          if (qty) { qty.value = Math.floor(a.dollars); qty.dispatchEvent(new Event("input")); }
+        }
+      }
+      try { await api("/api/decisions/decide", { method: "POST", body: JSON.stringify({ key: d.key, status: what === "do" ? "approved" : what }) }); }
+      catch { /* shown next load */ }
+      if (what !== "do") reload();
+    }));
+  });
+}
+async function loadHomeDecisions() {
+  let r;
+  if ($("#home-decide").hidden) { $("#home-decide").hidden = false; $("#hd-list").innerHTML = `<p class="muted">Working out this week's decisions…</p>`; }
+  try { r = await api("/api/decisions"); } catch { $("#home-decide").hidden = true; return; }
+  const open = r.decisions.filter((d) => d.status === "open");
+  $("#hd-meta").textContent = open.length ? `${open.length} open` : "all decided";
+  $("#hd-list").innerHTML = open.slice(0, 3).map((d) => decisionHtml(d, true)).join("") || `<p class="muted">Nothing open. Holding is the plan.</p>`;
+  wireDecisions($("#hd-list"), r.decisions, loadHomeDecisions);
+}
+$("#hd-all").addEventListener("click", () => selectTab("decisions"));
+async function loadDecisions() {
+  let r;
+  try { r = await api("/api/decisions"); } catch (err) { $("#dc-list").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#dc-meta").textContent = `updated ${String(r.as_of).replace("T", " ")}:00`;
+  $("#dc-list").innerHTML = r.decisions.map((d) => decisionHtml(d, false)).join("") || `<p class="muted">Nothing open.</p>`;
+  wireDecisions($("#dc-list"), r.decisions, loadDecisions);
+  $("#dc-history").innerHTML = r.history.length ? `<div class="table-scroll"><table class="data"><thead><tr><th>Decision</th><th>You</th><th>When</th></tr></thead><tbody>
+    ${r.history.map((h) => `<tr><td>${esc(h.title)}</td><td>${esc(h.status)}${h.until ? ` <span class="muted">until ${esc(h.until)}</span>` : ""}</td><td class="muted">${esc(h.decided)}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">Nothing decided yet.</p>`;
+}
+function letterHtml(r) {
+  return `<div class="ask-msg pl">${esc(r.answer)}</div>${r.tools && r.tools.length ? `<p class="muted">From: ${esc(r.tools.join(", "))}</p>` : ""}`;
+}
+async function loadLetter() {
+  try {
+    const r = await api("/api/letter");
+    if (r.answer) { $("#lt-out").innerHTML = letterHtml(r); $("#lt-meta").textContent = `written ${String(r.written || "").replace("T", " ")}:00`; }
+  } catch { /* none yet */ }
+}
+$("#lt-write").addEventListener("click", async () => {
+  $("#lt-out").innerHTML = `<p class="muted">Writing (reads your decisions and weekly recap; about half a minute)…</p>`;
+  try { const r = await api("/api/letter", { method: "POST" }); $("#lt-out").innerHTML = letterHtml(r); $("#lt-meta").textContent = "just now"; }
+  catch (err) { $("#lt-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- Ask Plumbline
+const askState = { conversation: null, busy: false };
+function askAppend(cls, html) {
+  const el = document.createElement("div");
+  el.className = "ask-msg " + cls;
+  el.innerHTML = html;
+  $("#ask-log").appendChild(el);
+  el.scrollIntoView({ block: "nearest" });
+  return el;
+}
+async function askQuestion(q) {
+  q = (q || "").trim();
+  if (!q || askState.busy) return;
+  askState.busy = true;
+  askAppend("me", esc(q));
+  const wait = askAppend("pl", `<span class="muted">Reading your data…</span>`);
+  try {
+    const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, conversation: askState.conversation }) });
+    askState.conversation = r.conversation;
+    wait.innerHTML = esc(r.answer) + (r.tools.length ? `<div class="muted">Looked at: ${esc(r.tools.join(", "))}</div>` : "");
+  } catch (err) { wait.innerHTML = `<span class="down">${esc(err.message)}</span>`; }
+  askState.busy = false;
+}
+$("#ask-form").addEventListener("submit", (e) => { e.preventDefault(); const q = $("#ask-q").value; $("#ask-q").value = ""; askQuestion(q); });
+$("#ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#ask-form").requestSubmit(); } });
+document.querySelectorAll("#ask-chips .chip").forEach((b) => b.addEventListener("click", () => askQuestion(b.textContent)));
 
 // ---------------------------------------------------------------- Home: are the ideas beating VOO?
 async function loadHomeIdeas() {
@@ -3075,9 +3175,12 @@ async function loadScreenBacktest() {
   $("#sb-meta").textContent = `${String(r.first).slice(0, 7)} to ${String(r.last).slice(0, 7)} · built ${String(r.as_of).slice(0, 10)}`;
   $("#sb-verdict").textContent = r.verdict;
   const cellH = (x) => x ? `<span class="${cls(x.avg_edge)}">${fmtPct(x.avg_edge)}</span> <span class="muted">· beat ${x.beat_pct}% · worst ${fmtPct(x.worst_edge)}</span>` : "—";
-  $("#sb-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Picks</th><th>3 months vs SPY</th><th>12 months vs SPY</th><th>$10,000 became</th></tr></thead><tbody>
-    ${Object.values(r.summary).filter((g) => g["3m"]).map((g) => `<tr><td>${esc(g.label)}</td><td>${cellH(g["3m"])}</td><td>${cellH(g["12m"])}</td>
+  const tbl = (rows) => `<div class="table-scroll"><table class="data"><thead><tr><th>Picks</th><th>3 months vs SPY</th><th>12 months vs SPY</th><th>$10,000 became</th></tr></thead><tbody>
+    ${rows.map((g) => `<tr><td>${esc(g.label)}</td><td>${cellH(g["3m"])}${g["3m"] && g["3m"].t != null ? ` <span class="muted">t ${g["3m"].t}</span>` : ""}</td><td>${cellH(g["12m"])}</td>
       <td>${fmtMoney(g.growth.screen, 0)} <span class="muted">(SPY ${fmtMoney(g.growth.spy, 0)})</span></td></tr>`).join("")}</tbody></table></div>`;
+  const all = Object.values(r.summary).filter((g) => g["3m"]);
+  $("#sb-out").innerHTML = tbl(all.filter((g) => !g.check))
+    + (all.some((g) => g.check) ? `<h3 class="small">Checks on the bottom of the ranking</h3>${tbl(all.filter((g) => g.check))}` : "");
 }
 
 // ---------------------------------------------------------------- ideas: events (raised guidance, spin-offs)
@@ -3097,6 +3200,18 @@ async function loadEvents() {
     || `<p class="muted">No spin-off started trading in the last year and a half.</p>`)
     + (coming.length ? `<p class="muted">Registered, not trading yet: ${coming.slice(0, 12).map((x) => `${esc(x.name)}${x.ticker ? ` (${esc(x.ticker)})` : ""}, filed ${esc(x.last_filed)}`).join(" · ")}</p>` : "");
   document.querySelectorAll("#ev-pead [data-open], #ev-spin [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
+// ---------------------------------------------------------------- ideas: paper portfolios (forward test)
+async function loadPaper() {
+  let r;
+  try { r = await api("/api/paper"); } catch (err) { $("#pp-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#pp-meta").textContent = r.books ? `${r.books} monthly books` : "";
+  if (!r.lists.length) { $("#pp-out").innerHTML = `<p class="muted">${esc(r.note || "No month has finished yet: the first result shows a month after the first books.")}</p>`; return; }
+  $("#pp-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>List</th><th>Since</th><th>$10,000 became</th><th>VOO</th><th>Months</th></tr></thead><tbody>
+    ${r.lists.map((x) => `<tr><td>${esc(x.label)}</td><td>${esc(x.months.length ? x.months[0].from : x.open)}</td>
+      <td class="${cls(x.ahead)}">${fmtMoney(x.value, 0)}</td><td>${fmtMoney(x.voo_value, 0)}</td><td>${x.months.length}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted">A few months say nothing either way; the same 20-results rule as the scorecard applies before any list earns your money.</p>`;
 }
 
 // ---------------------------------------------------------------- ideas: the scorecard
@@ -3145,6 +3260,22 @@ async function loadSleepers() {
         <span class="tk-level">${esc(LV[x.level])}</span> <span class="muted">${x.cap ? fmtMoney(x.cap / 1e9, 1) + "B" : ""} · ${esc(x.sector || "")}</span>${sizeBtn(x.symbol, "sleeper")}</div>
       <ul class="hp-lines">${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`).join("") || `<p class="muted">Nothing lines up this week. That's a fine answer.</p>`);
   document.querySelectorAll("#sl-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
+// ---------------------------------------------------------------- signal backtests (insider buying, spin-offs)
+async function loadSignalBacktests() {
+  let r;
+  try { r = await api("/api/signal-backtests"); } catch { return; }
+  const ins = r.insider;
+  if (ins) {
+    $("#ib-card").hidden = false;
+    $("#ib-meta").textContent = `since ${esc(ins.since)} · built ${String(ins.as_of).slice(0, 10)}`;
+    $("#ib-verdict").textContent = ins.verdict;
+    const c = (x) => x ? `<span class="${cls(x.avg_edge)}">${fmtPct(x.avg_edge)}</span> <span class="muted">· ${x.beat_pct}% of months · t ${x.t ?? "—"}</span>` : "—";
+    $("#ib-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Purchases</th><th>3 months vs SPY</th><th>6 months</th><th>12 months</th></tr></thead><tbody>
+      ${Object.values(ins.summary).map((g) => `<tr><td>${esc(g.label)}</td><td>${c(g["3m"])}</td><td>${c(g["6m"])}</td><td>${c(g["12m"])}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+  if (r.spinoff) $("#ev-spin-bt").textContent = r.spinoff.verdict;
 }
 
 // ---------------------------------------------------------------- chatter and themes

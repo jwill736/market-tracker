@@ -1,7 +1,7 @@
 import math
 from datetime import date, timedelta
 
-from market_tracker import screen, screen_backtest as sb
+from market_tracker import screen_backtest as sb
 
 
 def _calendar(start="2011-01-03", n=4200):
@@ -101,3 +101,13 @@ def test_parse_history_undoes_splits_for_market_values():
     assert [c for _, c in raw] == [400.0, 101.0, 102.0]           # traded at $400 before the 4-for-1 split
     p = sb.Prices(["a", "b"], {"X": sb.align(["a", "b"], [("a", 10.0), ("b", 11.0)])}, {"X": sb.align(["a", "b"], [("a", 40.0), ("b", 11.0)])})
     assert sb.price_traded(p, "X", 0) == 40.0 and sb.price_at(p, "X", 0) == 10.0 and sb.price_traded(p, "Y", 0) is None
+
+
+def test_bottom_sentence_follows_the_latest_run():
+    def bt(edge, t):
+        return {"summary": {"bottom": {"3m": {"avg_edge": edge, "t": t}}}}
+    assert sb.bottom_sentence(None) == ""
+    assert "statistically solid" in sb.bottom_sentence(bt(-4.9, -2.6))
+    weak = sb.bottom_sentence(bt(-0.83, -0.73))
+    assert "only 0.8 points" in weak and "not a reason to sell" in weak
+    assert "did not trail" in sb.bottom_sentence(bt(0.4, 0.3))

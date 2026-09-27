@@ -508,7 +508,7 @@ EPS against a year earlier. Releases lead with the company's own adjusted figure
 ## Ask Claude about your portfolio (read-only connector)
 
 `mt mcp` runs Plumbline as a Model Context Protocol server, so Claude Desktop or Claude Code can answer "why am I down this
-month?" or "which of my dividends look shaky?" from your own data. It has 35 tools and every one is a GET to the running
+month?" or "which of my dividends look shaky?" from your own data. It has 39 tools and every one is a GET to the running
 app (portfolio, accounts, weekly recap, brief, what moved, hold plan, news, performance, crises, overlap, style bets,
 10-K changes, earnings recap, dividend safety, income, taxes, events, data confidence, advice record, the screen, the
 idea scorecard, sleepers, chatter, theme crowding, money flow, the economy, priced-in checks, government contracts,
@@ -521,6 +521,43 @@ filing Q&A. Install with `pip install -e ".[mcp]"`, then in Claude Desktop's con
 ```
 
 `PLUMBLINE_URL` can point at your hosted copy; the connector logs in with the app's password like the browser does.
+
+## Decisions: the app tells you what to do (Home → Decisions)
+
+Every other page describes; this one decides. Once a day (8am ET) and whenever you open it, Plumbline turns the hold
+plan, exit reviews, tax picture, idle cash, connection health and data freshness into a short ranked list of actions,
+each in dollars, with its reasons and how strong the evidence is:
+
+| Evidence | Means | Examples |
+|---|---|---|
+| **Your rule or a hard fact** | act on it | a broken connection, your own tripwire, a position over your cap, a tax-loss harvest, idle cash |
+| **Tested, not proven** | worth a look | an idea you logged whose stated reason has gone (thesis break) |
+| **Unproven** | optional, small | a spin-off to size; a holding in the screen's bottom 50 (the replay couldn't tell that from luck) |
+
+"Hold: nothing needs you" is a real answer and the usual one. **Do it** opens the trade ticket with the dollar amount
+filled in; you preview and confirm there. **Plumbline never places an order by itself.** Skip hides a decision for 30
+days, Later for 7, and every approved or skipped call with a stock is written to the advice record at that day's price,
+so the app's own calls get scored against simply holding VOO. New decisions that matter (a sync to fix, a sell, stale
+data, a harvest, a switch backed by a broken thesis, a trim, idle cash) are pushed to your phone once.
+
+**Exit review.** A holding flagged by a broken thesis or a low screen grade gets the tax arithmetic from your own lots:
+the tax to switch to VOO today, how much better than VOO it would have to do each year for 3 or 5 years to be worth
+keeping, and what waiting for long-term rates would save.
+
+**Ask Plumbline** (Home → Ask) is a chat with Claude that answers from your data, using the same read-only tools as the
+connector above: "should I sell TSLA?", "why am I behind VOO?". It speaks as an advisor: the uncomfortable answer
+first, each claim tagged [Certain], [Likely] or [Guessing], and "I disagree because..." when your plan looks wrong. It
+can't trade or change anything. **The weekly letter** (Decisions page, Write this week's letter) is the same in 200
+words: the one thing that matters, what to do in dollars, what to leave alone. Both need `ANTHROPIC_API_KEY`; a
+question that uses a few tools costs a few cents.
+
+**Data freshness.** Every file the GitHub jobs write (screen, idea log, insider buys, 10-K ranks, backtests) has a
+maximum age; one that goes stale shows on Home and in Decisions and is pushed once, so a quiet job can't leave you
+reading last month's lists.
+
+**Pages you don't use.** The app counts which pages you open, on your own copy only. After 30 days, pages opened on
+fewer than 2 of the last 30 days are suggested for hiding (Accounts → Pages you use); hiding only takes the page off
+the menu, and one tap brings it back.
 
 ## Ideas: what to buy, sleepers, chatter, money flow, economy
 
@@ -547,7 +584,19 @@ each kind of idea is doing against VOO so far.
   quarter since 2012 from what was public then (SEC numbers 135 days after the quarter, that day's prices and market
   values), its picks held 3, 6 and 12 months against SPY, dividends included. Reported with its flaws: companies that
   went bust or were bought since are missing from today's stock list (which flatters the result), SEC frames carry later
-  corrections, and the rules were written with hindsight. The bottom 50 are shown too: they should lag.
+  corrections, and the rules were written with hindsight. The bottom 50 are shown too: they should lag. Company size
+  uses the price as traded that day (today's split-adjusted price times the splits since), not the adjusted price, which
+  had made pre-split companies look tiny and the bottom 50 look far worse than they were.
+- **Do the signals work?** (monthly job `Signal backtests`, `mt insider-backtest`, `mt spinoff-backtest`): the same
+  test for two idea sources. Opportunistic insider buying (SEC Form 4 quarterly data since 2012, officers and directors,
+  $100k+, planned 10b5-1 trades out, routine same-month buyers split off): about +1 point on SPY over 6 months, within
+  luck; only the smallest companies showed more, where the missing-company bias is worst. Spin-offs since 2005 (Form 10
+  registrations): bought 20 days after they start trading, they beat SPY by 23 points over 12 months on average, but the
+  median was 7 and a few big winners carry it; the two-year median trailed. Both results show on the Sleepers and
+  Events pages and set how the app words those ideas.
+- **Paper portfolios** (each list, forward): on the first weekday of every month the idea job buys each list's top 20
+  on paper at the close, equal weight, and keeps chaining them against VOO: the what-to-buy lists, sleepers, spin-offs
+  and the bottom 50. A record that starts now can't be fitted to history. Shown on the Ideas page under the scorecard.
 - **Growing order backlogs**: contracted revenue not yet delivered ("remaining performance obligations") growing 10+
   points faster than revenue, a meaningful backlog a year ago, and the stock not among the most expensive.
 - **Priced in?** (any stock's page): P/E against its own last five years of quarter-ends, a 12-month return in the top
@@ -719,7 +768,7 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 | Variable | Purpose |
 |---|---|
 | `SEC_USER_AGENT` | **Required by SEC**: `"your-app your@email.com"`. Requests are throttled below SEC's 10 req/s limit |
-| `ANTHROPIC_API_KEY` | Deep-dive research (or any credential source the Anthropic SDK resolves) |
+| `ANTHROPIC_API_KEY` | Deep-dive research, Ask Plumbline and the weekly letter (or any credential source the Anthropic SDK resolves) |
 | `MT_RESEARCH_MODEL` | Default `claude-opus-5`. Requests opt into server-side refusal fallbacks (`fallbacks="default"`) |
 | `FINNHUB_API_KEY` | Optional: real-time US stock trades (streamed to the private app), quotes and company news |
 | `MT_DB_PATH` | SQLite file (default `market_tracker.db`) |
@@ -763,7 +812,8 @@ market_tracker/
 | `tenk-rank.yml` | Sundays 07:17 UTC, on demand (with an optional company limit) | ranks every S&P 500 company by how much of its latest 10-K's Risk Factors is new; only companies with a new 10-K are re-read. Writes `tenk_rank.json` to the `journal-data` branch |
 | `screen.yml` | Sundays 06:43 UTC, on demand | scores every listed company worth $300M+ on quality, value, momentum and dilution within its sector, and finds growing backlogs. Writes `screen.json` to the `journal-data` branch |
 | `screen-backtest.yml` | 2nd of each month, on demand | replays the screen quarterly since 2012 on what was public then and compares its picks with SPY. Writes `screen_backtest.json` to `journal-data` |
-| `ideas.yml` | weekdays 21:25 UTC, on demand | prices each screen's ideas at the close, adds them to `ideas_log.jsonl` and seals the day into `ideas_chain.jsonl` on `journal-data` |
+| `ideas.yml` | weekdays 21:25 UTC, on demand | prices each screen's ideas at the close, adds them to `ideas_log.jsonl` and seals the day into `ideas_chain.jsonl` on `journal-data`; on the first weekday of a month, also starts each list's paper portfolio (`paper_books.jsonl`) |
+| `signal-backtests.yml` | 3rd of each month, on demand | replays opportunistic insider buying since 2012 and spin-offs since 2005 against SPY. Writes `insider_backtest.json` and `spinoff_backtest.json` to `journal-data` |
 | `watch.yml` | every 5 min on weekdays, every 3 h at weekends | reads EDGAR's latest-filings feed for Form 4 purchases and Schedule 13D/13G stakes; opens `insider-alert` / `stake-alert` issues and pushes phone notifications (below) |
 | `site.yml` | every 30 min in US market hours, every 6 h otherwise, after journal and alert runs | builds the public site (`mt site`) and deploys it to GitHub Pages |
 

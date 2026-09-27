@@ -17,7 +17,10 @@ What this can't fix, reported next to the result rather than hidden:
   leaks in. Small, but not zero.
 - The rules were written in 2026 with the research in hand. A replay can't undo that hindsight.
 
-The bottom-50 group is a check: if the screen means anything, it should lag.
+The bottom-50 group is a check: if the screen means anything, it should lag. Once stock splits
+were handled (company size from the price as traded, not today's split-adjusted price), it
+mostly didn't: under a point a quarter behind SPY, within luck. bottom_sentence() words
+whatever the latest run found, so nothing else in the app quotes a stale number.
 """
 
 from __future__ import annotations
@@ -260,6 +263,20 @@ def _t(x: float | None) -> str:
     return f" (t = {x:.1f}: {'statistically solid' if abs(x) >= 2 else 'could be luck'})"
 
 
+def bottom_sentence(bt: dict | None) -> str:
+    """What the latest replay says about the screen's bottom 50, in one sentence ("" before a run)."""
+    q = (((bt or {}).get("summary") or {}).get("bottom") or {}).get("3m")
+    if not q:
+        return ""
+    edge, t = q["avg_edge"], q.get("t")
+    if edge < 0 and t is not None and t <= -2:
+        return f"In the replay since 2012 the screen's bottom 50 trailed SPY by {-edge:.1f} points a quarter (t = {t:.1f}: statistically solid)."
+    if edge < 0:
+        return (f"In the replay since 2012 the screen's bottom 50 trailed SPY by only {-edge:.1f} points a quarter"
+                + (f" (t = {t:.1f})" if t is not None else "") + ": within luck, so a low grade alone is not a reason to sell.")
+    return f"In the replay since 2012 the screen's bottom 50 did not trail SPY ({edge:+.1f} points a quarter): a low grade alone is not a reason to sell."
+
+
 def verdict(summary: dict, survivorship: float | None) -> str:
     """Every group against SPY in one paragraph, weakest claims labelled as such."""
     if not summary["large"].get("3m"):
@@ -278,12 +295,16 @@ def verdict(summary: dict, survivorship: float | None) -> str:
     ev, b = summary["everyone"]["growth"], summary["bottom"]["3m"]
     if ev["cagr"] is not None and b:
         line += (f" The average screened stock, equal-weighted, made {ev['cagr']:+.1f}% a year, so beating SPY at all took picking well;"
-                 f" the bottom 50 trailed SPY by {-b['avg_edge']:.1f} points a quarter.")
+                 f" the bottom 50 {'trailed' if b['avg_edge'] < 0 else 'led'} SPY by {abs(b['avg_edge']):.1f} points a quarter{_t(b.get('t'))}.")
     checks = [(g, summary[g]["3m"]) for g in CHECKS if g in summary and summary[g].get("3m")]
     comps = [(g, q) for g, q in checks if g.startswith("bottom_") and not g.endswith("pct")]
     if comps:
         g, q = min(comps, key=lambda x: x[1]["avg_edge"])
         line += f" Of the four grades alone, the worst on {g.replace('bottom_', '').replace('_', ' ')} lagged most ({q['avg_edge']:+.1f} points a quarter)."
+        g2, q2 = max(comps, key=lambda x: x[1]["avg_edge"])
+        if q2["avg_edge"] > 0:
+            line += (f" The worst on {g2.replace('bottom_', '').replace('_', ' ')} alone led SPY ({q2['avg_edge']:+.1f} a quarter):"
+                     " in this period that grade pointed the wrong way.")
     if survivorship:
         line += (f" Survivorship: up to {survivorship:.0f}% of large SEC filers from those dates have no ticker today and are missing,"
                  " which flatters the buy lists and, since the missing are more often failures, understates how badly the bottom did.")
