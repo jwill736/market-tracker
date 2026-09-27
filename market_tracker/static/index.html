@@ -37,6 +37,9 @@
     <button role="tab" data-group="portfolio" aria-selected="false">Portfolio</button>
   </nav>
   <nav id="subtabs" aria-label="Pages" hidden>
+    <button data-tab="home" data-group="home">Overview</button>
+    <button data-tab="decisions" data-group="home">Decisions</button>
+    <button data-tab="ask" data-group="home">Ask</button>
     <button data-tab="hold" data-group="plan">Hold plan</button>
     <button data-tab="income" data-group="plan">Income</button>
     <button data-tab="plan" data-group="plan">Strategy</button>
@@ -78,6 +81,11 @@
 <main>
   <!-- Home: your money, Robinhood-style -->
   <section id="tab-home" class="tab">
+    <div class="card decide-card" id="home-decide" hidden>
+      <div class="card-head"><h2>Plumbline's call</h2>
+        <span class="muted small"><span id="hd-meta"></span> · <button type="button" class="linkish" id="hd-all">All decisions</button></span></div>
+      <div id="hd-list"></div>
+    </div>
     <div class="card brief-card" id="home-brief" hidden>
       <div class="card-head"><h2 id="hb-title">Morning brief</h2>
         <span class="muted small"><span id="hb-when"></span> · <button type="button" class="linkish" id="hb-more">Show all</button></span></div>
@@ -729,6 +737,7 @@
       <h3 class="small">Raised guidance, market agreed</h3>
       <div id="ev-pead" class="small"><p class="muted">Loading…</p></div>
       <h3 class="small">Spin-offs</h3>
+      <p class="verdict-line small" id="ev-spin-bt"></p>
       <div id="ev-spin" class="small"></div>
     </div>
     <div class="card">
@@ -742,6 +751,12 @@
           <p class="muted" id="id-msg"></p></form></details>
       <div id="id-list" class="small"></div>
     </div>
+    <div class="card" id="pp-card">
+      <div class="card-head"><h2>Paper portfolios</h2><span class="muted small" id="pp-meta"></span></div>
+      <p class="muted small">Each list's top 20 bought on paper at the close on the first weekday of every month, equal weight, and chained against
+        VOO. A record that starts now can't be fitted to history, so this is the fairest test the lists get.</p>
+      <div id="pp-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
   </section>
 
   <section id="tab-sleepers" class="tab" hidden>
@@ -753,6 +768,14 @@
         This is where these signals have worked best, and where they fail hardest. "Size it" gives a dollar amount inside your limits.</p>
       <p class="verdict-line" id="sl-bucket"></p>
       <div id="sl-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card" id="ib-card" hidden>
+      <div class="card-head"><h2>Has insider buying beaten the market?</h2><span class="muted small" id="ib-meta"></span></div>
+      <p class="verdict-line" id="ib-verdict"></p>
+      <div id="ib-out" class="small"></div>
+      <p class="muted small">A replay of every open-market purchase by officers and directors since 2013 (SEC Form 4 data), bought the day after the
+        filing, held 3, 6 and 12 months against SPY, averaged month by month. Only companies listed today are covered, which flatters the result,
+        most of all for the smallest companies. Sizes use the price as it traded, not today's split-adjusted one.</p>
     </div>
   </section>
 
@@ -848,7 +871,49 @@
   </section>
 
   <!-- Accounts: connections, transfers, cash, brokers, backup -->
+  <section id="tab-decisions" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>What to do this week</h2><span class="muted small" id="dc-meta"></span></div>
+      <p class="muted small">Ranked, with amounts. Approving a trade opens the trade ticket with the amount filled in: you still preview and
+        confirm there, nothing is sent on its own. Every decision with a stock is scored against simply holding VOO (Discover → Track record).
+        Evidence: <b>rule</b> = your own rule or a hard fact; <b>tested</b> = checked on history, not proven; <b>unproven</b> = optional, keep it small.</p>
+      <div id="dc-list"><p class="muted">Working it out…</p></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>This week's letter</h2><span class="muted small" id="lt-meta"></span></div>
+      <div id="lt-out" class="small"><p class="muted">A short note from Plumbline on what matters this week, written by Claude from your decisions and weekly recap
+        (uses your Anthropic API key, a few cents).</p></div>
+      <button type="button" class="secondary small" id="lt-write">Write this week's letter</button>
+    </div>
+    <div class="card">
+      <h2>Decided</h2>
+      <div id="dc-history" class="small"></div>
+    </div>
+  </section>
+
+  <section id="tab-ask" class="tab" hidden>
+    <div class="card ask-card">
+      <div class="card-head"><h2>Ask Plumbline</h2><span class="muted small" id="ask-meta">Claude, reading your own data</span></div>
+      <p class="muted small">Answers come from your holdings, plans, taxes, screens and backtests through the app's read-only tools; it can't trade or
+        change anything. It talks like an advisor: the uncomfortable part first, each claim tagged with how sure it is. Uses your Anthropic API key.</p>
+      <div class="ask-chips" id="ask-chips">
+        <button type="button" class="chip">What should I do this week?</button>
+        <button type="button" class="chip">Am I beating VOO, and why or why not?</button>
+        <button type="button" class="chip">What's my biggest risk right now?</button>
+        <button type="button" class="chip">Which holding would you sell first, and what would it cost in tax?</button>
+      </div>
+      <div id="ask-log" class="ask-log" aria-live="polite"></div>
+      <form id="ask-form" class="ask-form"><textarea id="ask-q" rows="2" maxlength="2000" placeholder="Ask about your money…" aria-label="Your question"></textarea>
+        <button type="submit">Ask</button></form>
+    </div>
+  </section>
+
   <section id="tab-accounts" class="tab" hidden>
+    <div class="card" id="usage-card">
+      <div class="card-head"><h2>Pages you use</h2><span class="muted small" id="us-meta"></span></div>
+      <p class="muted small" id="us-text">Counted on this app only, never sent anywhere. Hiding a page takes it off the menu; it keeps running.</p>
+      <div id="us-out" class="small"></div>
+    </div>
     <div class="card" id="setup">
       <div class="card-head"><h2>Setup</h2><span class="muted small" id="su-count"></span></div>
       <p class="muted small">Each step is done only when its test passes. In order: the backup first, then phone alerts, then each

@@ -1,7 +1,7 @@
 import math
 from datetime import date, timedelta
 
-from market_tracker import screen, screen_backtest as sb
+from market_tracker import screen_backtest as sb
 
 
 def _calendar(start="2011-01-03", n=4200):
@@ -74,3 +74,40 @@ def test_run_end_to_end_on_synthetic_history():
     assert s["large"]["growth"]["screen"] > s["large"]["growth"]["spy"]
     assert 0 < out["survivorship_pct"] < 1 and "Survivorship" in out["verdict"]
     assert set(out["periods"][0]["groups"]["large"]["top"][:2]) == {"S238", "S239"}     # the best of each sector
+    assert s["bottom_quality"]["check"] and s["bottom_quality"]["3m"]["avg_edge"] < 0      # quality drives returns here
+    assert s["large"]["12m"]["t"] is not None and s["large"]["3m"]["breakeven_missing"] is not None
+    assert "Of the four grades alone" in out["verdict"]
+
+
+def test_newey_west_widens_overlapping_errors():
+    import random
+    rng = random.Random(3)
+    base = [rng.gauss(0.01, 0.05) for _ in range(60)]
+    overlapping = [sum(base[i:i + 4]) for i in range(57)]       # 12-month holds started each quarter
+    plain = sb.newey_west_t(overlapping, 0)
+    nw = sb.newey_west_t(overlapping, 3)
+    assert plain is not None and nw is not None and abs(nw) < abs(plain)
+    assert sb.newey_west_t([0.1] * 5, 1) is None
+    assert sb.breakeven_missing(0.3, 0.3) == 1.0 and sb.breakeven_missing(None, 0.3) is None
+
+
+def test_parse_history_undoes_splits_for_market_values():
+    day = 86400
+    res = {"timestamp": [1_600_000_000, 1_600_000_000 + day, 1_600_000_000 + 2 * day],
+           "indicators": {"quote": [{"close": [100.0, 101.0, 102.0]}], "adjclose": [{"adjclose": [98.0, 99.0, 102.0]}]},
+           "events": {"splits": {"x": {"date": 1_600_000_000 + day, "numerator": 4, "denominator": 1}}}}
+    adj, raw = sb.parse_history(res)
+    assert [c for _, c in adj] == [98.0, 99.0, 102.0]
+    assert [c for _, c in raw] == [400.0, 101.0, 102.0]           # traded at $400 before the 4-for-1 split
+    p = sb.Prices(["a", "b"], {"X": sb.align(["a", "b"], [("a", 10.0), ("b", 11.0)])}, {"X": sb.align(["a", "b"], [("a", 40.0), ("b", 11.0)])})
+    assert sb.price_traded(p, "X", 0) == 40.0 and sb.price_at(p, "X", 0) == 10.0 and sb.price_traded(p, "Y", 0) is None
+
+
+def test_bottom_sentence_follows_the_latest_run():
+    def bt(edge, t):
+        return {"summary": {"bottom": {"3m": {"avg_edge": edge, "t": t}}}}
+    assert sb.bottom_sentence(None) == ""
+    assert "statistically solid" in sb.bottom_sentence(bt(-4.9, -2.6))
+    weak = sb.bottom_sentence(bt(-0.83, -0.73))
+    assert "only 0.8 points" in weak and "not a reason to sell" in weak
+    assert "did not trail" in sb.bottom_sentence(bt(0.4, 0.3))

@@ -17,8 +17,9 @@ Per kind of idea:
 Found problems are pushed to your phone once each (checked weekly, after the Sunday screen).
 
 Separately, any stock you hold that sits in the weekly screen's bottom 50 (companies worth $2B+)
-is flagged whether or not it came from an idea: in the replay since 2012 that group trailed SPY
-by about 5 points a quarter, the clearest result the screen has.
+is shown whether or not it came from an idea. It is shown, not pushed: once stock splits were
+handled, the replay since 2012 found that group trailed SPY by under a point a quarter, within
+luck, so a low grade is a prompt to reread why you own it, not a sell signal.
 """
 
 from __future__ import annotations
@@ -100,5 +101,5 @@ def bottom_held(held: set[str], screen_data: dict | None) -> list[dict]:
         if r["symbol"] in held:
             out.append({"id": None, "symbol": r["symbol"], "source": "bottom", "day": str((screen_data or {}).get("as_of", ""))[:10],
                         "reasons": [f"in the screen's bottom 50 of companies worth $2B+ (grade {r['score']:.0f}/100); "
-                                    "that group trailed SPY by about 5 points a quarter in the replay since 2012"]})
+                                    "in the replay since 2012 that group trailed SPY by under a point a quarter, within luck"]})
     return out

@@ -343,8 +343,8 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
             "top_all": [_public(s, rows[s]) for s in ranked if rows[s]["cap"] >= 2e9][:50],
             "small_mid": [_public(s, rows[s]) for s in mid[:150]],
             "backlog": backlog_picks(rows),
-            # The replay (screen_backtest) found the bottom of the ranking far more telling than the top:
-            # the 50 lowest-graded companies worth $2B+ trailed SPY by about 5 points a quarter.
+            # The replay (screen_backtest) checks the ranking from this end too; once splits were handled the
+            # 50 lowest-graded companies worth $2B+ trailed SPY by under a point a quarter, within luck.
             "bottom": [_public(s, rows[s]) for s in [x for x in ranked if rows[x]["cap"] >= 2e9][::-1][:BOTTOM_N]],
             "lookup": lookup}
 

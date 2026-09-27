@@ -200,6 +200,8 @@ class Sentinel:
                 await asyncio.to_thread(log_advice_daily)
                 await asyncio.to_thread(log_ideas_daily)
                 await asyncio.to_thread(thesis_check_weekly)
+                await asyncio.to_thread(freshness_check)
+                await asyncio.to_thread(decisions_daily)
                 await asyncio.to_thread(big_moves_check)
                 held_now = my_symbols()[0]
                 if held_now:
@@ -303,12 +305,54 @@ def log_ideas_daily(today: date | None = None, items_fn=None, remote_fn=None, no
     return n
 
 
+def decisions_daily(now: datetime | None = None, gather_fn=None) -> int:
+    """Once a day from 8am ET: work out the decisions, push the new ones that matter, and write the
+    stock decisions to the advice track record at today's price."""
+    from . import advice, decisions
+    from .weekly import ET
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    day = now.date()
+    if now.hour < 8:
+        return 0
+    with db.connect() as conn:
+        if db.get_meta(conn, "decisions_day", "") == day.isoformat():
+            return 0
+        db.set_meta(conn, "decisions_day", day.isoformat())
+    items = (gather_fn or decisions.gather)(day)
+    with db.connect() as conn:
+        visible = decisions.sync(conn, items, day)
+        advice.record(conn, day.isoformat(), decisions.advice_items(visible), lambda s: market.get_quote(s).price)
+    msg = decisions.push_text(visible)
+    if msg:
+        notify.send(notify.Message(title=msg[0], body=msg[1], priority=4, tags=("compass",)))
+    return len([d for d in visible if d.get("new")])
+
+
+def freshness_check(now: datetime | None = None, check_fn=None) -> int:
+    """Hourly: push once for each GitHub-built data file that has gone stale (see freshness.py)."""
+    from . import freshness
+    now = now or datetime.now(timezone.utc)
+    hour = now.strftime("%Y-%m-%dT%H")
+    with db.connect() as conn:
+        if db.get_meta(conn, "freshness_hour", "") == hour:
+            return 0
+        db.set_meta(conn, "freshness_hour", hour)
+        already = set(json.loads(db.get_meta(conn, "freshness_alerted", "[]") or "[]"))
+    results = (check_fn or freshness.check)(now.date())
+    due, keep = freshness.alerts_due(results, already)
+    with db.connect() as conn:
+        db.set_meta(conn, "freshness_alerted", json.dumps(sorted(keep)))
+        db.set_meta(conn, "freshness_latest", json.dumps(results))
+    for r in due:
+        notify.send(notify.Message(title=f"Stale data: {r['name']}", body=r["text"], priority=3, tags=("hourglass",)))
+    return len(due)
+
+
 def thesis_check_weekly(now: datetime | None = None, items_fn=None, check_fn=None) -> int:
     """Once a week (Sunday afternoon, after the Sunday screen): has the reason behind any idea you
     bought or hold gone away? Each problem is pushed once."""
     import re as _re
 
-    from . import thesis
     from .weekly import ET
     now = (now or datetime.now(timezone.utc)).astimezone(ET)
     back = (now.weekday() + 1) % 7
@@ -349,14 +393,15 @@ def _thesis_found(today: date, items_fn=None) -> list[dict]:
     from . import earnings, ideas, screen, thesis
     with db.connect() as conn:
         rows = ideas.logged(conn)
+    # Only broken theses are pushed: a stock in the screen's bottom 50 didn't lag by more than luck in the
+    # replay, so it's shown on the Ideas and Decisions pages but doesn't earn a phone alert.
+    if not rows:
+        return []
     held = set(my_symbols()[0])
     data = screen.load()
-    bottom = thesis.bottom_held(held, data)
-    if not rows:
-        return bottom
     items = (items_fn or (lambda rs: ideas.score(rs, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)], today)["items"]))(rows)
     return thesis.check(items, held, today, lambda s: screen.lookup(data, s),
-                        trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap) + bottom
+                        trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap)
 
 
 def crypto_headsups(held: list[str]) -> int:

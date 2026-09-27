@@ -155,7 +155,7 @@ def for_symbol(symbol: str, screen_data: dict | None = None, get=None, history_f
     low = next((r for r in (screen_data or {}).get("bottom", []) if r["symbol"] == symbol), None)
     if low:
         f.append({"level": 2, "text": f"In the weekly screen's bottom 50 of companies worth $2B+ (grade {low['score']:.0f}/100): in the replay "
-                                      "since 2012 that group trailed SPY by about 5 points a quarter."})
+                                      "since 2012 that group trailed SPY by under a point a quarter, within luck: reread why you own it, don't sell on the grade alone."})
     short = None
     if market.asset_class(symbol) == "stock" and short_fn is not False:
         from . import shorts

@@ -427,7 +427,8 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 #pk-suggested .chip { cursor: pointer; border: 0; }
 .brief-list button.linkish, .brief-card button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
 .pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #tab-ideas button.linkish, #tab-sleepers button.linkish,
-#tab-chatter button.linkish, #tab-moneyflow button.linkish, #sym-pi button.linkish, #nm-out button.linkish, #ye-body button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+#tab-chatter button.linkish, #tab-moneyflow button.linkish, #sym-pi button.linkish, #nm-out button.linkish, #ye-body button.linkish,
+.decide-card button.linkish, #tab-decisions button.linkish, #home-ideas button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 .hp-thesis button.linkish { color: var(--accent); }
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
@@ -589,3 +590,29 @@ sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .size-out b { font-size: 15px; }
 .size-out ul { margin: 4px 0 0; padding-left: 18px; }
 .id-broken { color: var(--bad); }
+
+/* Decisions and Ask */
+.decide-card { border-left: 3px solid var(--accent); }
+.dc-item { border-top: 1px solid var(--grid); padding: 10px 0; display: grid; gap: 6px; }
+.dc-item:first-child { border-top: 0; }
+.dc-title { font-weight: 600; font-size: 15px; }
+.dc-ev { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--page); color: var(--ink-2); white-space: nowrap; }
+.dc-ev.rule { background: var(--band); color: var(--accent); }
+.dc-ev.unproven { background: var(--warn-bg); color: var(--warn-ink); }
+.dc-why { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+.dc-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.dc-new { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+.ask-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.ask-chips .chip { cursor: pointer; }
+.ask-log { display: grid; gap: 10px; margin: 10px 0; }
+.ask-msg { padding: 10px 12px; border-radius: 10px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-msg.me { background: var(--band); justify-self: end; max-width: 85%; }
+.ask-msg.pl { background: var(--page); }
+.ask-msg .muted { font-size: 12px; margin-top: 6px; }
+.ask-form { display: flex; gap: 8px; align-items: flex-end; }
+.ask-form textarea { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.ask-chips .chip { border: 0; font-weight: 500; padding: 5px 11px; font-family: inherit; }
+.ask-chips .chip:hover { background: var(--band); color: var(--accent); }
+.dc-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.dc-head .dc-title { flex: 1 1 auto; min-width: 0; }
+.dc-buttons { align-items: center; }

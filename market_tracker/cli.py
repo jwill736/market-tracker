@@ -589,13 +589,64 @@ def cmd_ideas_log(args) -> int:
     """Log today's ideas to the GitHub idea log in a folder (the daily ideas job runs this)."""
     from datetime import date as _date
 
-    from . import idealab, ideas
+    from . import idealab, ideas, paper, screen
+    from .providers import market
     today = _date.fromisoformat(args.day) if args.day else _date.today()
     try:
         ideas.run_job(args.dir, today, idealab.daily_items)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    paper.run_job(args.dir, today, lambda: paper.members(screen.load(), idealab.LAST.get("sleepers", []), idealab.LAST.get("spinoffs", [])),
+                  lambda s: market.get_quote(s).price)
+    return 0
+
+
+def _write_json(data, path) -> None:
+    import json
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def _print_signal_table(summary: dict, horizons: list[str]) -> None:
+    print("| Group | " + " | ".join(f"{h}: avg vs SPY, ahead, t" for h in horizons) + " |")
+    print("|---|" + "---|" * len(horizons))
+    for row in summary.values():
+        cells = []
+        for h in horizons:
+            x = row.get(h)
+            cells.append(f"{x['avg_edge']:+.1f} pts, {x['beat_pct']}%, t {x['t']}" if x else "—")
+        print(f"| {row['label']} | " + " | ".join(cells) + " |")
+
+
+def cmd_insider_backtest(args) -> int:
+    """Replay open-market insider buying since 2013 against SPY (calendar-time)."""
+    from . import insider_backtest
+    data = insider_backtest.run(args.since)
+    _write_json(data, args.out)
+    print()
+    print(data["verdict"])
+    print()
+    _print_signal_table(data["summary"], ["3m", "6m", "12m"])
+    return 0
+
+
+def cmd_spinoff_backtest(args) -> int:
+    """Replay every spin-off registration since 2005 against SPY."""
+    from . import spinoff_backtest
+    data = spinoff_backtest.run(first_year=args.first_year)
+    _write_json(data, args.out)
+    print()
+    print(data["verdict"])
+    print()
+    print("| Bought | 6 months | 12 months | 24 months |")
+    print("|---|---|---|---|")
+    for row in data["summary"].values():
+        cells = [f"{x['avg_edge']:+.1f} avg / {x['median_edge']:+.1f} median, {x['beat_pct']}% ahead ({x['spinoffs']})" if x else "—"
+                 for x in (row.get("6m"), row.get("12m"), row.get("24m"))]
+        print(f"| {row['label']} | " + " | ".join(cells) + " |")
     return 0
 
 
@@ -770,6 +821,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dir", default=".")
     s.add_argument("--day", default="", help="YYYY-MM-DD (default today)")
     s.set_defaults(func=cmd_ideas_log)
+    s = sub.add_parser("insider-backtest", help="Replay opportunistic insider buying since 2013 against SPY")
+    s.add_argument("--out", default="insider_backtest.json")
+    s.add_argument("--since", default="2013q1")
+    s.set_defaults(func=cmd_insider_backtest)
+    s = sub.add_parser("spinoff-backtest", help="Replay spin-offs since 2005 against SPY")
+    s.add_argument("--out", default="spinoff_backtest.json")
+    s.add_argument("--first-year", type=int, default=2005)
+    s.set_defaults(func=cmd_spinoff_backtest)
     s = sub.add_parser("screen-backtest", help="Replay the screen on history since 2012 and compare its picks with SPY")
     s.add_argument("--out", default="screen_backtest.json")
     s.add_argument("--last", type=int, default=0, help="only the last N quarters (quick check)")

@@ -113,7 +113,7 @@ def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20, shorts_
     shorts_fn(symbols) -> {symbol: shorts.assess(...)}."""
     rows: dict[str, dict] = {}
     for r in ape.get("results", []):
-        t = (r.get("ticker") or "").upper()
+        t = (r.get("ticker") or "").upper().replace(".", "-")
         name = (r.get("name") or "").upper()
         if not t or t in ("SPY", "QQQ", "VOO", "IWM", "DIA") or any(w in f" {name}" for w in FUND_WORDS):
             continue
@@ -125,6 +125,10 @@ def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20, shorts_
         e = rows.setdefault(t, {"symbol": t, "name": tr.get("title", ""), "reddit": 0, "reddit_24h_ago": 0, "rising": None, "reason": ""})
         e["stocktwits"] = True
         e["reason"] = tr.get("summary") or e["reason"]
+    # A StockTwits trending spot counts like a typical busy Reddit name (the median of the top 20),
+    # not a fixed number that let StockTwits-only names crowd out real Reddit discussion.
+    busy = sorted((e["reddit"] for e in rows.values() if e["reddit"] > 0), reverse=True)[:20]
+    st_weight = max(10, busy[len(busy) // 2]) if busy else 10
     out = []
     for t, e in rows.items():
         row = lookup_fn(t) or {}
@@ -139,7 +143,7 @@ def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20, shorts_
             warn.append("not on the screen (too small, unprofitable or no SEC numbers)")
         if row.get("score") is not None and row["score"] < 40:
             warn.append(f"weak screen grade ({row['score']:.0f}/100)")
-        heat = e["reddit"] * (1 + min(e["rising"] or 1, 5)) + (50 if e["stocktwits"] else 0)
+        heat = e["reddit"] * (1 + min(e["rising"] or 1, 5)) + (st_weight * 2 if e["stocktwits"] else 0)
         out.append(dict(e, score=row.get("score"), cap=row.get("cap"), warnings=warn, heat=round(heat)))
     out = sorted(out, key=lambda x: -x["heat"])[:limit]
     try:

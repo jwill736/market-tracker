@@ -81,6 +81,16 @@ def steps(conn, today: date | None = None) -> list[dict]:
                 "why": "The full preview → confirm flow with pretend money, before any real order.",
                 "done": bool(brokers.paper_state(conn)["trades"]), "detail": "Done" if brokers.paper_state(conn)["trades"] else
                 "Open any stock → Trade → Send with: Paper account", "go": "brokers", "test": False})
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    out.append({"key": "ask", "title": "Talk to Plumbline (Ask, weekly letter)",
+                "why": "Ask questions about your own money in plain words and get an advisor's answer from your data.",
+                "done": has_key, "detail": "Anthropic API key found" if has_key else "Add ANTHROPIC_API_KEY to .env (console.anthropic.com), then restart",
+                "go": "ask", "test": False})
+    decided = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions'").fetchone() and \
+        conn.execute("SELECT COUNT(*) FROM decisions WHERE status != 'open'").fetchone()[0]
+    out.append({"key": "decide", "title": "Make your first decision",
+                "why": "Approve, skip or put off one of this week's decisions (Home → Decisions): that's how the app learns what you act on.",
+                "done": bool(decided), "detail": "Done" if decided else "Home → Decisions", "go": "decisions", "test": False})
     return out
 
 
