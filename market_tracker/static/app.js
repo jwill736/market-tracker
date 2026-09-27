@@ -57,6 +57,33 @@ const hideTip = () => { tooltip.hidden = true; };
 const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
+// ---------------------------------------------------------------- which pages you use (counted on this app only)
+const usageState = { hidden: [], last: "" };
+function recordUsage(page) {
+  if (usageState.last === page) return;
+  usageState.last = page;
+  api("/api/usage", { method: "POST", body: JSON.stringify({ page }) }).catch(() => {});
+}
+api("/api/usage").then((u) => { usageState.hidden = u.hidden || []; }).catch(() => {});
+const PAGE_NAMES = { home: "Home", hold: "Hold plan", income: "Income", plan: "Strategy", review: "Review", ideas: "What to buy", sleepers: "Sleepers",
+  chatter: "Chatter", moneyflow: "Money flow", economy: "Economy", pulse: "Market pulse", early: "Early wire", people: "People", radar: "Filing radar",
+  smart: "Smart money", analyze: "Analyze", research: "Research", dashboard: "Dashboard", journal: "Track record", mynews: "My news",
+  reading: "Reading room", portfolio: "Portfolio", accounts: "Accounts", taxes: "Taxes" };
+async function loadUsage() {
+  let u;
+  try { u = await api("/api/usage"); } catch { return; }
+  usageState.hidden = u.hidden;
+  $("#us-meta").textContent = u.since ? `counting since ${u.since}` : "";
+  $("#us-text").textContent = u.text;
+  $("#us-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Page</th><th>Days used, last 30</th><th>Last opened</th><th></th></tr></thead><tbody>
+    ${u.pages.map((p) => `<tr><td>${esc(PAGE_NAMES[p.page] || p.page)}${p.suggest_hide ? ` <span class="chip-warn">rarely used</span>` : ""}</td><td>${p.days_last_30}</td>
+      <td class="muted">${esc(p.last || "never")}</td><td>${p.core ? `<span class="muted">always on</span>` : `<button type="button" class="secondary small" data-hide="${esc(p.page)}" data-on="${p.hidden ? 0 : 1}">${p.hidden ? "Show" : "Hide"}</button>`}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  document.querySelectorAll("#us-out [data-hide]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api("/api/usage/hide", { method: "POST", body: JSON.stringify({ page: b.dataset.hide, hide: b.dataset.on === "1" }) }); loadUsage(); } catch { /* ignore */ }
+  }));
+}
+
 const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], ideas: ["ideas", "sleepers", "chatter", "moneyflow", "economy"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
   news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
@@ -69,15 +96,16 @@ function selectTab(name) {
     lastPage[group] = name;
     document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.group === group)));
     const subs = document.querySelectorAll("#subtabs button");
-    subs.forEach((b) => { b.hidden = b.dataset.group !== group; b.setAttribute("aria-current", String(b.dataset.tab === name)); });
+    subs.forEach((b) => { b.hidden = b.dataset.group !== group || (usageState.hidden.includes(b.dataset.tab) && b.dataset.tab !== name); b.setAttribute("aria-current", String(b.dataset.tab === name)); });
     $("#subtabs").hidden = GROUP_PAGES[group].length < 2;
     $("#subtabs").dataset.page = name;
     const cur = document.querySelector(`#subtabs button[data-tab="${name}"]`);
     if (cur && !cur.hidden) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
+  recordUsage(name);
   if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
-  if (name === "accounts") { loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
+  if (name === "accounts") { loadUsage(); loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
   if (name === "review") loadPerformance();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
@@ -3154,7 +3182,8 @@ async function loadMoneyFlow() {
       <div class="muted">${w.spenders.map((s) => `${esc(s.symbol)} ${bn(s.capex)}${s.growth != null ? ` (${fmtPct(s.growth * 100, 0)})` : ""}`).join(" · ")}</div>
       <div class="mf-cats">${w.suppliers.map((c) => `<div><span class="muted">${esc(c.category)}:</span> ${c.companies.map((x) => `<button type="button" class="linkish mf-co${x.priced_in === "Already ran hard" ? " hot" : ""}" data-open="${esc(x.symbol)}"
         title="${esc(x.priced_in || "not on the screen")}${x.score != null ? ", grade " + Math.round(x.score) : ""}">${esc(x.symbol)}${x.priced_in === "Already ran hard" ? " ▲" : ""}</button>`).join(" ")}</div>`).join("")}</div></div>`).join("")
-    + `<p class="muted">▲ = already ran hard (top 10% of 12-month returns, or 30%+ above its 200-day average). Supplier lists are hand-picked well-known names, not recommendations.</p>`;
+    + `<p class="muted">▲ = already ran hard (top 10% of 12-month returns, or 30%+ above its 200-day average). Supplier lists are hand-picked well-known names, not recommendations.
+      A spender shown as — doesn't report capital spending under the standard SEC tags (NextEra uses its own), so it isn't in the total.</p>`;
   $("#lag-out").innerHTML = r.lagging.map((x) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button>
       <span class="muted">${fmtMoney(x.cap / 1e9, 1)}B${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</span>${sizeBtn(x.symbol, "supplier")}</div><div>${esc(x.why)}</div></div>`).join("")
     || `<p class="muted">No big customer moved 10%+ this month without its small suppliers following.</p>`;

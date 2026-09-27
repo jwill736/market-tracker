@@ -26,7 +26,7 @@ import math
 import time
 from array import array
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from . import http, screen
@@ -59,7 +59,13 @@ MAX_CAP = 6e12                                     # a market value above this i
 @dataclass
 class Prices:
     calendar: list[str]                            # the benchmark's trading days
-    series: dict[str, array]                       # symbol -> closes on those days (nan = no trade)
+    series: dict[str, array]                       # symbol -> adjusted closes on those days (nan = no trade): for returns
+    raw: dict[str, array] = field(default_factory=dict)   # the price as it traded that day: for market values
+
+# Why two prices: Yahoo's history is adjusted for every later split, so NVIDIA's 2016 price shows as a
+# fortieth of what it was. Times the share count NVIDIA reported in 2016, that makes a $30B company
+# look like a $1B one, and pushes future winners (which are the ones that split) into the small and
+# cheap buckets: look-ahead bias. Market values use the price as it traded, split factor undone.
 
 
 def align(calendar: list[str], bars: list[tuple[str, float]]) -> array:
@@ -80,6 +86,42 @@ def price_at(p: Prices, sym: str, i: int, back: int = 5) -> float | None:
         if not math.isnan(s[k]):
             return s[k]
     return None
+
+
+def price_traded(p: Prices, sym: str, i: int) -> float | None:
+    """The price as it traded on day i (split-adjustment undone); the adjusted one if that's all there is."""
+    if sym not in p.raw:
+        return price_at(p, sym, i)
+    s = p.raw[sym]
+    for k in range(i, max(-1, i - 6), -1):
+        if not math.isnan(s[k]):
+            return s[k]
+    return None
+
+
+def parse_history(result: dict) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """(adjusted closes, closes as traded) from a Yahoo chart result requested with events=split.
+    Yahoo's plain close is split-adjusted but not dividend-adjusted; multiplying by every split after
+    the day gives the price that day."""
+    stamps = result.get("timestamp") or []
+    ind = result.get("indicators") or {}
+    close = ((ind.get("quote") or [{}])[0].get("close")) or []
+    adj = ((ind.get("adjclose") or [{}])[0].get("adjclose")) or close
+    splits = sorted(((int(v.get("date", 0)), float(v.get("numerator") or 1) / float(v.get("denominator") or 1))
+                     for v in (((result.get("events") or {}).get("splits")) or {}).values() if v.get("denominator")), reverse=True)
+    out_adj, out_raw = [], []
+    factor, k = 1.0, 0
+    rows = sorted(zip(stamps, close, adj), key=lambda r: r[0], reverse=True)
+    for ts, c, a in rows:
+        while k < len(splits) and splits[k][0] > ts:
+            factor *= splits[k][1]
+            k += 1
+        day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        if a is not None:
+            out_adj.append((day, float(a)))
+        if c is not None:
+            out_raw.append((day, float(c) * factor))
+    return out_adj[::-1], out_raw[::-1]
 
 
 def closes_to(p: Prices, sym: str, i: int, n: int = 260) -> list[float]:
@@ -113,7 +155,7 @@ def period_rows(F: dict, universe: dict[str, dict], p: Prices, i: int) -> dict[s
         f = screen.company(F, u["cik"])
         if f["assets"] is None or f["net_income"] is None or not f["shares"]:
             continue
-        px = price_at(p, sym, i)
+        px = price_traded(p, sym, i)
         if not px:
             continue
         cap = f["shares"] * px
@@ -254,30 +296,39 @@ def load_prices(symbols: list[str], start: str, fetch=None, workers: int = 8, lo
     from .providers import market
     days = (date.today() - date.fromisoformat(start)).days + 10
 
+    now = int(datetime.now(timezone.utc).timestamp())
+
     def one(sym):
         try:
             if fetch:
-                return sym, fetch(sym)
-            res = market._yahoo_chart(sym, "", "1d", ttl=0, period_days=days)
+                bars = fetch(sym)
+                return sym, bars, bars
+            d = http.get(market.YAHOO_CHART.format(symbol=sym), ttl=0,
+                         params={"period1": now - days * 86400, "period2": now, "interval": "1d", "events": "split"})
+            res = d["chart"]["result"][0]
             if (res.get("meta") or {}).get("dataGranularity", "1d") != "1d":
-                return sym, []
-            return sym, [(b.date, b.close) for b in market.parse_yahoo_history(res)]
-        except (http.DataUnavailable, KeyError, ValueError, TypeError):
-            return sym, []
-    _, bench = one(BENCH)
+                return sym, [], []
+            adj, raw = parse_history(res)
+            return sym, adj, raw
+        except (http.DataUnavailable, KeyError, IndexError, ValueError, TypeError):
+            return sym, [], []
+    _, bench, _ = one(BENCH)
     if len(bench) < 1000:
         raise http.DataUnavailable(f"no {BENCH} history")
     calendar = [d for d, _ in bench]
     series = {BENCH: align(calendar, bench)}
+    raw_series: dict[str, array] = {}
     t = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for k, (sym, bars) in enumerate(ex.map(one, symbols)):
+        for k, (sym, bars, raw) in enumerate(ex.map(one, symbols)):
             if bars:
                 series[sym] = align(calendar, bars)
+                if raw and not fetch:
+                    raw_series[sym] = array("f", align(calendar, raw))
             if k and k % 1000 == 0:
                 log(f"  prices: {k}/{len(symbols)} in {time.monotonic() - t:.0f}s")
     log(f"prices for {len(series) - 1} of {len(symbols)} companies, {calendar[0]} to {calendar[-1]}")
-    return Prices(calendar, series)
+    return Prices(calendar, series, raw_series)
 
 
 def run(get=None, listed_fn=None, prices: Prices | None = None, start: tuple[int, int] = START, last: int | None = None,

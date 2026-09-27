@@ -200,6 +200,7 @@ class Sentinel:
                 await asyncio.to_thread(log_advice_daily)
                 await asyncio.to_thread(log_ideas_daily)
                 await asyncio.to_thread(thesis_check_weekly)
+                await asyncio.to_thread(freshness_check)
                 await asyncio.to_thread(big_moves_check)
                 held_now = my_symbols()[0]
                 if held_now:
@@ -301,6 +302,26 @@ def log_ideas_daily(today: date | None = None, items_fn=None, remote_fn=None, no
         n = ideas.log(conn, today.isoformat(), items)
         db.set_meta(conn, "ideas_logged", today.isoformat())
     return n
+
+
+def freshness_check(now: datetime | None = None, check_fn=None) -> int:
+    """Hourly: push once for each GitHub-built data file that has gone stale (see freshness.py)."""
+    from . import freshness
+    now = now or datetime.now(timezone.utc)
+    hour = now.strftime("%Y-%m-%dT%H")
+    with db.connect() as conn:
+        if db.get_meta(conn, "freshness_hour", "") == hour:
+            return 0
+        db.set_meta(conn, "freshness_hour", hour)
+        already = set(json.loads(db.get_meta(conn, "freshness_alerted", "[]") or "[]"))
+    results = (check_fn or freshness.check)(now.date())
+    due, keep = freshness.alerts_due(results, already)
+    with db.connect() as conn:
+        db.set_meta(conn, "freshness_alerted", json.dumps(sorted(keep)))
+        db.set_meta(conn, "freshness_latest", json.dumps(results))
+    for r in due:
+        notify.send(notify.Message(title=f"Stale data: {r['name']}", body=r["text"], priority=3, tags=("hourglass",)))
+    return len(due)
 
 
 def thesis_check_weekly(now: datetime | None = None, items_fn=None, check_fn=None) -> int:

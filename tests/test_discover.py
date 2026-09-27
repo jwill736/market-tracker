@@ -35,3 +35,12 @@ def test_chatter_ranks_by_heat_and_warns():
 def test_bucket():
     b = discover.bucket([{"symbol": "AAA", "market_value": 1500.0}, {"symbol": "VOO", "market_value": 8500.0}], {"AAA"})
     assert b["cap"] == 1000.0 and b["over"] and b["share"] == 15.0
+
+
+def test_stocktwits_only_names_do_not_crowd_out_reddit():
+    from market_tracker import discover
+    ape = {"results": [{"ticker": f"R{i}", "name": f"R{i} Inc", "mentions": 40 - i, "mentions_24h_ago": 40 - i} for i in range(10)]
+           + [{"ticker": "BRK.B", "name": "Berkshire", "mentions": 12, "mentions_24h_ago": 12}]}
+    rows = discover.chatter(ape, [{"symbol": "STX", "title": "Only trending"}], lambda s: {"cap": 5e9})
+    order = [r["symbol"] for r in rows]
+    assert order.index("R0") < order.index("STX") and "BRK-B" in order

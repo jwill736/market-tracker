@@ -2162,6 +2162,63 @@ async def screen_view():
     return {k: v for k, v in data.items() if k != "lookup"}
 
 
+class UsageIn(BaseModel):
+    page: str = Field(min_length=1, max_length=30, pattern=r"^[a-z]+$")
+
+
+@app.post("/api/usage")
+def usage_record(body: UsageIn):
+    """Count a page open (stays on this app; see usage.py)."""
+    from . import usage
+    with db.connect() as conn:
+        usage.record(conn, body.page, date.today())
+    return {"ok": True}
+
+
+class HideIn(BaseModel):
+    page: str = Field(min_length=1, max_length=30, pattern=r"^[a-z]+$")
+    hide: bool
+
+
+@app.get("/api/usage")
+def usage_view():
+    from . import usage
+    with db.connect() as conn:
+        return usage.view(conn, PAGES, date.today())
+
+
+@app.post("/api/usage/hide")
+def usage_hide(body: HideIn):
+    from . import usage
+    if body.page not in PAGES:
+        raise HTTPException(404, "No such page")
+    with db.connect() as conn:
+        return {"hidden": usage.set_hidden(conn, body.page, body.hide)}
+
+
+PAGES = ["home", "hold", "income", "plan", "review", "ideas", "sleepers", "chatter", "moneyflow", "economy", "pulse", "early", "people",
+         "radar", "smart", "analyze", "research", "dashboard", "journal", "mynews", "reading", "portfolio", "accounts", "taxes"]
+
+
+@app.get("/api/paper")
+async def paper_view():
+    """Each idea list run as a monthly equal-weight paper portfolio, against VOO."""
+    from . import paper
+
+    def run():
+        books = paper.load()
+        return {"lists": paper.performance(books, lambda s: _closes(s, 800), date.today()), "books": len(books),
+                "note": None if books else "The first paper books are recorded on the idea-log job's first run of the month."}
+    return await asyncio.to_thread(_analysis_cache.get, ("paper", date.today().isoformat()), run)
+
+
+@app.get("/api/freshness")
+async def freshness_view():
+    """How old each GitHub-built data file is (screen, idea log, watcher, backtests), and which are stale."""
+    from . import freshness
+    return freshness.summary(await asyncio.to_thread(freshness.check))
+
+
 @app.get("/api/screen/backtest")
 async def screen_backtest_view():
     """The screen replayed quarter by quarter since 2012 on what was public then, against SPY."""

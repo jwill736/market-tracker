@@ -89,3 +89,15 @@ def test_newey_west_widens_overlapping_errors():
     assert plain is not None and nw is not None and abs(nw) < abs(plain)
     assert sb.newey_west_t([0.1] * 5, 1) is None
     assert sb.breakeven_missing(0.3, 0.3) == 1.0 and sb.breakeven_missing(None, 0.3) is None
+
+
+def test_parse_history_undoes_splits_for_market_values():
+    day = 86400
+    res = {"timestamp": [1_600_000_000, 1_600_000_000 + day, 1_600_000_000 + 2 * day],
+           "indicators": {"quote": [{"close": [100.0, 101.0, 102.0]}], "adjclose": [{"adjclose": [98.0, 99.0, 102.0]}]},
+           "events": {"splits": {"x": {"date": 1_600_000_000 + day, "numerator": 4, "denominator": 1}}}}
+    adj, raw = sb.parse_history(res)
+    assert [c for _, c in adj] == [98.0, 99.0, 102.0]
+    assert [c for _, c in raw] == [400.0, 101.0, 102.0]           # traded at $400 before the 4-for-1 split
+    p = sb.Prices(["a", "b"], {"X": sb.align(["a", "b"], [("a", 10.0), ("b", 11.0)])}, {"X": sb.align(["a", "b"], [("a", 40.0), ("b", 11.0)])})
+    assert sb.price_traded(p, "X", 0) == 40.0 and sb.price_at(p, "X", 0) == 10.0 and sb.price_traded(p, "Y", 0) is None

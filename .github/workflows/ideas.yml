@@ -12,6 +12,7 @@ on:
     paths:
       - market_tracker/ideas.py
       - market_tracker/idealab.py
+      - market_tracker/paper.py
       - .github/workflows/ideas.yml
 
 permissions:
@@ -40,7 +41,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/ideas"
           if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
-            for f in ideas_log.jsonl ideas_chain.jsonl; do
+            for f in ideas_log.jsonl ideas_chain.jsonl paper_books.jsonl; do
               git show "origin/journal-data:$f" > "$RUNNER_TEMP/ideas/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/ideas/$f"
             done
           fi
@@ -58,6 +59,8 @@ jobs:
             git rm -rfq .
           fi
           cp "$RUNNER_TEMP/ideas/ideas_log.jsonl" "$RUNNER_TEMP/ideas/ideas_chain.jsonl" .
+          if [ -f "$RUNNER_TEMP/ideas/paper_books.jsonl" ]; then cp "$RUNNER_TEMP/ideas/paper_books.jsonl" .; fi
           git add ideas_log.jsonl ideas_chain.jsonl
+          if [ -f paper_books.jsonl ]; then git add paper_books.jsonl; fi
           git commit -qm "Idea log $(date -u +%F)" || { echo "No changes"; exit 0; }
           git push origin journal-data

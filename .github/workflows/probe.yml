@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        what: [screen-backtest, insider-backtest, spinoff-backtest, apewisdom]
+        what: [screen-backtest, insider-backtest]
     env:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:

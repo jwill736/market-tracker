@@ -589,13 +589,16 @@ def cmd_ideas_log(args) -> int:
     """Log today's ideas to the GitHub idea log in a folder (the daily ideas job runs this)."""
     from datetime import date as _date
 
-    from . import idealab, ideas
+    from . import idealab, ideas, paper, screen
+    from .providers import market
     today = _date.fromisoformat(args.day) if args.day else _date.today()
     try:
         ideas.run_job(args.dir, today, idealab.daily_items)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    paper.run_job(args.dir, today, lambda: paper.members(screen.load(), idealab.LAST.get("sleepers", []), idealab.LAST.get("spinoffs", [])),
+                  lambda s: market.get_quote(s).price)
     return 0
 
 

@@ -9,6 +9,9 @@ from . import discover, http, moneyflow, screen
 from .providers import market
 
 
+LAST: dict[str, list[dict]] = {}          # the latest sleepers and spin-offs daily_items saw (reused by the paper books)
+
+
 def _lookup_fn(data):
     return lambda s: screen.lookup(data, s)
 
@@ -152,18 +155,20 @@ def daily_items(today: date | None = None) -> list[dict]:
                           "wrong_if": "Backlog stops growing faster than revenue"})
 
     def sleeper_ideas():
-        for r in sleepers(today)["sleepers"]:
+        LAST["sleepers"] = sleepers(today)["sleepers"]
+        for r in LAST["sleepers"]:
             if r["evidence"] >= 2:
                 items.append({"symbol": r["symbol"], "source": "sleeper", "reason": "; ".join(r["why"])[:300],
                               "wrong_if": "Insiders sell, or the screen grade falls below 50"})
 
     def chatter_ideas():
-        for r in chatter()["rows"][:5]:
+        for r in [x for x in chatter()["rows"] if x["reddit"] >= 10][:5]:      # real Reddit discussion, not a trending slot alone
             items.append({"symbol": r["symbol"], "source": "chatter", "reason": f"{r['reddit']} Reddit mentions" + (", trending on StockTwits" if r.get("stocktwits") else ""),
                           "wrong_if": "Logged to measure chatter, not as a recommendation"})
 
     def event_ideas():
         ev = events(today)
+        LAST["spinoffs"] = ev["spinoffs"]
         for r in ev["pead"]:
             items.append({"symbol": r["symbol"], "source": "pead", "reason": r["why"][:300],
                           "wrong_if": "The next release lowers the outlook, or it trails VOO by 10+ points after 3 months",

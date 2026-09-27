@@ -130,8 +130,10 @@ def _ret(days: list[str], closes: list[float], start: str, n: int) -> tuple[floa
 
 
 def score(evts: list[dict], prices: dict[str, list[tuple[str, float]]], sym_of: dict[str, str], spy: list[tuple[str, float]],
-          shares_at=None) -> list[dict]:
-    """Adds each horizon's return and SPY's, and the size at the time."""
+          shares_at=None, traded: dict[str, list[tuple[str, float]]] | None = None) -> list[dict]:
+    """Adds each horizon's return and SPY's, and the size at the time (from the price as it traded
+    that day, never the split-adjusted one: see screen_backtest.Prices)."""
+    traded_at = {s: dict(v) for s, v in (traded or {}).items()}
     split = {s: ([d for d, _ in v], [c for _, c in v]) for s, v in prices.items() if v}
     sd, sc = [d for d, _ in spy], [c for _, c in spy]
     out = []
@@ -151,7 +153,7 @@ def score(evts: list[dict], prices: dict[str, list[tuple[str, float]]], sym_of: 
         if entry is None:
             continue
         row["entry"] = days[entry]
-        px = closes[entry]
+        px = traded_at[sym].get(days[entry]) if sym in traded_at else (closes[entry] if traded is None else None)
         sh = shares_at(e["cik"], e["filed"]) if shares_at else None
         row["cap"] = px * sh if px and sh else None
         out.append(row)
@@ -240,8 +242,11 @@ def run(start_quarter: str = START_QUARTER, log=print, listed_fn=None, fetch=Non
     if prices is None:
         p = screen_backtest.load_prices([s for s in need if s != "SPY"], f"{start_quarter[:4]}-01-01", log=log)
         prices = {s: [(p.calendar[i], c) for i, c in enumerate(arr) if not math.isnan(c)] for s, arr in p.series.items()}
+        traded = {s: [(p.calendar[i], c) for i, c in enumerate(arr) if not math.isnan(c)] for s, arr in p.raw.items()}
+    else:
+        traded = None
     shares_at = shares_fn or _shares_lookup(start_quarter, log)
-    rows = score(evts, prices, sym_of, prices.get("SPY", []), shares_at)
+    rows = score(evts, prices, sym_of, prices.get("SPY", []), shares_at, traded)
     summary = summarize(rows)
     return {"as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"), "since": start_quarter, "events": len(rows),
             "summary": summary, "verdict": verdict(summary),

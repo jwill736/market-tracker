@@ -849,6 +849,11 @@
 
   <!-- Accounts: connections, transfers, cash, brokers, backup -->
   <section id="tab-accounts" class="tab" hidden>
+    <div class="card" id="usage-card">
+      <div class="card-head"><h2>Pages you use</h2><span class="muted small" id="us-meta"></span></div>
+      <p class="muted small" id="us-text">Counted on this app only, never sent anywhere. Hiding a page takes it off the menu; it keeps running.</p>
+      <div id="us-out" class="small"></div>
+    </div>
     <div class="card" id="setup">
       <div class="card-head"><h2>Setup</h2><span class="muted small" id="su-count"></span></div>
       <p class="muted small">Each step is done only when its test passes. In order: the backup first, then phone alerts, then each
