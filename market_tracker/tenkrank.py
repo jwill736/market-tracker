@@ -27,6 +27,7 @@ WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 WIKI_UA = "Plumbline/1.0 (https://github.com/jwill736/market-tracker; personal portfolio app) python-httpx"
 FILE = "tenk_rank.json"
 FRESH_DAYS = 400            # a 10-K filed within this many days counts as this year's
+MIN_SIMILARITY = 0.5        # below this, one year's section was cut out wrong: real reports never change this much
 MIN_UNIVERSE = 450
 METHOD = 4                  # bump when the comparison changes: entries from an older method are recomputed
 
@@ -166,6 +167,7 @@ def load(get=None) -> dict | None:
 def _current(data: dict, today: date | None = None) -> list[dict]:
     today = today or date.today()
     return [c for c in (data or {}).get("companies", []) if c.get("risk_new") is not None and c.get("filed")
+            and (c.get("risk_sim") is None or c["risk_sim"] >= MIN_SIMILARITY)
             and (today - date.fromisoformat(c["filed"])).days <= FRESH_DAYS]
 
 

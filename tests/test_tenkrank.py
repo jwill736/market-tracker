@@ -80,3 +80,10 @@ def test_entries_from_an_older_method_are_recomputed(monkeypatch):
     old = {"symbol": "A", "acc": "A-1", "prev_acc": "A-0", "risk_new": 0.99}
     e = tenkrank.score_one({"symbol": "A", "name": "A", "sector": "X", "cik": ""}, old, text_fn=lambda u: risk + " Item 1B. Unresolved")
     assert e["method"] == tenkrank.METHOD and e["risk_new"] == 0.0
+
+
+def test_unreliable_comparisons_are_left_out():
+    data = _data([i / 100 for i in range(100)])
+    data["companies"][99]["risk_sim"] = 0.0          # one year's section came out empty
+    top = tenkrank.most_changed(data, 1, date(2026, 9, 27))
+    assert top[0]["symbol"] == "S98" and tenkrank.percentile(data, 0.5, date(2026, 9, 27))["of"] == 99
