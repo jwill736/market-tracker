@@ -92,7 +92,7 @@ function selectTab(name) {
   if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
-  if (name === "ideas") { loadScreen(); loadIdeas(); }
+  if (name === "ideas") { loadScreen(); loadScreenBacktest(); loadIdeas(); loadEvents(); }
   if (name === "sleepers") loadSleepers();
   if (name === "chatter") loadChatter();
   if (name === "moneyflow") loadMoneyFlow();
@@ -1631,7 +1631,7 @@ async function loadHome(quiet = false) {
   loadMoved();
   renderHomeLists();
   loadHomeFeeds();
-  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); }
+  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); loadHomeIdeas(); }
   if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
   try {
     const d = await api("/api/portfolio/history?range=" + homeState.range);
@@ -2966,7 +2966,7 @@ function renderScreen() {
       <td>${gradeCell(r.grades.quality)}</td><td>${gradeCell(r.grades.value)}</td><td>${gradeCell(r.grades.momentum)}</td><td>${gradeCell(r.grades.low_issuance)}</td>
       <td class="${cls(r.return_12m)}">${r.return_12m != null ? fmtPct(r.return_12m * 100, 0) : "—"}</td>
       <td class="muted">${esc(r.sector || "")}</td></tr>`).join("")}</tbody></table></div>
-    <p class="muted">Grades are percentiles within the sector (100 = best). Quality is blank for banks and insurers, which report no operating income.</p>`;
+    <p class="muted">Grades are percentiles within the sector (100 = best). Quality is operating profit on assets; banks and insurers are compared on return on equity, and companies that report no operating profit on net income over assets.</p>`;
   $("#bl-out").innerHTML = (d.backlog || []).map((b) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(b.symbol)}">${tick(b.symbol)}</button>
       <span class="muted">${esc((b.name || "").slice(0, 32))}</span> <span class="muted">grade ${b.score != null ? b.score.toFixed(0) : "—"}</span></div>
       <div>${esc(b.why)}</div></div>`).join("") || `<p class="muted">None this week.</p>`;
@@ -2977,6 +2977,39 @@ document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener(
   document.querySelectorAll("#sc-which button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   if (screenState.data) renderScreen();
 }));
+
+// ---------------------------------------------------------------- Home: are the ideas beating VOO?
+async function loadHomeIdeas() {
+  let r;
+  try { r = await api("/api/ideas"); } catch { return; }
+  if (!r.items.length) { $("#home-ideas").hidden = true; return; }
+  $("#home-ideas").hidden = false;
+  $("#hi-meta").textContent = `${r.items.length} ideas logged${r.logged_by_github ? " · sealed daily on GitHub" : ""}`;
+  $("#hi-verdict").textContent = r.verdict;
+  const rows = r.leaderboard.filter((b) => b.so_far.n).sort((a, b) => b.so_far.avg_edge - a.so_far.avg_edge);
+  $("#hi-list").innerHTML = rows.map((b) => {
+    const done = b["6m"].resolved ? ` · 6-month record: ${b["6m"].beat_voo}% beat VOO (${b["6m"].resolved})` : "";
+    return `<li><span class="hb-sec">${esc(b.label)}</span> <span class="${cls(b.so_far.avg_edge)}">${fmtPct(b.so_far.avg_edge)}</span> vs VOO so far,
+      ${b.so_far.beat_voo}% ahead (${b.so_far.n} open)${done}</li>`;
+  }).join("") + (r.broken && r.broken.length ? r.broken.map((x) => `<li class="lvl2"><span class="hb-sec">Case broken</span>
+      <button type="button" class="linkish" data-open="${esc(x.symbol)}">${esc(x.symbol)}</button>: ${esc(x.reasons.join("; "))}</li>`).join("") : "")
+    + `<li class="muted">Open ideas move around; only 6-month results with ${r.min_resolved}+ ideas count as a record.</li>`;
+  document.querySelectorAll("#hi-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+$("#hi-open").addEventListener("click", () => selectTab("ideas"));
+
+// ---------------------------------------------------------------- ideas: the screen's backtest
+async function loadScreenBacktest() {
+  let r;
+  try { r = await api("/api/screen/backtest"); } catch { $("#sb-card").hidden = true; return; }
+  $("#sb-card").hidden = false;
+  $("#sb-meta").textContent = `${String(r.first).slice(0, 7)} to ${String(r.last).slice(0, 7)} · built ${String(r.as_of).slice(0, 10)}`;
+  $("#sb-verdict").textContent = r.verdict;
+  const cellH = (x) => x ? `<span class="${cls(x.avg_edge)}">${fmtPct(x.avg_edge)}</span> <span class="muted">· beat ${x.beat_pct}% · worst ${fmtPct(x.worst_edge)}</span>` : "—";
+  $("#sb-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Picks</th><th>3 months vs SPY</th><th>12 months vs SPY</th><th>$10,000 became</th></tr></thead><tbody>
+    ${Object.values(r.summary).filter((g) => g["3m"]).map((g) => `<tr><td>${esc(g.label)}</td><td>${cellH(g["3m"])}</td><td>${cellH(g["12m"])}</td>
+      <td>${fmtMoney(g.growth.screen, 0)} <span class="muted">(SPY ${fmtMoney(g.growth.spy, 0)})</span></td></tr>`).join("")}</tbody></table></div>`;
+}
 
 // ---------------------------------------------------------------- ideas: the scorecard
 async function loadIdeas() {

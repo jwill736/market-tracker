@@ -2110,6 +2110,19 @@ async def screen_view():
     return {k: v for k, v in data.items() if k != "lookup"}
 
 
+@app.get("/api/screen/backtest")
+async def screen_backtest_view():
+    """The screen replayed quarter by quarter since 2012 on what was public then, against SPY."""
+    from . import screen_backtest
+    data = await asyncio.to_thread(screen_backtest.load)
+    if not data:
+        raise HTTPException(503, "The screen backtest hasn't run yet (the 'Screen backtest' job fills it).")
+    return {k: v for k, v in data.items() if k != "periods"} | {"periods": [
+        {"quarter": p["quarter"], "day": p["day"], "companies": p["companies"], "spy": p["spy"],
+         "large": {k: p["groups"]["large"].get(k) for k in ("3m", "6m", "12m", "top")},
+         "bottom": {k: p["groups"]["bottom"].get(k) for k in ("3m", "12m")}} for p in data.get("periods", [])]}
+
+
 @app.get("/api/priced-in/{symbol}")
 async def priced_in_view(symbol: str):
     """Is it already priced in? Valuation against its own history, run-up, dilution, crowded themes."""

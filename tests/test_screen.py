@@ -21,7 +21,10 @@ def test_metrics_and_score_with_disqualifier():
          "rev_q": 30.0, "rev_q_ya": 25.0, "revenue": 110.0, "rpo": 200.0, "rpo_ya": 120.0}
     m = screen.metrics(f, cap=200.0)
     assert m["quality"] == 0.4 and m["earnings_yield"] == 0.05 and round(m["issuance"], 2) == 0.05 and round(m["rpo_growth"], 3) == 0.667
-    assert screen.metrics(dict(f, operating_income=None), 200.0)["quality"] is None     # banks: no operating income
+    assert screen.metrics(dict(f, operating_income=None), 200.0)["quality"] == 0.1      # miners: net income on assets instead
+    bank = screen.metrics(dict(f, operating_income=None), 200.0, "Finance")
+    assert bank["quality"] == 0.2 and bank["quality_basis"] == "return on equity"      # banks: return on equity
+    assert screen.metrics(dict(f, equity=-5.0), 200.0, "Finance")["quality"] is None
     assert screen.metrics(dict(f, rpo_ya=5.0), 200.0)["rpo_growth"] is None            # growth from a near-empty backlog
     rows = {}
     for i in range(20):
@@ -74,3 +77,19 @@ def test_build_end_to_end():
     assert d["quarter"] == "CY2026Q2" and d["annual"] == 2025 and d["universe"] == 40
     assert {r["symbol"] for r in d["top_large"]} == {"T40", "T39"} and "T40B" not in d["lookup"]
     assert screen.lookup(d, "T40")["sector"] == "Energy" and screen.lookup(d, "NOPE") is None
+
+
+def test_predecessor_filer_fills_a_new_holding_company():
+    screen.ENTITY_NAMES.update({900: "EXXON MOBIL CORP", 901: "ExxonMobil Holdings Corp", 902: "MOBIL EXXON PARTNERS"})
+    F = {k: {} for k in ("assets", "assets_ya", "equity", "shares", "shares_ya", "shares_dei", "shares_dei_ya", "operating_income",
+                         "net_income", "revenue", "rev_q", "rev_q_ya", "rpo", "rpo_ya")}
+    F["assets"] = {901: 460.0}
+    F["net_income"] = {900: 30.0, 902: 1.0}
+    F["assets_ya"] = {900: 450.0}
+    F["shares_dei"], F["shares_dei_ya"] = {901: 4.2}, {900: 4.3}
+    preds = screen.predecessors(F, {901: "ExxonMobil Holdings Corporation Common Stock"})
+    assert preds == {901: 900}
+    f = screen.company(F, 901, preds[901])
+    assert f["assets"] == 460.0 and f["assets_ya"] == 450.0 and f["net_income"] == 30.0
+    assert (f["shares"], f["shares_ya"]) == (4.2, 4.3)                 # cover-page counts, like for like
+    assert screen.name_key("Exxon Mobil Corp") == screen.name_key("ExxonMobil Holdings Corporation Common Stock") == "EXXONMOBIL"

@@ -5,6 +5,8 @@ journal-data branch.
 The evidence (rated in README): what has held up best after publication is
 - quality: operating profit over total assets (Ball, Gerakos, Linnainmaa & Nikolaev 2016 found it
   a better measure than Novy-Marx's gross profit, and far more companies tag it in SEC data);
+  banks and insurers are compared on return on equity instead, and companies that report no
+  operating profit (miners, some conglomerates) on net income over assets;
 - value: earnings yield and book value against the market value;
 - momentum: the last 12 months' return, skipping the most recent month (Jegadeesh & Titman);
 - not diluting shareholders: companies issuing lots of new shares tend to lag (Pontiff & Woodgate).
@@ -46,6 +48,9 @@ MIN_RPO_BASE = 0.10         # last year's backlog must be at least 10% of revenu
 
 # ------------------------------------------------------------------ sources
 
+ENTITY_NAMES: dict[int, str] = {}      # cik -> the name the filer used, from every frame read
+
+
 def frame(tag: str, period: str, unit: str = "USD", tax: str = "us-gaap", get=None) -> dict[int, float]:
     """{cik: value} for every filer (a missing frame is an empty dict)."""
     from .providers import sec
@@ -53,7 +58,13 @@ def frame(tag: str, period: str, unit: str = "USD", tax: str = "us-gaap", get=No
         d = (get or (lambda u: sec._sec_get(u, ttl=0)))(FRAMES.format(tax=tax, tag=tag, unit=unit, period=period))
     except http.DataUnavailable:
         return {}
-    return {int(r["cik"]): float(r["val"]) for r in d.get("data", []) if "val" in r}
+    out = {}
+    for r in d.get("data", []):
+        if "val" in r:
+            out[int(r["cik"])] = float(r["val"])
+            if r.get("entityName"):
+                ENTITY_NAMES.setdefault(int(r["cik"]), r["entityName"])
+    return out
 
 
 def frame_any(tags: list[str], period: str, get=None) -> dict[int, float]:
@@ -124,11 +135,27 @@ def momentum(closes: list[float]) -> tuple[float | None, float | None, float | N
     return r121, r12, closes[-1] / ma - 1
 
 
-def metrics(f: dict, cap: float) -> dict:
+FINANCE = "Finance"          # Nasdaq's sector name for banks, insurers, brokers and REITs
+
+
+def quality_of(f: dict, sector: str | None) -> tuple[float | None, str | None]:
+    """(quality, basis). Banks and insurers report no operating income and carry huge balance sheets,
+    so the finance sector is compared on return on equity; anyone else without an operating-income
+    figure (miners and some conglomerates) falls back to net income on assets."""
+    assets, op, ni, eq = f.get("assets"), f.get("operating_income"), f.get("net_income"), f.get("equity")
+    if sector == FINANCE:
+        return (ni / eq, "return on equity") if ni is not None and eq and eq > 0 else (None, None)
+    if op is not None and assets:
+        return op / assets, "operating profit on assets"
+    if ni is not None and assets:
+        return ni / assets, "net income on assets"
+    return None, None
+
+
+def metrics(f: dict, cap: float, sector: str | None = None) -> dict:
     """f: the company's SEC numbers. Returns the raw inputs to the score."""
     assets = f.get("assets")
-    op = f.get("operating_income")
-    q = (op / assets) if op is not None and assets else None       # banks and insurers report no operating income: scored without it
+    q, basis = quality_of(f, sector)
     ey = f["net_income"] / cap if f.get("net_income") is not None and cap else None
     bm = f["equity"] / cap if f.get("equity") is not None and cap else None
     iss = (f["shares"] / f["shares_ya"] - 1) if f.get("shares") and f.get("shares_ya") else None
@@ -137,7 +164,7 @@ def metrics(f: dict, cap: float) -> dict:
     base_ok = f.get("rpo_ya") and f.get("revenue") and f["rpo_ya"] >= MIN_RPO_BASE * f["revenue"]
     rpo_g = (f["rpo"] / f["rpo_ya"] - 1) if f.get("rpo") and base_ok else None
     cover = f["rpo"] / f["revenue"] if f.get("rpo") and f.get("revenue") else None
-    return {"quality": q, "earnings_yield": ey,
+    return {"quality": q, "quality_basis": basis, "earnings_yield": ey,
             "book_to_market": bm, "issuance": iss, "asset_growth": ag, "revenue_growth": rg, "rpo_growth": rpo_g, "rpo_cover": cover}
 
 
@@ -180,36 +207,86 @@ def backlog_picks(rows: dict[str, dict], n: int = 25) -> list[dict]:
 
 
 def _public(s: str, r: dict) -> dict:
-    keep = ("name", "sector", "industry", "cap", "price", "score", "grades", "flaws", "momentum", "return_12m", "above_200d", "issuance",
+    keep = ("name", "sector", "industry", "cap", "price", "score", "grades", "flaws", "momentum", "return_12m", "above_200d", "issuance", "quality_basis",
             "asset_growth", "revenue_growth", "rpo_growth", "rpo_cover", "earnings_yield", "book_to_market")
     return dict({k: r.get(k) for k in keep}, symbol=s)
 
 
 # ------------------------------------------------------------------ the weekly job
 
-def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, sp500: set[str] | None = None, log=print,
-          workers: int = 6) -> dict:
-    from .providers import market, sec
-    today = today or date.today()
-    y, q = latest_quarter(today, get)
+def gather(y: int, q: int, get=None) -> tuple[dict[str, dict[int, float]], str, int]:
+    """Every number the screen uses for calendar quarter (y, q), for every filer at once."""
     per, per_ya, per_i, per_i_ya = f"CY{y}Q{q}", f"CY{y - 1}Q{q}", f"CY{y}Q{q}I", f"CY{y - 1}Q{q}I"
     yr = y if q == 4 else y - 1
-    log(f"latest quarter {per}; annual {yr}")
     F = {
         "assets": frame("Assets", per_i, get=get), "assets_ya": frame("Assets", per_i_ya, get=get),
         "equity": frame_any(["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], per_i, get),
-        "shares": frame(SHARES_Q, per, "shares", get=get) or frame("EntityCommonStockSharesOutstanding", per_i, "shares", "dei", get),
-        "shares_ya": frame(SHARES_Q, per_ya, "shares", get=get) or frame("EntityCommonStockSharesOutstanding", per_i_ya, "shares", "dei", get),
+        "shares": frame(SHARES_Q, per, "shares", get=get), "shares_ya": frame(SHARES_Q, per_ya, "shares", get=get),
+        "shares_dei": frame("EntityCommonStockSharesOutstanding", per_i, "shares", "dei", get),
+        "shares_dei_ya": frame("EntityCommonStockSharesOutstanding", per_i_ya, "shares", "dei", get),
         "operating_income": frame("OperatingIncomeLoss", f"CY{yr}", get=get), "net_income": frame_any(NET_INCOME, f"CY{yr}", get),
         "revenue": frame_any(REVENUE, f"CY{yr}", get), "rev_q": frame_any(REVENUE, per, get), "rev_q_ya": frame_any(REVENUE, per_ya, get),
         "rpo": frame("RevenueRemainingPerformanceObligation", per_i, get=get),
         "rpo_ya": frame("RevenueRemainingPerformanceObligation", per_i_ya, get=get),
     }
+    return F, per, yr
+
+
+NAME_NOISE = {"COMMON", "STOCK", "CLASS", "ORDINARY", "SHARES", "SHARE", "INC", "CORP", "CORPORATION", "HOLDINGS", "HOLDING", "CO",
+              "COMPANY", "LTD", "LIMITED", "PLC", "GROUP", "THE", "NEW", "DE", "NV", "SA", "AG", "LLC", "LP", "A", "B", "C"}
+
+
+def name_key(name: str) -> str:
+    import re
+    words = [w for w in re.findall(r"[A-Z0-9]+", name.upper().replace("&", " AND ")) if w not in NAME_NOISE]
+    return "".join(words)
+
+
+def predecessors(F: dict[str, dict[int, float]], missing: dict[int, str]) -> dict[int, int]:
+    """{new cik: old cik} for companies that recently moved their listing to a new holding company
+    (ExxonMobil in 2026): the new filer has no prior-year numbers, the old one has them under the same
+    name. Only an exact, unique name match counts."""
+    by_key: dict[str, list[int]] = {}
+    for c in F["net_income"]:
+        k = name_key(ENTITY_NAMES.get(c, ""))
+        if k:
+            by_key.setdefault(k, []).append(c)
+    out = {}
+    for c, name in missing.items():
+        cands = [o for o in by_key.get(name_key(name), []) if o != c]
+        if len(cands) == 1:
+            out[c] = cands[0]
+    return out
+
+
+def company(F: dict[str, dict[int, float]], c: int, pred: int | None = None) -> dict:
+    """One company's numbers; gaps filled from its predecessor filer, if any. Share counts stay
+    like-for-like (diluted average with diluted average, cover-page count with cover-page count)."""
+    f = {k: v.get(c) for k, v in F.items()}
+    if pred:
+        for k, v in F.items():
+            if f[k] is None:
+                f[k] = v.get(pred)
+    if not (f["shares"] and f["shares_ya"]) and f["shares_dei"] and f["shares_dei_ya"]:
+        f["shares"], f["shares_ya"] = f["shares_dei"], f["shares_dei_ya"]
+    elif not f["shares"]:
+        f["shares"] = f["shares_dei"]
+    return f
+
+
+def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, sp500: set[str] | None = None, log=print,
+          workers: int = 6) -> dict:
+    from .providers import market, sec
+    today = today or date.today()
+    y, q = latest_quarter(today, get)
+    F, per, yr = gather(y, q, get)
+    log(f"latest quarter {per}; annual {yr}")
     log(", ".join(f"{k} {len(v)}" for k, v in F.items()))
     tmap = sec.ticker_map()
     lst = (listed_fn or listed)()
     rows: dict[str, dict] = {}
     seen: set[int] = set()
+    firsts: list[tuple[str, int]] = []
     # One listing per company (Alphabet trades as GOOGL and GOOG): the most valuable line, then the shortest ticker.
     for sym, info in sorted(lst.items(), key=lambda kv: (-kv[1]["cap"], len(kv[0]), kv[0])):
         if info["cap"] < MIN_CAP:
@@ -217,12 +294,18 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
         cik = tmap.cik_for(sym)
         if not cik or int(cik) in seen:
             continue
-        c = int(cik)
-        seen.add(c)
-        f = {k: v.get(c) for k, v in F.items()}
+        seen.add(int(cik))
+        firsts.append((sym, int(cik)))
+    missing = {c: lst[s]["name"] for s, c in firsts if F["assets"].get(c) is not None and F["net_income"].get(c) is None}
+    preds = predecessors(F, missing)
+    for new, old in preds.items():
+        log(f"  {missing[new]}: prior-year numbers from its earlier SEC filer, {ENTITY_NAMES.get(old, old)} (CIK {old})")
+    for sym, c in firsts:
+        info = lst[sym]
+        f = company(F, c, preds.get(c))
         if f["assets"] is None or f["net_income"] is None:
             continue
-        rows[sym] = dict(info, cik=c, **metrics(f, info["cap"]))
+        rows[sym] = dict(info, cik=c, **metrics(f, info["cap"], info["sector"]))
     log(f"{len(rows)} companies with SEC numbers and a market value of $300M+")
     hist = history_fn or (lambda s: [b.close for b in market.get_history(s, 260)])
 
@@ -250,10 +333,12 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
             "backlog": backlog_picks(rows),
             "lookup": {s: [r["score"], r["grades"].get("quality") if r.get("grades") else None, r["grades"].get("value") if r.get("grades") else None,
                            r["grades"].get("momentum") if r.get("grades") else None, _r(r.get("issuance")), _r(r.get("asset_growth")),
-                           r.get("return_12m_pct"), _r(r.get("above_200d")), round(r["cap"]), r["sector"]] for s, r in rows.items()}}
+                           r.get("return_12m_pct"), _r(r.get("above_200d")), round(r["cap"]), r["sector"], _r(r.get("rpo_growth")),
+                           _r(r.get("revenue_growth")), r.get("price")] for s, r in rows.items()}}
 
 
-LOOKUP_FIELDS = ["score", "quality", "value", "momentum", "issuance", "asset_growth", "return_12m_pct", "above_200d", "cap", "sector"]
+LOOKUP_FIELDS = ["score", "quality", "value", "momentum", "issuance", "asset_growth", "return_12m_pct", "above_200d", "cap", "sector",
+                 "rpo_growth", "revenue_growth", "price"]
 
 
 def _r(x: float | None) -> float | None:

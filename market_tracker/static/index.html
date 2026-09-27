@@ -91,6 +91,12 @@
       <ul class="brief-list" id="wk-list"></ul>
       <p class="muted small" id="wk-note">Checking less often means fewer fear-driven sales. Urgent things (serious filings, big moves, failed syncs) still push the moment they happen.</p>
     </div>
+    <div class="card brief-card" id="home-ideas" hidden>
+      <div class="card-head"><h2>Are the ideas beating VOO?</h2>
+        <span class="muted small"><span id="hi-meta"></span> · <button type="button" class="linkish" id="hi-open">Idea scorecard</button></span></div>
+      <p class="verdict-line" id="hi-verdict"></p>
+      <ul class="brief-list" id="hi-list"></ul>
+    </div>
     <div class="home-grid">
       <div class="home-main">
         <div class="rh-hero">
@@ -698,6 +704,14 @@
         logged below and scored against VOO: this screen has to earn your money.</p>
       <div class="seg" id="sc-which" role="group" aria-label="Which companies"><button data-w="top_large" aria-pressed="true">Large companies</button><button data-w="top_all" aria-pressed="false">All $2B+</button><button data-w="small_mid" aria-pressed="false">Small and mid</button></div>
       <div id="sc-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card" id="sb-card" hidden>
+      <div class="card-head"><h2>Has this screen beaten the S&amp;P 500?</h2><span class="muted small" id="sb-meta"></span></div>
+      <p class="verdict-line" id="sb-verdict"></p>
+      <div id="sb-out" class="small"></div>
+      <p class="muted small">A replay: every quarter since 2012 the screen is rebuilt from the SEC numbers public 135 days after the quarter ended,
+        that day's prices and market values, then the picks are held 3, 6 and 12 months against SPY (dividends included). Companies that went bust or
+        were bought since are missing from today's stock list, which flatters these numbers; the rules were also written with hindsight.</p>
     </div>
     <div class="card">
       <h2>Growing order backlogs</h2>

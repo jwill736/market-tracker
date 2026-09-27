@@ -278,13 +278,22 @@ def send_weekly_if_due(now: datetime | None = None, gather_fn=None) -> bool:
     return True
 
 
-def log_ideas_daily(today: date | None = None, items_fn=None) -> int:
-    """Once a day: write the screens' ideas to the idea log so each gets scored against VOO."""
+def log_ideas_daily(today: date | None = None, items_fn=None, remote_fn=None, now: datetime | None = None) -> int:
+    """Keep the idea log current. Normally the GitHub job (ideas.yml) logs the ideas and this imports
+    them, at most once an hour. Without a GitHub log, the app logs the screens' ideas itself once a day."""
     from . import idealab, ideas
     today = today or date.today()
+    hour = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H")
     with db.connect() as conn:
-        if db.get_meta(conn, "ideas_logged", "") == today.isoformat():
+        if db.get_meta(conn, "ideas_synced", "") == hour:
             return 0
+        db.set_meta(conn, "ideas_synced", hour)
+    rows = (remote_fn or ideas.load_remote)()
+    with db.connect() as conn:
+        if rows is not None:
+            return ideas.sync(conn, rows)
+        if ideas.has_github_rows(conn) or db.get_meta(conn, "ideas_logged", "") == today.isoformat():
+            return 0            # the GitHub log is briefly unreachable, or today is done
     items = (items_fn or idealab.daily_items)(today)
     with db.connect() as conn:
         n = ideas.log(conn, today.isoformat(), items)
