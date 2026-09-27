@@ -57,7 +57,7 @@ const hideTip = () => { tooltip.hidden = true; };
 const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
-const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
+const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], ideas: ["ideas", "sleepers", "chatter", "moneyflow", "economy"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
   news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
@@ -92,6 +92,11 @@ function selectTab(name) {
   if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
+  if (name === "ideas") { loadScreen(); loadIdeas(); }
+  if (name === "sleepers") loadSleepers();
+  if (name === "chatter") loadChatter();
+  if (name === "moneyflow") loadMoneyFlow();
+  if (name === "economy") loadEconomy();
   if (!["mynews", "reading"].includes(name) && typeof Live !== "undefined") Live.drop("mynews");
   if (name !== "early" && typeof Live !== "undefined") Live.drop("early");
   if (name !== "people" && typeof Live !== "undefined") Live.drop("people");
@@ -626,6 +631,7 @@ async function openSymbol(raw) {
   loadChart();
   loadSymbolDetails(sym);
   loadEarnings(sym);
+  loadPricedIn(sym);
 }
 async function loadChart() {
   const { sym, range } = symState;
@@ -2939,4 +2945,153 @@ async function loadEarnings(sym) {
         : `<p class="muted">The quarterly report's audited numbers appear here once the 10-Q is filed. The release leads with the company's own (often adjusted) figures.</p>`}`;
     card.hidden = false;
   } catch { /* funds and companies without a results release: no card */ }
+}
+
+// ---------------------------------------------------------------- ideas: the weekly screen
+const screenState = { data: null, which: "top_large" };
+const pctTxt = (x) => x == null ? "—" : Math.round(x * 100) + "%";
+const gradeCell = (g) => g == null ? `<span class="muted">—</span>` : `<span class="gr ${g >= 70 ? "up" : g < 30 ? "down" : ""}">${g}</span>`;
+async function loadScreen() {
+  try { screenState.data = await api("/api/screen"); } catch (err) { $("#sc-out").innerHTML = `<p class="muted">${esc(err.message)}</p>`; $("#bl-out").innerHTML = ""; return; }
+  renderScreen();
+}
+function renderScreen() {
+  const d = screenState.data;
+  $("#sc-meta").textContent = `${d.universe.toLocaleString()} companies · ${d.quarter} · built ${String(d.as_of).slice(0, 10)}`;
+  const rows = d[screenState.which] || [];
+  $("#sc-out").innerHTML = `<div class="table-scroll"><table class="data sc-table"><thead><tr><th>Company</th><th>Grade</th><th title="Operating profit on assets">Quality</th>
+    <th>Value</th><th>Momentum</th><th title="Not issuing new shares">No dilution</th><th>12 mo</th><th></th></tr></thead><tbody>
+    ${rows.slice(0, 30).map((r) => `<tr><td><button type="button" class="linkish" data-open="${esc(r.symbol)}">${tick(r.symbol)}</button> <span class="muted">${esc((r.name || "").slice(0, 28))}</span></td>
+      <td><b>${r.score != null ? r.score.toFixed(0) : "—"}</b>${r.flaws && r.flaws.length ? ` <span class="chip-warn" title="One grade in the bottom 10% of its sector">flaw</span>` : ""}</td>
+      <td>${gradeCell(r.grades.quality)}</td><td>${gradeCell(r.grades.value)}</td><td>${gradeCell(r.grades.momentum)}</td><td>${gradeCell(r.grades.low_issuance)}</td>
+      <td class="${cls(r.return_12m)}">${r.return_12m != null ? fmtPct(r.return_12m * 100, 0) : "—"}</td>
+      <td class="muted">${esc(r.sector || "")}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted">Grades are percentiles within the sector (100 = best). Quality is blank for banks and insurers, which report no operating income.</p>`;
+  $("#bl-out").innerHTML = (d.backlog || []).map((b) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(b.symbol)}">${tick(b.symbol)}</button>
+      <span class="muted">${esc((b.name || "").slice(0, 32))}</span> <span class="muted">grade ${b.score != null ? b.score.toFixed(0) : "—"}</span></div>
+      <div>${esc(b.why)}</div></div>`).join("") || `<p class="muted">None this week.</p>`;
+  document.querySelectorAll("#tab-ideas [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener("click", () => {
+  screenState.which = b.dataset.w;
+  document.querySelectorAll("#sc-which button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (screenState.data) renderScreen();
+}));
+
+// ---------------------------------------------------------------- ideas: the scorecard
+async function loadIdeas() {
+  let r;
+  try { r = await api("/api/ideas"); } catch (err) { $("#id-verdict").textContent = err.message; return; }
+  $("#id-verdict").textContent = r.verdict;
+  $("#id-meta").textContent = `${r.items.length} logged · against ${r.benchmark}`;
+  const cell = (h) => h.resolved ? `${h.beat_voo}% beat · ${fmtPct(h.avg_edge)} avg · worst ${fmtPct(h.worst)}${h.enough ? "" : ` <span class="muted">(${h.resolved})</span>`}` : `<span class="muted">none yet</span>`;
+  $("#id-board").innerHTML = r.leaderboard.length ? `<div class="table-scroll"><table class="data"><thead><tr><th>Kind of idea</th><th>Logged</th><th>3 months</th><th>6 months</th><th>12 months</th></tr></thead><tbody>
+    ${r.leaderboard.map((b) => `<tr><td>${esc(b.label)}</td><td>${b.ideas}</td><td>${cell(b["3m"])}</td><td>${cell(b["6m"])}</td><td>${cell(b["12m"])}</td></tr>`).join("")}</tbody></table></div>
+    ${r.decisions.bought.n || r.decisions.passed.n ? `<p class="muted">Ideas you bought: ${r.decisions.bought.n} (${fmtPct(r.decisions.bought.avg_edge)} vs VOO so far) · passed on: ${r.decisions.passed.n} (${fmtPct(r.decisions.passed.avg_edge)}).</p>` : ""}` : "";
+  $("#id-list").innerHTML = `<h3 class="small">Latest ideas</h3>` + (r.items.slice(0, 40).map((i) => `<div class="id-item"><div class="row">
+      <button type="button" class="linkish" data-open="${esc(i.symbol)}">${tick(i.symbol)}</button> <span class="muted">${esc(r.sources[i.source] || i.source)} · ${esc(i.day)} at ${fmtMoney(i.price, 2)}</span>
+      ${i.so_far ? `<span class="${cls(i.so_far.edge)}">${fmtPct(i.so_far.edge)} vs VOO so far</span>` : ""}
+      ${i.decision ? `<span class="chip">${esc(i.decision)}</span>` : `<span class="id-dec"><button type="button" class="secondary small" data-dec="bought" data-id="${i.id}">I bought it</button> <button type="button" class="secondary small" data-dec="passed" data-id="${i.id}">Passed</button></span>`}</div>
+      <div class="muted">${esc(i.reason)}${i.wrong_if ? ` · wrong if: ${esc(i.wrong_if)}` : ""}</div></div>`).join("") || `<p class="muted">Nothing yet: the screens log their ideas once a day.</p>`);
+  document.querySelectorAll("#id-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  document.querySelectorAll("#id-list [data-dec]").forEach((el) => el.addEventListener("click", async () => {
+    try { await api(`/api/ideas/${el.dataset.id}/decision`, { method: "POST", body: JSON.stringify({ decision: el.dataset.dec }) }); loadIdeas(); }
+    catch (err) { $("#id-msg").textContent = err.message; }
+  }));
+}
+$("#id-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api("/api/ideas", { method: "POST", body: JSON.stringify({ symbol: $("#id-sym").value, reason: $("#id-reason").value, wrong_if: $("#id-wrong").value }) });
+    $("#id-msg").textContent = `Logged ${r.logged} at ${fmtMoney(r.price, 2)}. It can't be edited: that's the point.`;
+    $("#id-form").reset(); loadIdeas();
+  } catch (err) { $("#id-msg").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- sleepers
+async function loadSleepers() {
+  $("#sl-out").innerHTML = `<p class="muted">Checking insider filings and headlines (a minute the first time)…</p>`;
+  let r;
+  try { r = await api("/api/sleepers"); } catch (err) { $("#sl-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#sl-meta").textContent = r.screen_as_of ? `screen ${String(r.screen_as_of).slice(0, 10)}` : "";
+  $("#sl-bucket").innerHTML = `<span class="${r.bucket.over ? "down" : ""}">${esc(r.bucket.text)}</span>${r.bucket.over ? " Over the limit: don't add more." : ""}`;
+  const LV = { sleeper: "Sleeper: 3+ signals", "strong lead": "Strong lead: 2 signals", lead: "Lead: 1 signal" };
+  $("#sl-out").innerHTML = (r.note ? `<p class="muted">${esc(r.note)}</p>` : "") + (r.sleepers.map((x) => `<div class="sl-item sl-${esc(x.level.replace(" ", "-"))}">
+      <div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button> <span class="muted">${esc((x.name || "").slice(0, 32))}</span>
+        <span class="tk-level">${esc(LV[x.level])}</span> <span class="muted">${x.cap ? fmtMoney(x.cap / 1e9, 1) + "B" : ""} · ${esc(x.sector || "")}</span></div>
+      <ul class="hp-lines">${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`).join("") || `<p class="muted">Nothing lines up this week. That's a fine answer.</p>`);
+  document.querySelectorAll("#sl-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
+// ---------------------------------------------------------------- chatter and themes
+async function loadChatter() {
+  let r;
+  try { r = await api("/api/chatter"); } catch (err) { $("#ch-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#ch-meta").textContent = r.errors.length ? r.errors.join("; ") : "Reddit (ApeWisdom) and StockTwits";
+  const CAU = { high: "High caution", medium: "Caution", low: "Fewer warnings" };
+  $("#ch-out").innerHTML = r.rows.map((x) => `<div class="ch-item ch-${esc(x.caution)}"><div class="row">
+      <button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button> <span class="muted">${esc((x.name || "").slice(0, 30))}</span>
+      <span class="tk-level">${esc(CAU[x.caution])}</span></div>
+      <div>${x.reddit ? `${x.reddit} Reddit mentions${x.rising ? ` (${x.rising}× yesterday)` : ""}` : ""}${x.stocktwits ? `${x.reddit ? " · " : ""}trending on StockTwits${x.reason ? ": " + esc(x.reason.slice(0, 140)) : ""}` : ""}</div>
+      ${x.warnings.length ? `<div class="muted">${esc(x.warnings.join(" · "))}</div>` : ""}</div>`).join("") || `<p class="muted">No chatter data right now.</p>`;
+  document.querySelectorAll("#ch-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+$("#th-load").addEventListener("click", async () => {
+  $("#th-out").innerHTML = `<p class="muted">Searching SEC fund filings…</p>`;
+  try {
+    const r = await api("/api/themes");
+    const LV = { crowded: "Crowded", busy: "Busy", quiet: "Quiet" };
+    $("#th-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Theme</th><th>New fund filings, 6 mo</th><th>6 mo before</th><th></th><th>Well-known names</th></tr></thead><tbody>
+      ${r.themes.map((t) => `<tr><td>${esc(t.theme)}</td><td><b>${t.last_6m}</b></td><td>${t.prior_6m}</td><td class="${t.level === "crowded" ? "down" : ""}">${LV[t.level]}${t.ratio ? ` (${t.ratio}×)` : ""}</td>
+        <td>${t.tickers.map((x) => `<button type="button" class="linkish" data-open="${esc(x)}">${esc(x)}</button>`).join(" ")}</td></tr>`).join("")}</tbody></table></div>`;
+    document.querySelectorAll("#th-out [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  } catch (err) { $("#th-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- money flow
+const bn = (x) => x == null ? "—" : "$" + (x / 1e9).toFixed(x >= 1e11 ? 0 : 1) + "B";
+async function loadMoneyFlow() {
+  let r;
+  try { r = await api("/api/moneyflow"); } catch (err) { $("#mf-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#mf-out").innerHTML = r.waves.map((w) => `<div class="mf-wave"><div class="row"><b>${esc(w.wave)}</b>
+      <span>${bn(w.total)} over the last year${w.growth != null ? ` <span class="${cls(w.growth)}">${fmtPct(w.growth * 100, 0)}</span> on the year before` : ""}</span></div>
+      <div class="muted">${w.spenders.map((s) => `${esc(s.symbol)} ${bn(s.capex)}${s.growth != null ? ` (${fmtPct(s.growth * 100, 0)})` : ""}`).join(" · ")}</div>
+      <div class="mf-cats">${w.suppliers.map((c) => `<div><span class="muted">${esc(c.category)}:</span> ${c.companies.map((x) => `<button type="button" class="linkish mf-co${x.priced_in === "Already ran hard" ? " hot" : ""}" data-open="${esc(x.symbol)}"
+        title="${esc(x.priced_in || "not on the screen")}${x.score != null ? ", grade " + Math.round(x.score) : ""}">${esc(x.symbol)}${x.priced_in === "Already ran hard" ? " ▲" : ""}</button>`).join(" ")}</div>`).join("")}</div></div>`).join("")
+    + `<p class="muted">▲ = already ran hard (top 10% of 12-month returns, or 30%+ above its 200-day average). Supplier lists are hand-picked well-known names, not recommendations.</p>`;
+  $("#lag-out").innerHTML = r.lagging.map((x) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(x.symbol)}">${tick(x.symbol)}</button>
+      <span class="muted">${fmtMoney(x.cap / 1e9, 1)}B${x.score != null ? ` · grade ${Math.round(x.score)}` : ""}</span></div><div>${esc(x.why)}</div></div>`).join("")
+    || `<p class="muted">No big customer moved 10%+ this month without its small suppliers following.</p>`;
+  document.querySelectorAll("#tab-moneyflow [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+
+// ---------------------------------------------------------------- economy
+async function loadEconomy() {
+  let r;
+  try { r = await api("/api/macro"); } catch (err) { $("#ec-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; return; }
+  $("#ec-meta").textContent = `as of ${r.as_of}`;
+  $("#ec-pace").innerHTML = `<span class="ec-${esc(r.pace.level)}">${esc(r.pace.text)}</span>`;
+  const fmt = (g, v) => v == null ? "—" : g.id === "ICSA" ? Math.round(v / 1000) + "k" : g.id === "NEWORDER" ? "$" + (v / 1000).toFixed(1) + "B" : g.unit === "$" ? "$" + v.toFixed(2) : v.toFixed(2) + (g.unit === "%" ? "%" : "");
+  $("#ec-out").innerHTML = r.gauges.map((g) => `<div class="ec-g ec-${esc(g.state)}"><div class="muted">${esc(g.name)}</div><b>${fmt(g, g.value)}</b>
+      <div class="muted">3 months ago ${fmt(g, g.three_months_ago)} · a year ago ${fmt(g, g.year_ago)}</div>${g.note ? `<div>${esc(g.note)}</div>` : ""}</div>`).join("");
+}
+
+// ---------------------------------------------------------------- symbol page: priced in?
+async function loadPricedIn(sym) {
+  const card = $("#sym-pi");
+  card.hidden = true;
+  if (/-USD$/.test(sym)) return;
+  try {
+    const r = await api("/api/priced-in/" + encodeURIComponent(sym));
+    if (sym !== symState.sym) return;
+    const s = r.screen, v = r.valuation;
+    $("#pi-meta").textContent = r.verdict;
+    $("#pi-out").innerHTML = (r.flags.length ? `<ul class="hp-lines">${r.flags.map((f) => `<li class="${f.level >= 2 ? "down" : ""}">${esc(f.text)}</li>`).join("")}</ul>` : `<p>No priced-in warnings.</p>`)
+      + (s ? `<p class="muted">Screen grade <b>${s.score != null ? Math.round(s.score) : "—"}</b>/100 in ${esc(s.sector)}: quality ${s.quality ?? "—"}, value ${s.value ?? "—"}, momentum ${s.momentum ?? "—"}; 12-month return better than ${s.return_12m_pct ?? "—"}% of listed companies.</p>` : "")
+      + (v && v.pe ? `<p class="muted">P/E ${v.pe} against its own last ${v.quarters} quarter-ends: median ${v.median}, range ${v.low}-${v.high}.</p>` : v && v.note ? `<p class="muted">${esc(v.note)}</p>` : "")
+      + (r.themes.length ? `<p class="muted">Theme: ${esc(r.themes.join(", "))}.</p>` : "")
+      + `<p class="muted" id="pi-gov"></p>`;
+    card.hidden = false;
+    api("/api/contracts/" + encodeURIComponent(sym)).then((c) => { if (sym === symState.sym && c.amount) $("#pi-gov").textContent = c.text + (c.material ? " A material share of the business." : ""); }).catch(() => {});
+  } catch { /* funds and anything the screen doesn't cover: no card */ }
 }

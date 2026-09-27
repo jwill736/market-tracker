@@ -5,7 +5,7 @@ several independent pieces of evidence line up:
 - a good grade on the weekly quality, value and momentum screen, with no fatal flaw;
 - insiders buying with their own money outside their usual habit (opportunistic buying);
 - contracted backlog growing faster than revenue;
-- little attention: few headlines this week;
+- little attention: five or fewer headlines this week (a quiet name counts as one more piece of evidence);
 - not already a rocket: 12-month return below the top 10% and less than 30% above the 200-day average.
 One piece of evidence is a lead; three is a sleeper. Smaller companies are where these signals
 have historically been strongest, and also where they fail hardest.
@@ -27,7 +27,8 @@ from concurrent.futures import ThreadPoolExecutor
 from . import http
 
 SPECULATIVE_CAP = 0.10
-MAX_NEWS_7D = 3
+QUIET_NEWS_7D = 5
+FUND_WORDS = ("ETF", " FUND", "TRUST", "PROSHARES", "ISHARES", "DIREXION", "SPDR", "INVESCO QQQ", "TREASURY", "ULTRA", "2X", "3X")
 APEWISDOM = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
 
 
@@ -57,17 +58,17 @@ def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn
             ev += 1
             why.append(backlog[s]["why"])
         hot = (r.get("return_12m_pct") or 0) >= 90 or (r.get("above_200d") or 0) >= 0.3
-        if hot:
-            return None
-        if ev == 0:
+        if hot or ev == 0:
             return None
         try:
             n7 = news_fn(s, r.get("name") or None)
         except Exception:  # noqa: BLE001 - attention unknown
             n7 = None
-        if n7 is not None and n7 > MAX_NEWS_7D:
-            return None
-        why.append(f"{n7} headline{'s' if n7 != 1 else ''} this week" if n7 is not None else "attention not checked")
+        if n7 is not None and n7 <= QUIET_NEWS_7D:
+            ev += 1
+            why.append(f"quiet: {n7} headline{'s' if n7 != 1 else ''} this week")
+        elif n7 is not None:
+            why.append(f"{n7} headlines this week: people are watching")
         return dict(symbol=s, name=r.get("name", ""), sector=r.get("sector"), cap=r.get("cap"), score=r.get("score"), evidence=ev,
                     level="sleeper" if ev >= 3 else "strong lead" if ev == 2 else "lead", why=why)
     cands = sorted(pool, key=lambda s: (-(s in insider_cands) - (s in backlog), -(pool[s].get("score") or 0)))[:60]
@@ -81,7 +82,8 @@ def chatter(ape: dict, trending: list[dict], lookup_fn, limit: int = 20) -> list
     rows: dict[str, dict] = {}
     for r in ape.get("results", []):
         t = (r.get("ticker") or "").upper()
-        if not t or t in ("SPY", "QQQ", "VOO", "IWM", "DIA"):
+        name = (r.get("name") or "").upper()
+        if not t or t in ("SPY", "QQQ", "VOO", "IWM", "DIA") or any(w in f" {name}" for w in FUND_WORDS):
             continue
         now, before = int(r.get("mentions") or 0), int(r.get("mentions_24h_ago") or 0)
         rows[t] = {"symbol": t, "name": r.get("name", ""), "reddit": now, "reddit_24h_ago": before,

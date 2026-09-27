@@ -31,6 +31,7 @@
   <nav id="tabs" role="tablist" aria-label="Sections">
     <button role="tab" data-group="home" aria-selected="true">Home</button>
     <button role="tab" data-group="plan" aria-selected="false">Plan</button>
+    <button role="tab" data-group="ideas" aria-selected="false">Ideas</button>
     <button role="tab" data-group="discover" aria-selected="false">Discover</button>
     <button role="tab" data-group="news" aria-selected="false">News</button>
     <button role="tab" data-group="portfolio" aria-selected="false">Portfolio</button>
@@ -40,6 +41,11 @@
     <button data-tab="income" data-group="plan">Income</button>
     <button data-tab="plan" data-group="plan">Strategy</button>
     <button data-tab="review" data-group="plan">Review</button>
+    <button data-tab="ideas" data-group="ideas">What to buy</button>
+    <button data-tab="sleepers" data-group="ideas">Sleepers</button>
+    <button data-tab="chatter" data-group="ideas">Chatter</button>
+    <button data-tab="moneyflow" data-group="ideas">Money flow</button>
+    <button data-tab="economy" data-group="ideas">Economy</button>
     <button data-tab="pulse" data-group="discover">Pulse</button>
     <button data-tab="early" data-group="discover">Early wire</button>
     <button data-tab="people" data-group="discover">People</button>
@@ -488,6 +494,10 @@
     </div>
     <div class="card"><div class="card-head"><h2>News</h2><span id="sym-news-pill" class="pill"></span></div>
       <div id="sym-news-terms" class="terms"></div><ul id="sym-news" class="news"></ul></div>
+    <div class="card" id="sym-pi" hidden>
+      <div class="card-head"><h2>Priced in?</h2><span class="muted small" id="pi-meta"></span></div>
+      <div id="pi-out" class="small"></div>
+    </div>
     <div class="card" id="sym-earn" hidden>
       <div class="card-head"><h2>Latest results</h2><span class="muted small" id="se-meta"></span></div>
       <div id="se-out" class="small"></div>
@@ -674,6 +684,90 @@
         <p class="muted small" id="bk-status"></p>
         <h2 class="mt">Ledger</h2>
         <table class="data" id="tx-table"></table>
+    </div>
+  </section>
+
+
+  <!-- Ideas: what to buy, with every idea scored against VOO -->
+  <section id="tab-ideas" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>What to buy: the weekly screen</h2><span class="muted small" id="sc-meta"></span></div>
+      <p class="muted small">Every US-listed company worth $300M+, graded within its sector on the four things that have held up best in the research:
+        quality (operating profit on assets), value (earnings and book value against the price), momentum (the last year, skipping the last
+        month) and not diluting shareholders. One very bad grade caps the total at 50. Published edges shrink once known, so every top name is
+        logged below and scored against VOO: this screen has to earn your money.</p>
+      <div class="seg" id="sc-which" role="group" aria-label="Which companies"><button data-w="top_large" aria-pressed="true">Large companies</button><button data-w="top_all" aria-pressed="false">All $2B+</button><button data-w="small_mid" aria-pressed="false">Small and mid</button></div>
+      <div id="sc-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card">
+      <h2>Growing order backlogs</h2>
+      <p class="muted small">Contracted revenue not yet delivered, growing at least 10 points faster than revenue, and the stock not among the most
+        expensive. Investors have tended to overpay for big backlogs on their own, so price matters here.</p>
+      <div id="bl-out" class="small"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Idea scorecard</h2><span class="muted small" id="id-meta"></span></div>
+      <p class="verdict-line" id="id-verdict"></p>
+      <div id="id-board" class="small"></div>
+      <details class="small"><summary>Log your own idea</summary>
+        <form class="stack" id="id-form"><div class="row"><input id="id-sym" maxlength="20" required placeholder="Ticker" aria-label="Ticker">
+          <input id="id-reason" maxlength="300" required placeholder="Why it will beat VOO" aria-label="Why"></div>
+          <div class="row"><input id="id-wrong" maxlength="200" placeholder="What would prove it wrong" aria-label="Wrong if"><button type="submit">Log it</button></div>
+          <p class="muted" id="id-msg"></p></form></details>
+      <div id="id-list" class="small"></div>
+    </div>
+  </section>
+
+  <section id="tab-sleepers" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Sleepers</h2><span class="muted small" id="sl-meta"></span></div>
+      <p class="muted small">Companies worth $300M to $10B where several independent pieces of evidence line up while few are watching: a good screen
+        grade, insiders buying outside their usual habit, a backlog growing faster than revenue, three or fewer headlines this week, and not
+        already a rocket. One is a lead, three is a sleeper. This is where these signals have worked best, and where they fail hardest.</p>
+      <p class="verdict-line" id="sl-bucket"></p>
+      <div id="sl-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+  </section>
+
+  <section id="tab-chatter" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>Water-cooler chatter</h2><span class="muted small" id="ch-meta"></span></div>
+      <p class="muted small">What Reddit and StockTwits are talking about most, and how fast that's rising. So you know what everyone else is hearing:
+        not a buy list. Stocks that grab attention tend to be bought near the top by individual investors and then lag (Barber &amp; Odean). The
+        warnings are next to each name, and the top five are logged and scored against VOO so you'll see how chatter actually does.</p>
+      <div id="ch-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card">
+      <h2>How crowded is each theme?</h2>
+      <p class="muted small">New fund registrations mentioning the theme in the last six months, against the six before. Funds launch when a theme is
+        already popular, and specialized ETFs have trailed the market by about 6% a year over their first five years (Ben-David et al., 2023).</p>
+      <div id="th-out" class="small"><button type="button" class="secondary small" id="th-load">Count the new funds</button></div>
+    </div>
+  </section>
+
+  <section id="tab-moneyflow" class="tab" hidden>
+    <div class="card">
+      <h2>Follow the money</h2>
+      <p class="muted small">Who is spending (capital spending over the last four quarters, from their own cash-flow statements), and the listed
+        companies that supply it, with how far each price has already run. Context, not a buy signal: no study shows suppliers to heavy spenders
+        beat the market in general, and the obvious names are often priced for it.</p>
+      <div id="mf-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card">
+      <h2>Small suppliers that haven't caught up</h2>
+      <p class="muted small">Companies whose 10-K names a big customer, when the customer's stock moved 10%+ in a month and the supplier's didn't follow.
+        Strong in older data (Cohen &amp; Frazzini 2008), much weaker since: logged and scored, and only companies under $10B are shown.</p>
+      <div id="lag-out" class="small"></div>
+    </div>
+  </section>
+
+  <section id="tab-economy" class="tab" hidden>
+    <div class="card">
+      <div class="card-head"><h2>The economy</h2><span class="muted small" id="ec-meta"></span></div>
+      <p class="verdict-line" id="ec-pace"></p>
+      <p class="muted small">It changes how fast to put new money in, never whether to be invested: every gauge has false alarms, and time in the market
+        has beaten timing it. From the St. Louis Fed (FRED).</p>
+      <div id="ec-out" class="ec-grid small"><p class="muted">Loading…</p></div>
     </div>
   </section>
 
