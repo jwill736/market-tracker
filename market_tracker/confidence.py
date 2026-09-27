@@ -158,5 +158,7 @@ def current() -> dict:
         except (ValueError, http.DataUnavailable):
             prices = {}
     st = status(led, prices, syncs, diffs, stmts, now_utc())
+    arrivals = [{"symbol": r["symbol"], "quantity": r["quantity"], "date": r["date"], "account": r["account"]}
+                for r in transfers.pending_arrivals(legs)]
     return dict(st, fixes=fix_list(st, transfers.open_items(legs)["open"], unread, health.problems(), missing_cost),
-                needs_cost=missing_cost)
+                needs_cost=missing_cost + arrivals)

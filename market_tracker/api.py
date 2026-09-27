@@ -2864,8 +2864,10 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
     if res.errors and not (res.transactions or res.income or res.transfers):
         raise HTTPException(400, res.errors[0])
     with db.connect() as conn:
-        known = db.import_keys(conn)
-        new = [t for t in res.transactions if t["import_key"] not in known]
+        # By key, and by content against other sources (trade emails, API syncs): the same trade under another key.
+        prefix = {"robinhood": "rh:", "coinbase": "cb:", "holdings": "hl:"}[source]
+        others = [t for t in db.list_transactions(conn) if not (t.get("import_key") or "").startswith(prefix)]
+        new, _ = snaptrade.new_only(res.transactions, db.import_keys(conn), others, snaptrade.match)
         known_legs = {r["import_key"] for r in db.transfer_legs(conn)}
         new_legs = [g for g in res.transfers if g["import_key"] not in known_legs]
         known_income = db.income_keys(conn)
@@ -2876,8 +2878,12 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
             paired = db.auto_pair(conn)
         else:
             paired = 0
+        # In a preview the file's arrivals aren't stored yet: hold them the way the ledger will (transfers.pending_arrivals).
+        preview_in = [] if body.commit else [
+            {"id": -1e12, "symbol": g["symbol"], "side": "buy", "quantity": g["quantity"], "price": 0.0, "fees": 0.0, "date": g["day"],
+             "account": g["account"], "transfer": f"pending:new{k}"} for k, g in enumerate(new_legs) if g["direction"] == "in"]
         try:
-            positions = service.pf.build_positions(db.ledger(conn) + new)
+            positions = service.pf.build_positions(db.ledger(conn) + new + preview_in)
         except ValueError as exc:
             conn.rollback()
             raise HTTPException(400, f"{exc}. {IMPORT_HINTS[source]}".strip())
@@ -2890,7 +2896,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
             "transfers_new": len(new_legs), "transfers_paired": paired,
             "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
-            "needs_cost": sum(1 for t in new if t.get("note") in db.NEEDS_COST_NOTES),
+            "needs_cost": sum(1 for t in new if t.get("note") in db.NEEDS_COST_NOTES) + sum(1 for g in new_legs if g["direction"] == "in"),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
                                  for p in positions.values() if p.quantity > 0 and p.symbol in touched],

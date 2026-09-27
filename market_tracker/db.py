@@ -201,7 +201,8 @@ def ledger(conn) -> list[dict]:
     if methods:     # each account's cost-basis method, so sales take the lots the broker took
         txs = [dict(t, lot_method=methods[t.get("account") or ""]) if t["side"] == "sell" and (t.get("account") or "") in methods
                else t for t in txs]
-    return transfers.with_moves(txs, transfers.moves(transfers.from_rows(transfer_legs(conn))))
+    legs = transfers.from_rows(transfer_legs(conn))
+    return transfers.with_moves(txs, transfers.moves(legs)) + transfers.pending_arrivals(legs)
 
 
 def transfer_legs(conn) -> list[dict]:
@@ -231,7 +232,13 @@ def delete_leg(conn, leg_id: int) -> bool:
     if not row:
         return False
     if row["pair"] is not None:
-        conn.execute("UPDATE transfer_legs SET pair = NULL, resolved = '' WHERE id = ?", (row["pair"],))
+        other = conn.execute("SELECT import_key FROM transfer_legs WHERE id = ?", (row["pair"],)).fetchone()
+        if other and not other["import_key"]:
+            # The app made that side (a move recorded by hand, "moved to my wallet"): it goes with the move. Left
+            # behind, an unpaired arrival would count as coins that came from outside (transfers.pending_arrivals).
+            conn.execute("DELETE FROM transfer_legs WHERE id = ?", (row["pair"],))
+        else:
+            conn.execute("UPDATE transfer_legs SET pair = NULL, resolved = '' WHERE id = ?", (row["pair"],))
     conn.execute("DELETE FROM transfer_legs WHERE id = ?", (leg_id,))
     return True
 

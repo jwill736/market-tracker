@@ -181,3 +181,38 @@ def test_lot_compare_endpoint_and_account_methods():
         _, sales = taxes.lots_and_sales(db.ledger(conn))
     assert [round(x.cost, 2) for x in sales] == [1500.0]
     assert c.get("/api/lots/methods").json()["methods"] == {"Robinhood": "hifo"}
+
+
+def test_coins_received_from_outside_then_sold_import_and_wait_for_a_cost(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from market_tracker import api, db, golive
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    monkeypatch.delenv("REQUIRE_LOGIN", raising=False)
+    with db.connect() as conn:
+        conn.execute("DELETE FROM transactions")
+        conn.execute("DELETE FROM transfer_legs")
+    csv_text = ("ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,"
+                "Total (inclusive of fees and/or spread),Fees and/or Spread,Notes\n"
+                "r1,2024-05-15 18:22:07 UTC,Receive,SOL,5,USD,$150.00,$750.00,$750.00,$0.00,Received 5 SOL\n"
+                "s1,2024-06-20 13:45:00 UTC,Sell,SOL,-2,USD,$140.00,-$280.00,-$275.80,$4.20,Sold 2 SOL\n")
+    c = TestClient(api.app)
+    pv = c.post("/api/import/coinbase", json={"csv": csv_text, "commit": False})
+    assert pv.status_code == 200 and pv.json()["needs_cost"] == 1          # the preview no longer refuses the sale
+    r = c.post("/api/import/coinbase", json={"csv": csv_text, "commit": True}).json()
+    assert r["new"] == 1 and r["transfers_new"] == 1
+    held = {h["symbol"]: h for h in c.get("/api/holdings").json()}
+    assert held["SOL-USD"]["quantity"] == 3.0                              # 5 arrived, 2 sold
+    with db.connect() as conn:
+        legs = db.transfer_legs(conn)
+    arrivals = [{"symbol": "SOL-USD", "quantity": 5.0, "date": "2024-05-15", "account": "Coinbase"}]
+    tr = golive.trust({"total_value": 1.0, "checked_value": 1.0, "needs_cost": arrivals,
+                       "holdings": [{"account": "Coinbase", "symbol": "SOL-USD", "value": 1.0, "state": "broker", "detail": ""}]})
+    assert not tr["trusted"] and "5 SOL-USD on 2024-05-15" in tr["text"]
+    leg = legs[0]["id"]
+    assert c.post(f"/api/transfers/{leg}/resolve", json={"how": "bought", "cost": 100.0, "acquired": "2023-01-10"}).status_code == 200
+    held = {h["symbol"]: h for h in c.get("/api/holdings").json()}
+    assert held["SOL-USD"]["quantity"] == 3.0                              # the real purchase replaced the placeholder
+    from market_tracker import transfers
+    with db.connect() as conn:
+        assert transfers.pending_arrivals(transfers.from_rows(db.transfer_legs(conn))) == []

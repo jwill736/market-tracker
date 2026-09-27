@@ -125,6 +125,20 @@ def with_moves(transactions: list[dict], mv: list[dict]) -> list[dict]:
     return rows
 
 
+def pending_arrivals(legs: list[Leg]) -> list[dict]:
+    """Coins or shares that arrived from outside the tracked accounts and have no decision yet: they're
+    held (so a later sale of them isn't "selling what you never had"), at no cost until you pair them
+    or enter what you paid. Rows are flagged as moves, so they aren't counted as purchases."""
+    out = []
+    for lg in legs:
+        if lg.direction != "in" or lg.pair is not None or lg.resolved:
+            continue
+        out.append({"id": -SYNTH + lg.id * 1e-6, "symbol": lg.symbol, "side": "buy", "quantity": lg.quantity, "price": 0.0,
+                    "fees": 0.0, "date": lg.day[:10], "account": lg.account, "transfer": f"pending:{lg.id}", "import_key": None,
+                    "note": "Arrived from outside: original cost needed"})
+    return out
+
+
 def real(transactions: list[dict]) -> list[dict]:
     """The ledger without move rows (purchases and sales you actually made)."""
     return [t for t in transactions if t.get("transfer") is None]
