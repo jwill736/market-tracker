@@ -8,6 +8,7 @@ session state; changing APP_PASSWORD or APP_SECRET signs everyone out.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
@@ -86,7 +87,35 @@ class Throttle:
 
 
 def is_open(path: str) -> bool:
-    return path in OPEN_PATHS or path.startswith("/static/login")
+    # /act/ links carry their own signature (sign_action): a phone notification's button can't sign in.
+    return path in OPEN_PATHS or path.startswith("/static/login") or path.startswith(ACTION_PREFIX)
+
+
+ACTION_PREFIX = "/act/"
+ACTION_DAYS = 7
+
+
+def sign_action(text: str, days: int = ACTION_DAYS, now: float | None = None) -> str:
+    """A link token that performs exactly one small action (skip or snooze one decision) until it
+    expires. It can't be altered into another action without APP_SECRET / the password."""
+    expires = int((now or time.time()) + days * 86400)
+    body = base64.urlsafe_b64encode(f"{expires}|{text}".encode()).decode().rstrip("=")
+    sig = hmac.new(_secret(), ("act:" + body).encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{body}.{sig}"
+
+
+def read_action(token: str, now: float | None = None) -> str | None:
+    body, _, sig = (token or "").partition(".")
+    good = hmac.new(_secret(), ("act:" + body).encode(), hashlib.sha256).hexdigest()[:32]
+    if not body or not hmac.compare_digest(sig, good):
+        return None
+    try:
+        expires, _, text = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode().partition("|")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not expires.isdigit() or int(expires) < (now or time.time()):
+        return None
+    return text
 
 
 LOGIN_PAGE = """<!doctype html>

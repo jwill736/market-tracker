@@ -6,7 +6,7 @@ import asyncio
 import functools
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -1130,9 +1130,58 @@ async def trade_preview(body: TradeIn):
         methods = _lot_methods(conn)
     try:
         plan = holdplan._cache.get("plan", (None, 0, None))[2]
-        return await asyncio.to_thread(functools.partial(trading.preview, body.order(), txs, plan, cfg, spent, methods=methods))
+        out = await asyncio.to_thread(functools.partial(trading.preview, body.order(), txs, plan, cfg, spent, methods=methods))
     except trading.TradeError as exc:
         raise HTTPException(400, str(exc))
+    if body.side == "sell" and body.venue != "paper":
+        out = _cooloff_gate(out, body.order().symbol, plan)
+    return out
+
+
+def _cooloff_gate(out: dict, symbol: str, plan: dict | None) -> dict:
+    """A sell no rule backs waits 48 hours with its reason written down (cooloff.py)."""
+    from datetime import datetime, timezone
+
+    from . import cooloff, decisions
+    if plan is None:
+        try:
+            plan = holdplan.cached()           # the hold plan's Sell?/Trim verdicts are what back a sell
+        except Exception:  # noqa: BLE001 - without a plan, only open decisions can back it
+            plan = None
+    with db.connect() as conn:
+        conn.executescript(decisions.SCHEMA)
+        open_d = [dict(r) for r in conn.execute("SELECT kind, symbol, title FROM decisions WHERE status IN ('open', 'approved')")]
+        entry = cooloff.load(conn).get(symbol)
+    warn, block, cooling = cooloff.gate(symbol, plan, open_d, entry, datetime.now(timezone.utc))
+    out["warnings"] = out["warnings"] + warn
+    if block:
+        out["blockers"] = out["blockers"] + block
+        out["token"], out["expires_in"] = None, None
+    out["cooling"] = cooling
+    return out
+
+
+@app.get("/api/cooloff/{symbol}")
+def cooloff_view(symbol: str):
+    """For a sell of this symbol: backed by a rule, waiting out the 48 hours, or needing a reason."""
+    plan = holdplan._cache.get("plan", (None, 0, None))[2]
+    return _cooloff_gate({"warnings": [], "blockers": []}, market.normalize_symbol(symbol), plan)
+
+
+class CoolIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=10, max_length=300)
+    override: bool = False
+
+
+@app.post("/api/cooloff")
+def cooloff_start(body: CoolIn):
+    """Write down why you want to sell, and start the 48 hours (or, with override, skip them: logged)."""
+    from datetime import datetime, timezone
+
+    from . import cooloff
+    with db.connect() as conn:
+        return cooloff.start(conn, market.normalize_symbol(body.symbol), body.reason, datetime.now(timezone.utc), body.override)
 
 
 @app.post("/api/trade/place")
@@ -2176,6 +2225,36 @@ async def decisions_view():
     return {"as_of": datetime_hour(), "decisions": visible, "history": past, "evidence": decisions.EVIDENCE}
 
 
+@app.post("/act/{token}")
+def act_from_push(token: str):
+    """A push button (Later, Skip) records its decision here; the link is signed and expires in a week."""
+    from . import decisions
+    text = auth.read_action(token)
+    if not text or not text.startswith("decide|"):
+        raise HTTPException(403, "This link is invalid or has expired: open Plumbline instead.")
+    _, status, key = text.split("|", 2)
+    with db.connect() as conn:
+        try:
+            return decisions.decide(conn, key, status, date.today())
+        except KeyError:
+            raise HTTPException(404, "That decision no longer exists.")
+
+
+@app.get("/api/decisions/scorecard")
+async def decisions_scorecard():
+    """Did following Plumbline's calls beat doing nothing? Approved and skipped calls, scored."""
+    from . import cash, decisions
+
+    def run():
+        y, _ = cash.tbill_yield()
+        with db.connect() as conn:
+            return decisions.scorecard(conn, lambda s: _closes(s, 800), date.today(), y)
+    with db.connect() as conn:
+        conn.executescript(decisions.SCHEMA)
+        stamp = tuple(conn.execute("SELECT COUNT(*), MAX(decided) FROM decisions WHERE decided != ''").fetchone())
+    return await asyncio.to_thread(_analysis_cache.get, ("dscore", stamp, date.today().isoformat()), run)
+
+
 class DecideIn(BaseModel):
     key: str = Field(min_length=3, max_length=200)
     status: Literal["approved", "skipped", "later", "done"]
@@ -2227,6 +2306,29 @@ def letter_view():
     import json as _json
     with db.connect() as conn:
         return _json.loads(db.get_meta(conn, "letter_latest", "null") or "null") or {"answer": None}
+
+
+@app.get("/api/claude-budget")
+def claude_budget_view():
+    """This month's estimated Claude spend and the automatic letter's budget."""
+    import os as _os
+
+    from . import assistant
+    with db.connect() as conn:
+        return {"spent": round(assistant.month_spend(conn), 2), "budget": assistant.budget(conn),
+                "key": bool(_os.environ.get("ANTHROPIC_API_KEY")), "push": bool(_os.environ.get("PLUMBLINE_URL"))}
+
+
+class BudgetIn(BaseModel):
+    budget: float = Field(ge=0, le=100)
+
+
+@app.post("/api/claude-budget")
+def claude_budget_set(body: BudgetIn):
+    from . import assistant
+    with db.connect() as conn:
+        db.set_meta(conn, "claude_auto_budget", str(round(body.budget, 2)))
+        return {"spent": round(assistant.month_spend(conn), 2), "budget": assistant.budget(conn)}
 
 
 @app.post("/api/letter")
@@ -2292,11 +2394,29 @@ async def paper_view():
     return await asyncio.to_thread(_analysis_cache.get, ("paper", date.today().isoformat()), run)
 
 
+@app.get("/api/evidence")
+async def evidence_view():
+    """Which idea lists have earned a dollar amount (a forward record ahead of VOO) and which are research only."""
+    from . import evidence, ideas
+    try:
+        board = (await ideas_view()).get("leaderboard")
+    except Exception:  # noqa: BLE001 - without the scorecard, only the paper books count
+        board = []
+    try:
+        lists = (await paper_view()).get("lists")
+    except Exception:  # noqa: BLE001
+        lists = []
+    st = evidence.status(lists, board, ideas.SOURCES)
+    return {"sources": st, "earned": sorted(evidence.earned(st))}
+
+
 @app.get("/api/signal-backtests")
 async def signal_backtests_view():
     """Opportunistic insider buying since 2013 and spin-offs since 2005, replayed against SPY."""
     from . import insider_backtest, spinoff_backtest
     ins, spin = await asyncio.gather(asyncio.to_thread(insider_backtest.load), asyncio.to_thread(spinoff_backtest.load))
+    if spin and not spin.get("stress"):
+        spin = dict(spin, stress=spinoff_backtest.stress(spin))       # files written before the stress test existed
     return {"insider": {k: v for k, v in (ins or {}).items() if k != "recent"} or None,
             "spinoff": {k: v for k, v in (spin or {}).items() if k != "cases"} | {"cases": (spin or {}).get("cases", [])[:20]} if spin else None}
 
@@ -2540,6 +2660,68 @@ def accounts_view():
     return {"accounts": accounts.overview(txs, inc),
             "connections": {"coinbase_api": coinbase_sync.configured(), "snaptrade": snaptrade.configured(),
                             "coinbase_last": accounts.last_sync("coinbase"), "snaptrade_last": accounts.last_sync("snaptrade")}}
+
+
+def _shelter_view():
+    from . import cash, shelter
+    today = date.today()
+    with db.connect() as conn:
+        txs, inc, st, accts = db.ledger(conn), db.income(conn), shelter.settings(conn), cash.load(conn)
+    positions, _ = _valued_positions()
+    price = {p["symbol"]: p.get("price") or 0.0 for p in positions}
+    pos = [{"account": a["name"], "symbol": p["symbol"], "value": p["quantity"] * price.get(p["symbol"], 0.0)}
+           for a in accounts.overview(txs, inc, today) for p in a["positions"]]
+    year_ago = (today - timedelta(days=365)).isoformat()
+    div: dict = {}
+    for r in inc:
+        if r["kind"] in ("dividend", "reinvested") and r["day"] >= year_ago:
+            div[(r["account"], r["symbol"])] = div.get((r["account"], r["symbol"]), 0.0) + r["amount"]
+    names = sorted({t.get("account") or "Unlabeled" for t in txs} | set(accts))
+    return shelter.view(st, names, pos, div, today)
+
+
+@app.get("/api/shelter")
+def shelter_view():
+    """Which accounts are tax-sheltered, this year's contribution room, and what belongs where."""
+    return _shelter_view()
+
+
+class ShelterAccountIn(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    type: Literal["taxable", "roth_ira", "trad_ira", "401k", "hsa"]
+    contributed: float | None = Field(default=None, ge=0, le=1_000_000)
+
+
+@app.post("/api/shelter/account")
+def shelter_account(body: ShelterAccountIn):
+    from . import shelter
+    with db.connect() as conn:
+        shelter.save(conn, body.account, body.type, body.contributed, date.today().year)
+    _analysis_cache.clear()
+    return _shelter_view()
+
+
+class ShelterPersonIn(BaseModel):
+    age50: bool = False
+    hsa_family: bool = False
+
+
+@app.post("/api/shelter/person")
+def shelter_person(body: ShelterPersonIn):
+    from . import shelter
+    with db.connect() as conn:
+        shelter.save_person(conn, body.age50, body.hsa_family)
+    return _shelter_view()
+
+
+@app.get("/api/recurring")
+def recurring_view():
+    """What you invest by hand each month, what's on autopilot, and a recurring buy to cover the rest."""
+    from . import cash, recurring, schedules
+    with db.connect() as conn:
+        txs, scheds, accts = db.ledger(conn), schedules.load(conn), cash.load(conn)
+    idle = sum(r["amount"] for r in cash.view(accts, date.today(), cash.FALLBACK_YIELD, False)["accounts"] if r["idle"])
+    return recurring.plan(txs, scheds, date.today(), idle)
 
 
 @app.get("/api/backup")

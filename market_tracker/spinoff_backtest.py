@@ -72,6 +72,33 @@ def summarize(rows: list[dict]) -> dict:
     return out
 
 
+STRESS_AT = (0.0, -30.0, -50.0)      # what the missing spin-offs might have done against SPY, points over 12 months
+PLAUSIBLE_LOSS = -30.0               # the scenario the result has to survive to count as more than a maybe
+
+
+def stress(bt: dict | None) -> dict | None:
+    """Half the registrants have no prices (bought out, merged, failed). If they'd been bought in
+    proportion, how badly would they have had to do to erase the 12-month edge? And does it survive
+    them trailing SPY by 30 points, which failed and struggling companies easily do?"""
+    s = (((bt or {}).get("summary") or {}).get("from_day20") or {}).get("12m")
+    priced, missing = (bt or {}).get("priced") or 0, (bt or {}).get("missing") or 0
+    if not s or not priced:
+        return None
+    n = s["spinoffs"]
+    m = missing * n / priced                   # the missing ones, scaled to the share old enough for a 12-month result
+    mean = s["avg_edge"]
+    scen = [{"missing_at": x, "avg_edge": round((n * mean + m * x) / (n + m), 1)} for x in STRESS_AT]
+    breakeven = round(-n * mean / m, 1) if m else None
+    robust = next(sc["avg_edge"] for sc in scen if sc["missing_at"] == PLAUSIBLE_LOSS) > 0 and (s.get("t") or 0) >= 2
+    text = (f"Stress test: {missing} of {priced + missing} spin-offs have no prices. If they'd trailed SPY by "
+            f"{-breakeven:.0f} points over the year, the {mean:+.1f} average would vanish"
+            if breakeven is not None and breakeven < 0 else f"Stress test: {missing} of {priced + missing} spin-offs have no prices")
+    text += (f"; at {PLAUSIBLE_LOSS:.0f} it {'still holds' if robust else 'turns to'} {scen[1]['avg_edge']:+.1f}. "
+             + ("The edge survives a plausible loss on the missing half." if robust else
+                "That is well within what failed companies do, so the result is not solid: spin-offs stay unproven."))
+    return {"breakeven": breakeven, "scenarios": scen, "robust": robust, "text": text}
+
+
 def verdict(summary: dict, missing: int, found: int) -> str:
     s = summary["from_day20"].get("12m")
     if not s:
@@ -132,6 +159,7 @@ def run(get=None, history_fn=None, ticker_fn=None, first_year: int = FIRST_YEAR,
     return {"as_of": datetime.now(timezone.utc).isoformat(timespec="seconds"), "first_year": first_year, "registrants": len(regs),
             "priced": len(rows), "missing": missing, "exchange_moves": moved, "summary": summary,
             "verdict": verdict(summary, missing, len(regs)),
+            "stress": stress({"summary": summary, "priced": len(rows), "missing": missing}),
             "cases": sorted(({"ticker": r["ticker"], "name": r["name"][:60], "since": r["trading_since"],
                               "12m_edge": round((r["from_day20"]["12m"] - r["from_day20"]["12m_spy"]) * 100, 1) if "12m" in r["from_day20"] else None}
                              for r in rows), key=lambda x: x["since"], reverse=True)[:80]}

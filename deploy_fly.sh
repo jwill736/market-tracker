@@ -38,6 +38,11 @@ if ! "$FLY" secrets list -a "$APP" 2>/dev/null | grep APP_PASSWORD >/dev/null; t
   "$FLY" secrets set -a "$APP" "${ARGS[@]}" --stage
 fi
 
+# Where the app lives, so phone notifications can carry Do it / Later / Skip buttons that reach it.
+if ! "$FLY" secrets list -a "$APP" 2>/dev/null | grep PLUMBLINE_URL >/dev/null; then
+  "$FLY" secrets set -a "$APP" PLUMBLINE_URL="https://$APP.fly.dev" --stage
+fi
+
 "$FLY" deploy -a "$APP" --ha=false
 echo
 echo "Plumbline is live at https://$APP.fly.dev"

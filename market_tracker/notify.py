@@ -23,6 +23,7 @@ class Message:
     url: str = ""                 # opened when the notification is tapped
     priority: int = 3             # 1 (min) to 5 (max)
     tags: tuple[str, ...] = ()    # ntfy emoji short codes shown next to the title
+    actions: tuple[str, ...] = () # ntfy action buttons ("view, Label, url" or "http, Label, url, method=POST"), up to 3
 
 
 def configured() -> bool:
@@ -41,6 +42,8 @@ def send(msg: Message, client: httpx.Client | None = None) -> bool:
         headers["Click"] = msg.url
     if msg.tags:
         headers["Tags"] = ",".join(msg.tags)
+    if msg.actions:
+        headers["Actions"] = _header("; ".join(msg.actions[:3]))
     try:
         c = client or httpx.Client(timeout=15)
         r = c.post(f"{server}/{topic}", content=msg.body.encode("utf-8"), headers=headers)
