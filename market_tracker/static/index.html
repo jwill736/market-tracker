@@ -91,6 +91,12 @@
       <ul class="brief-list" id="wk-list"></ul>
       <p class="muted small" id="wk-note">Checking less often means fewer fear-driven sales. Urgent things (serious filings, big moves, failed syncs) still push the moment they happen.</p>
     </div>
+    <div class="card brief-card" id="home-ideas" hidden>
+      <div class="card-head"><h2>Are the ideas beating VOO?</h2>
+        <span class="muted small"><span id="hi-meta"></span> · <button type="button" class="linkish" id="hi-open">Idea scorecard</button></span></div>
+      <p class="verdict-line" id="hi-verdict"></p>
+      <ul class="brief-list" id="hi-list"></ul>
+    </div>
     <div class="home-grid">
       <div class="home-main">
         <div class="rh-hero">
@@ -696,14 +702,34 @@
         quality (operating profit on assets), value (earnings and book value against the price), momentum (the last year, skipping the last
         month) and not diluting shareholders. One very bad grade caps the total at 50. Published edges shrink once known, so every top name is
         logged below and scored against VOO: this screen has to earn your money.</p>
-      <div class="seg" id="sc-which" role="group" aria-label="Which companies"><button data-w="top_large" aria-pressed="true">Large companies</button><button data-w="top_all" aria-pressed="false">All $2B+</button><button data-w="small_mid" aria-pressed="false">Small and mid</button></div>
+      <div class="seg" id="sc-which" role="group" aria-label="Which companies"><button data-w="top_all" aria-pressed="true">All $2B+</button><button data-w="small_mid" aria-pressed="false">Small and mid</button><button data-w="top_large" aria-pressed="false">Large companies</button><button data-w="bottom" aria-pressed="false">Bottom 50</button></div>
+      <p class="muted small" id="sc-note"></p>
       <div id="sc-out" class="small"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="card" id="sb-card" hidden>
+      <div class="card-head"><h2>Has this screen beaten the S&amp;P 500?</h2><span class="muted small" id="sb-meta"></span></div>
+      <p class="verdict-line" id="sb-verdict"></p>
+      <div id="sb-out" class="small"></div>
+      <p class="muted small">A replay: every quarter since 2012 the screen is rebuilt from the SEC numbers public 135 days after the quarter ended,
+        that day's prices and market values, then the picks are held 3, 6 and 12 months against SPY (dividends included). Companies that went bust or
+        were bought since are missing from today's stock list, which flatters these numbers; the rules were also written with hindsight.</p>
     </div>
     <div class="card">
       <h2>Growing order backlogs</h2>
       <p class="muted small">Contracted revenue not yet delivered, growing at least 10 points faster than revenue, and the stock not among the most
         expensive. Investors have tended to overpay for big backlogs on their own, so price matters here.</p>
       <div id="bl-out" class="small"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Events: raised guidance and spin-offs</h2><span class="muted small" id="ev-meta"></span></div>
+      <p class="muted small">Companies that raised their outlook in the last ten days and whose stock then jumped more than usual: prices have tended to keep
+        drifting after surprises like these, though the effect is much weaker in large companies than it used to be. And spin-offs from their SEC
+        registrations: new companies split from a parent have historically beaten the market in their first years, partly because index funds sell them
+        at the start. Both are logged and scored against VOO.</p>
+      <h3 class="small">Raised guidance, market agreed</h3>
+      <div id="ev-pead" class="small"><p class="muted">Loading…</p></div>
+      <h3 class="small">Spin-offs</h3>
+      <div id="ev-spin" class="small"></div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Idea scorecard</h2><span class="muted small" id="id-meta"></span></div>
@@ -722,8 +748,9 @@
     <div class="card">
       <div class="card-head"><h2>Sleepers</h2><span class="muted small" id="sl-meta"></span></div>
       <p class="muted small">Companies worth $300M to $10B where several independent pieces of evidence line up while few are watching: a good screen
-        grade, insiders buying outside their usual habit, a backlog growing faster than revenue, and quiet coverage (five or fewer headlines this
-        week); never a name that already ran. One is a lead, three is a sleeper. This is where these signals have worked best, and where they fail hardest.</p>
+        grade, insiders buying outside their usual habit, a backlog growing faster than revenue, and quiet coverage (among the quietest third of these
+        companies by headlines this week); never a name that already ran, and heavy short selling counts against a name. One is a lead, three is a sleeper.
+        This is where these signals have worked best, and where they fail hardest. "Size it" gives a dollar amount inside your limits.</p>
       <p class="verdict-line" id="sl-bucket"></p>
       <div id="sl-out" class="small"><p class="muted">Loading…</p></div>
     </div>

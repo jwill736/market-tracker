@@ -13,6 +13,11 @@ def _lookup_fn(data):
     return lambda s: screen.lookup(data, s)
 
 
+def _shorts_fn(data):
+    from . import shorts
+    return lambda syms: shorts.for_symbols(syms, _lookup_fn(data))
+
+
 def _closes(sym: str, days: int = 300) -> list[float]:
     return [b.close for b in market.get_history(sym, days)]
 
@@ -51,7 +56,7 @@ def sleepers(today: date | None = None) -> dict:
         cands = insider_candidates(today)
     except http.DataUnavailable:
         cands = {}
-    rows = discover.sleepers(data, cands, _lookup_fn(data), news_count, classify_insider)
+    rows = discover.sleepers(data, cands, _lookup_fn(data), news_count, classify_insider, shorts_fn=_shorts_fn(data))
     return {"as_of": today.isoformat(), "screen_as_of": (data or {}).get("as_of"), "sleepers": rows,
             "note": None if data else "The weekly screen hasn't run yet, so only insider-buying leads are shown."}
 
@@ -73,7 +78,7 @@ def chatter() -> dict:
     except http.DataUnavailable as exc:
         trend = []
         errors.append(f"StockTwits: {exc}")
-    return {"rows": discover.chatter(ape, trend, _lookup_fn(data)), "errors": errors}
+    return {"rows": discover.chatter(ape, trend, _lookup_fn(data), shorts_fn=_shorts_fn(data)), "errors": errors}
 
 
 def money_flow() -> dict:
@@ -106,30 +111,73 @@ def contracts_for(sym: str) -> dict:
     return moneyflow._cached(f"gov:{sym}", lambda: moneyflow.contracts(name, rev))
 
 
-def daily_items(today: date | None = None) -> list[dict]:
-    """Today's ideas from every screen, for the idea log (each name is kept once a month per screen)."""
+def events(today: date | None = None) -> dict:
+    """Raised guidance the market agreed with, and spin-offs (registered and newly trading)."""
+    from . import pead, spinoffs
     today = today or date.today()
     data = screen.load()
-    items = []
-    for r in (data or {}).get("top_large", [])[:10]:
-        items.append({"symbol": r["symbol"], "source": "qvm", "price": r.get("price"), "reason": f"Screen grade {r['score']:.0f}/100",
-                      "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months", "data": {"grades": r.get("grades")}})
-    for r in (data or {}).get("backlog", [])[:5]:
-        items.append({"symbol": r["symbol"], "source": "backlog", "price": r.get("price"), "reason": r["why"],
-                      "wrong_if": "Backlog stops growing faster than revenue"})
+    errors = []
     try:
+        drift = pead.build(today, _lookup_fn(data))
+    except http.DataUnavailable as exc:
+        drift = []
+        errors.append(f"Results releases: {exc}")
+    try:
+        spins = spinoffs.build(today, lookup_fn=_lookup_fn(data))
+    except http.DataUnavailable as exc:
+        spins = []
+        errors.append(f"Spin-offs: {exc}")
+    return {"as_of": today.isoformat(), "pead": drift, "spinoffs": spins, "errors": errors}
+
+
+def daily_items(today: date | None = None) -> list[dict]:
+    """Today's ideas from every screen, for the idea log (each name is kept once a month per screen).
+    One source failing (a site down, a format change) never stops the others: it's logged and skipped."""
+    import logging
+    log = logging.getLogger(__name__)
+    today = today or date.today()
+    data = screen.load()
+    items: list[dict] = []
+
+    def screens():
+        # The $2B+ and small/mid lists, not the large-company one: in the replay since 2012 the top large companies
+        # trailed SPY, the other two led it (not by enough to rule out luck; that's what the log is for).
+        picks = [("all", r) for r in (data or {}).get("top_all", [])[:10]] + [("small_mid", r) for r in (data or {}).get("small_mid", [])[:5]]
+        for group, r in picks:
+            items.append({"symbol": r["symbol"], "source": "qvm", "price": r.get("price"), "reason": f"Screen grade {r['score']:.0f}/100",
+                          "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months",
+                          "data": {"grades": r.get("grades"), "list": group}})
+        for r in (data or {}).get("backlog", [])[:5]:
+            items.append({"symbol": r["symbol"], "source": "backlog", "price": r.get("price"), "reason": r["why"],
+                          "wrong_if": "Backlog stops growing faster than revenue"})
+
+    def sleeper_ideas():
         for r in sleepers(today)["sleepers"]:
             if r["evidence"] >= 2:
                 items.append({"symbol": r["symbol"], "source": "sleeper", "reason": "; ".join(r["why"])[:300],
                               "wrong_if": "Insiders sell, or the screen grade falls below 50"})
-    except (http.DataUnavailable, KeyError, ValueError):
-        pass
-    try:
+
+    def chatter_ideas():
         for r in chatter()["rows"][:5]:
             items.append({"symbol": r["symbol"], "source": "chatter", "reason": f"{r['reddit']} Reddit mentions" + (", trending on StockTwits" if r.get("stocktwits") else ""),
                           "wrong_if": "Logged to measure chatter, not as a recommendation"})
-    except (http.DataUnavailable, KeyError, ValueError):
-        pass
+
+    def event_ideas():
+        ev = events(today)
+        for r in ev["pead"]:
+            items.append({"symbol": r["symbol"], "source": "pead", "reason": r["why"][:300],
+                          "wrong_if": "The next release lowers the outlook, or it trails VOO by 10+ points after 3 months",
+                          "data": {"filed": r["filed"], "move_pct": r["move_pct"]}})
+        for r in ev["spinoffs"]:
+            if r["loggable"]:
+                items.append({"symbol": r["ticker"], "source": "spinoff",
+                              "reason": f"Spin-off trading since {r['trading_since']} ({r['name'][:80]})",
+                              "wrong_if": "It trails VOO by 15+ points after 12 months", "data": {"cik": r["cik"]}})
+    for part in (screens, sleeper_ideas, chatter_ideas, event_ideas):
+        try:
+            part()
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            log.warning("idea source %s skipped: %s", part.__name__, exc)
     for it in items:
         if not it.get("price"):
             try:

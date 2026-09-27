@@ -585,6 +585,44 @@ def cmd_tenk_rank(args) -> int:
     return 0
 
 
+def cmd_ideas_log(args) -> int:
+    """Log today's ideas to the GitHub idea log in a folder (the daily ideas job runs this)."""
+    from datetime import date as _date
+
+    from . import idealab, ideas
+    today = _date.fromisoformat(args.day) if args.day else _date.today()
+    try:
+        ideas.run_job(args.dir, today, idealab.daily_items)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_screen_backtest(args) -> int:
+    """Replay the screen quarter by quarter on real history and compare its picks with SPY."""
+    import json
+
+    from . import screen_backtest
+    data = screen_backtest.run(last=args.last or None)
+    tmp = args.out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+    os.replace(tmp, args.out)
+    print()
+    print(data["verdict"])
+    print()
+    print("| Group | 3 months: avg vs SPY | beat SPY | worst | 12 months: avg vs SPY | $10,000 became (SPY) |")
+    print("|---|---|---|---|---|---|")
+    for g, row in data["summary"].items():
+        a, b, gr = row.get("3m"), row.get("12m"), row["growth"]
+        if not a:
+            continue
+        print(f"| {row['label']} | {a['avg_edge']:+.2f} pts | {a['beat_pct']}% | {a['worst_edge']:+.1f} | "
+              f"{(str(b['avg_edge']) + ' pts') if b else '—'} | ${gr['screen']:,} (${gr['spy']:,}) |")
+    return 0
+
+
 def cmd_screen(args) -> int:
     """Score every listed company on quality, value and momentum, and find growing backlogs (the weekly job runs this)."""
     import json
@@ -728,6 +766,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--limit", type=int, default=0, help="Only the first N companies (for a quick check)")
     s.set_defaults(func=cmd_tenk_rank)
 
+    s = sub.add_parser("ideas-log", help="Add today's ideas to the sealed idea log in a folder (the daily GitHub job)")
+    s.add_argument("--dir", default=".")
+    s.add_argument("--day", default="", help="YYYY-MM-DD (default today)")
+    s.set_defaults(func=cmd_ideas_log)
+    s = sub.add_parser("screen-backtest", help="Replay the screen on history since 2012 and compare its picks with SPY")
+    s.add_argument("--out", default="screen_backtest.json")
+    s.add_argument("--last", type=int, default=0, help="only the last N quarters (quick check)")
+    s.set_defaults(func=cmd_screen_backtest)
     s = sub.add_parser("screen", help="Weekly quality/value/momentum and backlog screen of every listed company")
     s.add_argument("--out", default="screen.json")
     s.set_defaults(func=cmd_screen)

@@ -537,6 +537,27 @@ def _():
     return "; ".join(f"{r['theme']} {r['last_6m']} ({r['level']})" for r in rows[:5])
 
 
+@check("Short interest (FINRA consolidated, latest settlement)")
+def _():
+    from market_tracker import shorts
+    shorts._cache.clear()
+    rows = shorts.latest(["AAPL", "GME", "XOM"])
+    assert {"AAPL", "GME"} <= set(rows), rows
+    days = (date.today() - date.fromisoformat(rows["AAPL"]["settlement"])).days
+    assert days <= 40, rows["AAPL"]
+    return "; ".join(f"{s} {r['short']:,.0f} short, {r['days_to_cover']} days to cover ({r['settlement']})" for s, r in rows.items())
+
+
+@check("Events: results releases mentioning guidance, spin-off registrations (SEC full-text search)")
+def _():
+    from market_tracker import pead, spinoffs
+    today = date.today()
+    cands = pead.candidates(today)
+    regs = spinoffs.registrations(today)
+    assert len(regs) >= 5, regs
+    return f"{len(cands)} results releases with guidance in 10 days (e.g. {', '.join(cands[:5])}); {len(regs)} spin-off registrants, latest {regs[0]['name']} ({regs[0]['last_filed']})"
+
+
 def main() -> int:
     # Never print the User-Agent itself: it holds a contact email and CI logs may be public.
     ua_set = bool(os.environ.get("SEC_USER_AGENT"))

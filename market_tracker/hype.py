@@ -133,7 +133,7 @@ def flags(symbol: str, screen_row: dict | None, val: dict | None, crowded: dict[
     return out
 
 
-def for_symbol(symbol: str, screen_data: dict | None = None, get=None, history_fn=None) -> dict:
+def for_symbol(symbol: str, screen_data: dict | None = None, get=None, history_fn=None, short_fn=None) -> dict:
     from . import fundamentals, screen
     from .providers import market
     row = screen.lookup(screen_data, symbol) if screen_data else None
@@ -152,6 +152,16 @@ def for_symbol(symbol: str, screen_data: dict | None = None, get=None, history_f
             val = None
     crowded = {r["theme"]: r["level"] for r in (_cache.get("themes", (0, {"rows": []}))[1]["rows"])}
     f = flags(symbol, row, val, crowded)
-    return {"symbol": symbol, "screen": row, "valuation": val, "themes": theme_of(symbol), "flags": f,
+    low = next((r for r in (screen_data or {}).get("bottom", []) if r["symbol"] == symbol), None)
+    if low:
+        f.append({"level": 2, "text": f"In the weekly screen's bottom 50 of companies worth $2B+ (grade {low['score']:.0f}/100): in the replay "
+                                      "since 2012 that group trailed SPY by about 5 points a quarter."})
+    short = None
+    if market.asset_class(symbol) == "stock" and short_fn is not False:
+        from . import shorts
+        short = (short_fn or (lambda s: shorts.for_symbols([s], lambda _: row).get(s)))(symbol)
+        if short and short["level"] != "normal":
+            f.append({"level": 2 if short["level"] == "heavy" else 1, "text": short["text"]})
+    return {"symbol": symbol, "screen": row, "valuation": val, "themes": theme_of(symbol), "flags": f, "short": short,
             "verdict": ("Priced for a lot going right: " + str(len(f)) + " warning" + ("s" if len(f) != 1 else "") if any(x["level"] >= 2 for x in f) or len(f) >= 2
                         else "One thing to check" if f else "No priced-in warnings")}

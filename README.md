@@ -508,7 +508,7 @@ EPS against a year earlier. Releases lead with the company's own adjusted figure
 ## Ask Claude about your portfolio (read-only connector)
 
 `mt mcp` runs Plumbline as a Model Context Protocol server, so Claude Desktop or Claude Code can answer "why am I down this
-month?" or "which of my dividends look shaky?" from your own data. It has 33 tools and every one is a GET to the running
+month?" or "which of my dividends look shaky?" from your own data. It has 35 tools and every one is a GET to the running
 app (portfolio, accounts, weekly recap, brief, what moved, hold plan, news, performance, crises, overlap, style bets,
 10-K changes, earnings recap, dividend safety, income, taxes, events, data confidence, advice record, the screen, the
 idea scorecard, sleepers, chatter, theme crowding, money flow, the economy, priced-in checks, government contracts,
@@ -529,13 +529,25 @@ trail the index over 10+ years, published stock-picking edges lose about half th
 Pontiff 2016), and themed funds have trailed the market by about 6% a year after launch because the theme was already
 priced in (Ben-David et al. 2023). So every idea here is written to the **idea scorecard** the day it appears, can't be
 edited, and is scored against simply buying VOO at 3, 6 and 12 months. A kind of idea earns your money only after its
-record does (20 results at 6 months before the app calls it anything but "too early").
+record does (20 results at 6 months before the app calls it anything but "too early"). The log is kept by a GitHub job
+(`Idea log`, each weekday after the close) in `ideas_log.jsonl` on the `journal-data` branch, and each day is sealed
+into `ideas_chain.jsonl` (SHA-256, chained like the receipts), so it keeps growing when the app is off and no bad call
+can quietly disappear. The app imports it hourly; without it, the app logs ideas itself once a day. Home shows how
+each kind of idea is doing against VOO so far.
 
 - **What to buy** (weekly job `Stock screen`, `mt screen`): every US-listed company worth $300M+ (about 2,700 with SEC
-  numbers) graded within its sector on quality (operating profit on assets), value (earnings and book value against the
+  numbers) graded within its sector on quality (operating profit on assets; return on equity for banks and insurers, net
+  income on assets where no operating profit is reported), value (earnings and book value against the
   price), momentum (12 months, skipping the last) and not diluting shareholders; one grade in the bottom 10% caps the
   total at 50. Lists for large companies, all $2B+, and small and mid caps. Data: SEC XBRL frames (one request per number
-  for every filer), Nasdaq's list of listed stocks, a year of daily prices. About 35 seconds on a GitHub runner.
+  for every filer), Nasdaq's list of listed stocks, a year of daily prices. About 35 seconds on a GitHub runner. A
+  company that moved its listing to a new holding company (ExxonMobil in 2026) gets its prior-year numbers from the old
+  SEC filer under the same name.
+- **Has the screen beaten the S&P 500?** (monthly job `Screen backtest`, `mt screen-backtest`): the screen rebuilt every
+  quarter since 2012 from what was public then (SEC numbers 135 days after the quarter, that day's prices and market
+  values), its picks held 3, 6 and 12 months against SPY, dividends included. Reported with its flaws: companies that
+  went bust or were bought since are missing from today's stock list (which flatters the result), SEC frames carry later
+  corrections, and the rules were written with hindsight. The bottom 50 are shown too: they should lag.
 - **Growing order backlogs**: contracted revenue not yet delivered ("remaining performance obligations") growing 10+
   points faster than revenue, a meaningful backlog a year ago, and the stock not among the most expensive.
 - **Priced in?** (any stock's page): P/E against its own last five years of quarter-ends, a 12-month return in the top
@@ -543,7 +555,8 @@ record does (20 results at 6 months before the app calls it anything but "too ea
   over the last year against revenue (USAspending.gov).
 - **Sleepers**: $300M-$10B companies where independent evidence lines up: a good screen grade, insiders buying outside
   their usual habit (Cohen, Malloy & Pomorski 2012: routine traders predict nothing, opportunistic ones do), a backlog
-  growing faster than revenue, and quiet coverage; never names that already ran. One is a lead, three is a sleeper.
+  growing faster than revenue, and quiet coverage; never names that already ran, and heavy short selling (15%+ of
+  shares, FINRA's twice-monthly data) counts against a name. One is a lead, three is a sleeper.
   Sleepers and chatter picks you mark "bought" count against a speculative limit of 10% of the portfolio.
 - **Chatter**: the most-discussed tickers on Reddit and StockTwits and how fast that's rising, with warnings per name.
   A caution list, not a buy list; the top five are scored so you'll see how chatter does. **Theme crowding**: new fund
@@ -551,6 +564,16 @@ record does (20 results at 6 months before the app calls it anything but "too ea
 - **Money flow**: capital spending over the last year by the cloud and AI data-center companies, utilities and chip
   makers (from their cash-flow statements), next to hand-picked suppliers by category with how far each has run; and
   small suppliers whose 10-K names a big customer that moved 10%+ in a month when they didn't.
+- **Events**: companies whose results release in the last ten days raised the outlook and whose stock then jumped
+  more than 1.5 times a normal day (the after-earnings drift: strong in older data, much weaker in large companies
+  now), and spin-offs from their SEC registrations (Form 10-12B), registered and newly trading, with how each has done
+  against SPY since its first day.
+- **Size it** (every idea list): a dollar amount inside your limits: 5% of the portfolio for one core idea, 2% for a
+  speculative one inside the 10% speculative limit, half that for stocks that move 60%+ a year, 25% in one sector, and
+  what you already own counts. Chatter names show an amount only after a 48-hour wait.
+- **Is the reason still there?** For ideas you bought or hold, the app checks each week, after the Sunday screen,
+  whether what would prove it wrong has happened (grade below 50, backlog slowing below revenue growth, insiders
+  selling, guidance lowered, or 25 points behind VOO) and pushes each problem to your phone once.
 - **Economy**: the 10-year yield and yield curve, high-yield credit spreads, the Sahm recession gauge, the Chicago Fed's
   financial conditions, jobless claims, oil and new factory orders (FRED). It only changes how fast to put new money in
   (all at once, 3 monthly pieces, or 6), never whether to be invested.
@@ -739,6 +762,8 @@ market_tracker/
 | `insider-alerts.yml` | daily at 10:30 UTC (catch-up), on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
 | `tenk-rank.yml` | Sundays 07:17 UTC, on demand (with an optional company limit) | ranks every S&P 500 company by how much of its latest 10-K's Risk Factors is new; only companies with a new 10-K are re-read. Writes `tenk_rank.json` to the `journal-data` branch |
 | `screen.yml` | Sundays 06:43 UTC, on demand | scores every listed company worth $300M+ on quality, value, momentum and dilution within its sector, and finds growing backlogs. Writes `screen.json` to the `journal-data` branch |
+| `screen-backtest.yml` | 2nd of each month, on demand | replays the screen quarterly since 2012 on what was public then and compares its picks with SPY. Writes `screen_backtest.json` to `journal-data` |
+| `ideas.yml` | weekdays 21:25 UTC, on demand | prices each screen's ideas at the close, adds them to `ideas_log.jsonl` and seals the day into `ideas_chain.jsonl` on `journal-data` |
 | `watch.yml` | every 5 min on weekdays, every 3 h at weekends | reads EDGAR's latest-filings feed for Form 4 purchases and Schedule 13D/13G stakes; opens `insider-alert` / `stake-alert` issues and pushes phone notifications (below) |
 | `site.yml` | every 30 min in US market hours, every 6 h otherwise, after journal and alert runs | builds the public site (`mt site`) and deploys it to GitHub Pages |
 

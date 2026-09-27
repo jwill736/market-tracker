@@ -64,14 +64,23 @@ def _cached(key: str, fn):
 
 # ------------------------------------------------------------------ 1. spending waves
 
+CAPEX_TAGS = ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets",
+              "PaymentsForConstructionInProcess"]       # utilities such as AEP report construction spending under the last one
+
+
 def capex_ttm(facts: dict) -> tuple[float | None, float | None, str | None]:
-    """(capital spending over the last four quarters, the four before, latest quarter end)."""
+    """(capital spending over the last four quarters, the four before, latest quarter end), from the
+    tag with eight recent quarters (companies switch tags, and some have gaps)."""
     from . import fundamentals
-    q = fundamentals._best(facts, fundamentals.CAPEX)
-    ends = sorted(q, reverse=True)
-    if len(ends) < 8 or fundamentals._days(ends[7], ends[0]) > 700:
-        return None, None, None
-    return sum(q[e] for e in ends[:4]), sum(q[e] for e in ends[4:8]), ends[0]
+    best = None
+    for tag in CAPEX_TAGS:
+        q = fundamentals.quarterly(fundamentals._entries(facts, tag, "USD"))
+        ends = sorted(q, reverse=True)
+        if len(ends) < 8 or fundamentals._days(ends[7], ends[0]) > 700:
+            continue
+        if best is None or ends[0] > best[2]:
+            best = (sum(q[e] for e in ends[:4]), sum(q[e] for e in ends[4:8]), ends[0])
+    return best or (None, None, None)
 
 
 def waves(facts_fn, lookup_fn, price_fn=None) -> list[dict]:

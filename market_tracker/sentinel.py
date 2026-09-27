@@ -12,6 +12,7 @@ Heads-ups (each only once):
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -198,6 +199,7 @@ class Sentinel:
                 await asyncio.to_thread(settle_orders)
                 await asyncio.to_thread(log_advice_daily)
                 await asyncio.to_thread(log_ideas_daily)
+                await asyncio.to_thread(thesis_check_weekly)
                 await asyncio.to_thread(big_moves_check)
                 held_now = my_symbols()[0]
                 if held_now:
@@ -278,18 +280,83 @@ def send_weekly_if_due(now: datetime | None = None, gather_fn=None) -> bool:
     return True
 
 
-def log_ideas_daily(today: date | None = None, items_fn=None) -> int:
-    """Once a day: write the screens' ideas to the idea log so each gets scored against VOO."""
+def log_ideas_daily(today: date | None = None, items_fn=None, remote_fn=None, now: datetime | None = None) -> int:
+    """Keep the idea log current. Normally the GitHub job (ideas.yml) logs the ideas and this imports
+    them, at most once an hour. Without a GitHub log, the app logs the screens' ideas itself once a day."""
     from . import idealab, ideas
     today = today or date.today()
+    hour = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H")
     with db.connect() as conn:
-        if db.get_meta(conn, "ideas_logged", "") == today.isoformat():
+        if db.get_meta(conn, "ideas_synced", "") == hour:
             return 0
+        db.set_meta(conn, "ideas_synced", hour)
+    rows = (remote_fn or ideas.load_remote)()
+    with db.connect() as conn:
+        if rows is not None:
+            return ideas.sync(conn, rows)
+        if ideas.has_github_rows(conn) or db.get_meta(conn, "ideas_logged", "") == today.isoformat():
+            return 0            # the GitHub log is briefly unreachable, or today is done
     items = (items_fn or idealab.daily_items)(today)
     with db.connect() as conn:
         n = ideas.log(conn, today.isoformat(), items)
         db.set_meta(conn, "ideas_logged", today.isoformat())
     return n
+
+
+def thesis_check_weekly(now: datetime | None = None, items_fn=None, check_fn=None) -> int:
+    """Once a week (Sunday afternoon, after the Sunday screen): has the reason behind any idea you
+    bought or hold gone away? Each problem is pushed once."""
+    import re as _re
+
+    from . import thesis
+    from .weekly import ET
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    back = (now.weekday() + 1) % 7
+    sunday = (now - timedelta(days=back)).date()
+    if back == 0 and now.hour < 12:
+        sunday -= timedelta(days=7)
+    with db.connect() as conn:
+        if db.get_meta(conn, "thesis_week", "") == sunday.isoformat():
+            return 0
+        db.set_meta(conn, "thesis_week", sunday.isoformat())
+        sent = set(json.loads(db.get_meta(conn, "thesis_alerted", "[]") or "[]"))
+    found = (check_fn or _thesis_found)(now.date(), items_fn)
+    n = 0
+    for f in found:
+        for r in f["reasons"]:
+            key = f"{f['symbol']}|{f['source']}|" + _re.sub(r"[-+$\d.,%/]+", "#", r)
+            if key in sent:
+                continue
+            sent.add(key)
+            if f["source"] == "bottom":
+                title, body = f"{f['symbol']}: in the screen's bottom 50", f"You hold it, and it's {r}. Check it before adding more."
+            else:
+                title = f"{f['symbol']}: the reason you bought may be gone"
+                body = f"{r}. Logged {f['day']} ({thesis_label(f['source'])}). Check it before adding more."
+            notify.send(notify.Message(title=title, body=body, priority=4, tags=("warning",)))
+            n += 1
+    with db.connect() as conn:
+        db.set_meta(conn, "thesis_alerted", json.dumps(sorted(sent)[-500:]))
+    return n
+
+
+def thesis_label(source: str) -> str:
+    from . import ideas
+    return ideas.SOURCES.get(source, source)
+
+
+def _thesis_found(today: date, items_fn=None) -> list[dict]:
+    from . import earnings, ideas, screen, thesis
+    with db.connect() as conn:
+        rows = ideas.logged(conn)
+    held = set(my_symbols()[0])
+    data = screen.load()
+    bottom = thesis.bottom_held(held, data)
+    if not rows:
+        return bottom
+    items = (items_fn or (lambda rs: ideas.score(rs, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)], today)["items"]))(rows)
+    return thesis.check(items, held, today, lambda s: screen.lookup(data, s),
+                        trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap) + bottom
 
 
 def crypto_headsups(held: list[str]) -> int:

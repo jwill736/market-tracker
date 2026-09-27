@@ -582,3 +582,10 @@ sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .ec-watch { border-color: var(--s2); }
 .ec-stress { border-color: var(--bad); }
 .ec-cautious, .ec-stressed { color: var(--bad); }
+
+/* Size it: the dollar amount for an idea, shown under its row */
+.size-btn { margin-left: auto; }
+.size-out { background: var(--page); border-radius: 8px; padding: 8px 10px; margin: 4px 0; }
+.size-out b { font-size: 15px; }
+.size-out ul { margin: 4px 0 0; padding-left: 18px; }
+.id-broken { color: var(--bad); }

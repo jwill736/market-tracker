@@ -1,0 +1,57 @@
+name: Screen backtest
+
+# Replays the weekly screen quarter by quarter since 2012 using only what was public on each date,
+# holds the picks 3, 6 and 12 months, and compares them with SPY. Writes screen_backtest.json to
+# the journal-data branch (the app shows it under Ideas). Monthly, on demand, and a quick check
+# of the last four quarters when the code changes.
+on:
+  schedule:
+    - cron: "17 7 2 * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - market_tracker/screen.py
+      - market_tracker/screen_backtest.py
+      - .github/workflows/screen-backtest.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: journal-data-branch   # shared with the other jobs that push to journal-data
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      DRY_RUN: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Backtest
+        run: |
+          mkdir -p "$RUNNER_TEMP/bt"
+          mt screen-backtest --out "$RUNNER_TEMP/bt/screen_backtest.json" ${{ github.event_name == 'pull_request' && '--last 4' || '' }} | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save to journal-data branch
+        if: env.DRY_RUN != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin journal-data:refs/remotes/origin/journal-data; then
+            git checkout -B journal-data origin/journal-data
+          else
+            git checkout --orphan journal-data
+            git rm -rfq .
+          fi
+          cp "$RUNNER_TEMP/bt/screen_backtest.json" .
+          git add screen_backtest.json
+          git commit -qm "Screen backtest $(date -u +%F)" || { echo "No changes"; exit 0; }
+          git push origin journal-data
