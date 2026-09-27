@@ -73,8 +73,11 @@ def status(reg: dict, today: date, ticker_fn=None, history_fn=None, bench_fn=Non
         bars = history_fn(out["ticker"])
     except (http.DataUnavailable, KeyError, ValueError):
         return out
-    bars = [b for b in bars if b[0] >= reg["first_filed"]]
     if len(bars) < 2:
+        return out
+    if bars[0][0] <= reg["first_filed"]:
+        # It traded before registering: a company moving to an exchange (or re-registering), not a new spin-off.
+        out["stage"] = "already listed"
         return out
     first_day, first = bars[0]
     out.update(trading_since=first_day, days_trading=len(bars), return_pct=round((bars[-1][1] / first - 1) * 100, 1), stage="trading")
@@ -99,7 +102,7 @@ def build(today: date | None = None, get=None, ticker_fn=None, history_fn=None, 
         for t, row in tm.by_ticker.items():
             by_cik.setdefault(str(row["cik_str"]).zfill(10), t)
         ticker_fn = lambda cik: by_cik.get(str(cik).zfill(10))  # noqa: E731
-    history_fn = history_fn or (lambda s: [(b.date, b.close) for b in market.get_history(s, 400)])
+    history_fn = history_fn or (lambda s: [(b.date, b.close) for b in market.get_history(s, LOOKBACK_DAYS + 60)])
     bench_fn = bench_fn or (lambda: [(b.date, b.close) for b in market.get_history("SPY", 400)])
     regs = registrations(today, get)
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -109,5 +112,5 @@ def build(today: date | None = None, get=None, ticker_fn=None, history_fn=None, 
         r.update(score=lk.get("score"), cap=lk.get("cap"), sector=lk.get("sector"))
         r["loggable"] = r["stage"] == "trading" and LOG_FROM_DAYS <= r["days_trading"] <= LOG_TO_DAYS
     trading = sorted((r for r in rows if r["stage"] == "trading"), key=lambda r: r["days_trading"])        # newest listings first
-    coming = sorted((r for r in rows if r["stage"] != "trading"), key=lambda r: r["last_filed"], reverse=True)
+    coming = sorted((r for r in rows if r["stage"] == "registered"), key=lambda r: r["last_filed"], reverse=True)
     return trading + coming

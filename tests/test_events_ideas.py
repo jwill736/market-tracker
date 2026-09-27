@@ -43,3 +43,8 @@ def test_spinoff_registrations_and_status():
     assert t["stage"] == "trading" and t["trading_since"] == "2026-06-01" and t["days_trading"] == 29
     assert t["return_pct"] == 56.0 and t["spy_pct"] == 2.0 and t["loggable"] and t["score"] == 64
     assert rows[1]["stage"] == "registered" and not rows[1]["loggable"]
+    moved = spinoffs.status(dict(fdx, ticker="OLD"), date(2026, 9, 27), history_fn=lambda s: [("2025-01-02", 5.0), ("2026-09-25", 6.0)])
+    assert moved["stage"] == "already listed"                   # traded before it registered: an exchange move, not a spin-off
+    rows = spinoffs.build(date(2026, 9, 27), get=_fts(hits), ticker_fn=lambda c: "OLD" if c == "0002130999" else None,
+                          history_fn=lambda s: hist.get(s, [("2025-01-02", 5.0), ("2026-09-25", 6.0)]), bench_fn=lambda: bench)
+    assert [r["name"] for r in rows] == ["FedEx Freight Holding Company, Inc."]
