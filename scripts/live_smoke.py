@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, divsafety, earnings, factors, filings, stress, tenkrank, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, divsafety, macro, moneyflow, screen as scr, hype, earnings, factors, filings, stress, tenkrank, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -501,6 +501,40 @@ def _():
     assert e.get("risk_new") is not None and e["risk_words"] > 3000, e
     src = "Wikipedia" if any(c["sector"] for c in cos) else "IVV holdings (Wikipedia unavailable)"
     return f"{len(cos)} companies from {src} (BRK-B {'found' if brk else 'missing'}); MSFT 10-K {e['filed']}: {e['risk_new']:.0%} of Risk Factors new"
+
+
+@check("Economy panel: FRED series one at a time")
+def _():
+    d = macro.load()
+    assert len(d) >= 7 and d["DGS10"] and 0 < d["DGS10"][-1][1] < 15, {k: v[-1:] for k, v in d.items()}
+    b = macro.build()
+    return f"{len(d)} series; 10-year {d['DGS10'][-1][1]}% ({d['DGS10'][-1][0]}); pace: {b['pace']['level']}"
+
+
+@check("Screen inputs: SEC XBRL frames and Nasdaq's stock list")
+def _():
+    y, q = scr.latest_quarter(date.today())
+    assets = scr.frame("Assets", f"CY{y}Q{q}I")
+    op = scr.frame("OperatingIncomeLoss", f"CY{y if q == 4 else y - 1}")
+    lst = scr.listed()
+    big = sum(1 for r in lst.values() if r["cap"] >= scr.MIN_CAP)
+    assert len(assets) >= 4000 and len(op) >= 2000 and big >= 2500, (len(assets), len(op), big)
+    return f"CY{y}Q{q}: {len(assets):,} balance sheets, {len(op):,} operating incomes; {len(lst):,} listed stocks, {big:,} worth $300M+"
+
+
+@check("Government contracts (USAspending): Lockheed Martin")
+def _():
+    r = moneyflow.contracts("Lockheed Martin Corp", 7e10)
+    assert r["amount"] and r["amount"] > 1e10, r
+    return r["text"]
+
+
+@check("Theme crowding: new fund filings (SEC full-text search)")
+def _():
+    rows = hype.themes()
+    ai = next(r for r in rows if r["theme"].startswith("AI"))
+    assert ai["last_6m"] > 50, ai
+    return "; ".join(f"{r['theme']} {r['last_6m']} ({r['level']})" for r in rows[:5])
 
 
 def main() -> int:

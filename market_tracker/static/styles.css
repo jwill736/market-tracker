@@ -426,7 +426,8 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 #pk-suggested { margin: 6px 0; align-items: center; }
 #pk-suggested .chip { cursor: pointer; border: 0; }
 .brief-list button.linkish, .brief-card button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
-.pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #nm-out button.linkish, #ye-body button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+.pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #tab-ideas button.linkish, #tab-sleepers button.linkish,
+#tab-chatter button.linkish, #tab-moneyflow button.linkish, #sym-pi button.linkish, #nm-out button.linkish, #ye-body button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 .hp-thesis button.linkish { color: var(--accent); }
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
@@ -470,6 +471,9 @@ button.small { font-size: 12px; padding: 3px 8px; }
     mask-image: linear-gradient(90deg, #000 90%, transparent); }
   nav#tabs::-webkit-scrollbar { display: none; }
   nav#tabs button { flex: none; white-space: nowrap; padding: 6px 9px; }
+}
+@media (max-width: 420px) {
+  nav#tabs button { padding: 6px 6px; font-size: 14px; }
 }
 
 /* sending orders from the app */
@@ -561,3 +565,20 @@ table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-varian
 .ask-answer { line-height: 1.55; margin: 8px 0; white-space: pre-wrap; }
 sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .ask-sources { padding-left: 22px; display: grid; gap: 6px; }
+
+/* Ideas: screen, scorecard, sleepers, chatter, money flow, economy */
+.sc-table td, .sc-table th { white-space: nowrap; }
+.gr { font-variant-numeric: tabular-nums; }
+.id-item, .sl-item, .ch-item, .mf-wave { border-top: 1px solid var(--grid); padding: 8px 0; display: grid; gap: 4px; }
+.id-dec { display: inline-flex; gap: 6px; }
+.ch-high .tk-level { color: var(--bad); }
+.sl-sleeper .tk-level { color: var(--good); }
+.sl-strong-lead .tk-level, .ch-medium .tk-level { color: var(--s2); }
+.mf-cats { display: grid; gap: 2px; }
+.mf-co.hot { color: var(--bad); }
+.ec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.ec-g { border: 1px solid var(--grid); border-radius: 10px; padding: 10px; display: grid; gap: 3px; }
+.ec-g b { font-size: 20px; }
+.ec-watch { border-color: var(--s2); }
+.ec-stress { border-color: var(--bad); }
+.ec-cautious, .ec-stressed { color: var(--bad); }
