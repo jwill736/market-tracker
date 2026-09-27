@@ -43,7 +43,8 @@ def send(msg: Message, client: httpx.Client | None = None) -> bool:
     if msg.tags:
         headers["Tags"] = ",".join(msg.tags)
     if msg.actions:
-        headers["Actions"] = _header("; ".join(msg.actions[:3]))
+        # Not cut to _header's 250 characters: a cut action is an illegal header and the whole push is lost.
+        headers["Actions"] = "; ".join(a.encode("ascii", "replace").decode("ascii").strip() for a in msg.actions[:3])
     try:
         c = client or httpx.Client(timeout=15)
         r = c.post(f"{server}/{topic}", content=msg.body.encode("utf-8"), headers=headers)

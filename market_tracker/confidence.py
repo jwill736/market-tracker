@@ -80,9 +80,14 @@ def status(ledger: list[dict], prices: dict[str, float], syncs: dict[str, dict],
                          for a in sorted(by_acct.values(), key=lambda a: -a["value"])]}
 
 
-def fix_list(st: dict, open_transfers: list[dict], unread: list[dict], problems: list[dict]) -> list[dict]:
+def fix_list(st: dict, open_transfers: list[dict], unread: list[dict], problems: list[dict],
+             needs_cost: list[dict] | None = None) -> list[dict]:
     """What to fix, most important first: {level: 2 red / 1 amber, text, where}."""
     out = []
+    for r in needs_cost or []:
+        out.append({"level": 2, "text": f"{r['account'] or 'Unlabeled'} {r['symbol']}: {r['quantity']:g} shares arrived on {r['date']} "
+                                        "without a cost (a transfer in or a stock reward). Enter what you originally paid and when.",
+                    "where": "transfers"})
     for r in st["holdings"]:
         if r["state"] == "mismatch":
             out.append({"level": 2, "text": f"{r['account']} {r['symbol']}: {r['detail']} (ledger {r['quantity']:g})",
@@ -145,6 +150,7 @@ def current() -> dict:
         syncs, diffs, stmts = load_inputs(conn)
         legs = transfers.from_rows(db.transfer_legs(conn))
         unread = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
+        missing_cost = db.needs_cost(conn)
     prices = {}
     if led:
         try:
@@ -152,4 +158,5 @@ def current() -> dict:
         except (ValueError, http.DataUnavailable):
             prices = {}
     st = status(led, prices, syncs, diffs, stmts, now_utc())
-    return dict(st, fixes=fix_list(st, transfers.open_items(legs)["open"], unread, health.problems()))
+    return dict(st, fixes=fix_list(st, transfers.open_items(legs)["open"], unread, health.problems(), missing_cost),
+                needs_cost=missing_cost)

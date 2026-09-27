@@ -108,3 +108,19 @@ def test_monthly_scorecard_push(monkeypatch):
     assert sentinel.scorecard_monthly(first, card_fn=lambda c: card) == 1
     assert sentinel.scorecard_monthly(first, card_fn=lambda c: card) == 0
     assert sent[0].body == card["text"]
+
+
+def test_a_push_with_buttons_is_a_valid_request(monkeypatch):
+    import httpx
+    seen = {}
+
+    def handler(request):
+        seen["actions"] = request.headers.get("Actions")
+        return httpx.Response(200, json={})
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    tok = "A" * 90 + ".b3c1"
+    acts = ("view, Do it, https://plumbline-abc123.fly.dev/#decisions?do=fix_data%3Atrust%3A2026-39, clear=true",
+            f"http, Later, https://plumbline-abc123.fly.dev/act/{tok}, method=POST, clear=true",
+            f"http, Skip, https://plumbline-abc123.fly.dev/act/{tok}, method=POST, clear=true")
+    ok = notify.send(notify.Message(title="Check your numbers", body="• x", actions=acts), client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert ok and seen["actions"].count("clear=true") == 3 and seen["actions"].endswith("clear=true")

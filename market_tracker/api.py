@@ -1530,6 +1530,35 @@ class ResolveIn(BaseModel):
     price: float | None = Field(default=None, ge=0, le=1e12)         # sold: price per unit
 
 
+@app.get("/api/needs-cost")
+def needs_cost_view():
+    """Shares that arrived without a cost (transfers in from another broker, stock rewards)."""
+    with db.connect() as conn:
+        return {"rows": db.needs_cost(conn)}
+
+
+class CostIn(BaseModel):
+    price: float = Field(ge=0, le=1e9)
+    acquired: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.post("/api/needs-cost/{tid}")
+def needs_cost_set(tid: int, body: CostIn):
+    """What you originally paid per share, and when, for shares that arrived without a cost."""
+    with db.connect() as conn:
+        if not db.set_cost(conn, tid, body.price, body.acquired):
+            raise HTTPException(404, "No such row waiting for a cost.")
+        try:
+            service.pf.build_positions(db.ledger(conn))
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(400, f"{exc}: that purchase date is after a sale of these shares.")
+        rows = db.needs_cost(conn)
+    holdplan.clear_cache()
+    _analysis_cache.clear()
+    return {"rows": rows}
+
+
 @app.post("/api/transfers/{leg_id}/resolve")
 def resolve_transfer(leg_id: int, body: ResolveIn):
     """Decide what an unpaired leg was: the other side of a move, coins bought elsewhere (their
@@ -2813,8 +2842,9 @@ class ImportIn(BaseModel):
 
 
 IMPORT_HINTS = {
-    "robinhood": "The file probably starts after some of these shares were bought: export the full history, "
-                 "or record the earlier buys first.",
+    "robinhood": "Either the file starts after some of these shares were bought (export the full history), or they came "
+                 "from another broker some way the file doesn't show: record them under Portfolio → Accounts → Transfers "
+                 "(arrived, with what you paid), then import again.",
     "coinbase": "Coins received from another wallet or exchange have no purchase in this file: pair them with the account "
                 "they came from, or enter their original cost, under Portfolio → Transfers, then import again.",
     "holdings": "",
@@ -2860,6 +2890,7 @@ def import_trades(source: Literal["robinhood", "coinbase", "holdings"], body: Im
     return {"new": len(new), "duplicates": len(res.transactions) - len(new), "skipped": dict(res.skipped),
             "transfers_new": len(new_legs), "transfers_paired": paired,
             "income_new": len(new_income), "income_total": round(sum(r["amount"] for r in new_income), 2),
+            "needs_cost": sum(1 for t in new if t.get("note") in db.NEEDS_COST_NOTES),
             "errors": res.errors, "committed": body.commit,
             "positions": sorted([{"symbol": p.symbol, "quantity": p.quantity, "avg_cost": p.avg_cost}
                                  for p in positions.values() if p.quantity > 0 and p.symbol in touched],

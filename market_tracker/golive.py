@@ -5,7 +5,9 @@ idea) rests on the ledger being right. Until it's checked against the brokers (c
 broker syncs and statements), Decisions shows only what fixes the data:
 - more than 2% of the portfolio's value in holdings whose share count differs from a broker
   or statement, or
-- less than half of the value checked against anything outside the ledger.
+- less than half of the value checked against anything outside the ledger, or
+- shares that arrived without a cost (a transfer in from another broker, a stock reward): until
+  their original cost is entered, taxes, harvests and sale estimates would be wrong.
 Tax-account, connection and data-freshness items still show; they don't depend on the numbers.
 
 Settling in. The first imports are usually messy (a missing transfer, a double-counted buy), so for
@@ -26,10 +28,21 @@ ALWAYS_PUSH = {"fix_sync", "fix_data"}
 
 def trust(conf: dict | None) -> dict:
     """{trusted, text, mismatch_pct, checked_pct} from confidence.current()."""
-    if not conf or not conf.get("total_value"):
+    if not conf or not conf.get("holdings"):
         return {"trusted": False, "text": "No holdings yet: import your accounts (Accounts → Setup) before the app decides anything.",
                 "mismatch_pct": None, "checked_pct": None}
+    if conf.get("needs_cost"):
+        rows = conf["needs_cost"]
+        return {"trusted": False, "mismatch_pct": None, "checked_pct": None,
+                "text": f"{len(rows)} holding{'s' if len(rows) != 1 else ''} arrived without a cost ("
+                        + ", ".join(f"{r['quantity']:g} {r['symbol']} on {r['date']}" for r in rows[:3])
+                        + "): taxes, harvests and sale estimates would be wrong. Enter what you originally paid under "
+                          "Portfolio → Accounts → Transfers; money decisions wait until then."}
     total = conf["total_value"]
+    if not total:
+        return {"trusted": False, "mismatch_pct": None, "checked_pct": None,
+                "text": "Couldn't get prices for your holdings just now, so the app can't check them against your brokers; "
+                        "money decisions wait until prices are back."}
     mismatch = sum(h["value"] for h in conf["holdings"] if h["state"] == "mismatch")
     m_pct, c_pct = mismatch / total, conf["checked_value"] / total
     if m_pct > MISMATCH_MAX:

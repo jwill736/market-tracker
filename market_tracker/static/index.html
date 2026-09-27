@@ -637,7 +637,8 @@
         </div>
         <p class="muted small imp-help" data-for="robinhood">In the Robinhood app: Account → Reports and statements → Reports →
           generate an <b>account activity</b> CSV for all dates, then choose it here. Buys, sells, splits, dividends and
-          interest are imported; transfers and options are listed and skipped. Robinhood Crypto isn't in that file: add coins with
+          interest are imported; shares moved in from another broker and stock rewards come in too, and ask for their original cost
+          (Accounts → Transfers). Options and deposits are listed and skipped. Robinhood Crypto isn't in that file: add coins with
           Stash / other.</p>
         <p class="muted small imp-help" data-for="coinbase" hidden>On coinbase.com: Profile → Statements (or Taxes → Documents) →
           generate a <b>transaction history</b> CSV for all time. Buys, sells, conversions and rewards (at their value when
@@ -988,6 +989,7 @@
         <h2 id="transfers">Transfers between your accounts</h2>
         <p class="muted small">Moving coins or shares between your own accounts isn't a sale: they keep what you paid and when you bought
           them. Sends and receives from Coinbase's CSV, and balance checks after each sync, show up here to pair.</p>
+        <div id="tf-cost" class="small"></div>
         <div id="tf-open" class="small"></div>
         <div id="tf-suggest" class="small"></div>
         <details class="mt"><summary class="small"><b>Record a move</b></summary>
