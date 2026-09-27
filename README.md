@@ -484,13 +484,42 @@ with the list of things to fix (balances that differ, transfers waiting, unread 
 - **Holdings that move together:** a year of daily correlations; pairs above 0.8 flagged.
 - **What changed in their annual reports:** each company's latest 10-K against last year's, Risk Factors and Legal
   Proceedings: share of new text, similarity, and the new sentences (after "Lazy Prices", Cohen, Malloy & Nguyen 2020).
+  Each is ranked against the S&P 500 ("more new text than 92% of S&P 500 companies' latest reports"): a weekly GitHub job
+  (`10-K ranking`, `mt tenk-rank`) reads every S&P 500 company's last two 10-Ks, re-reading only companies with a new one,
+  and stores `tenk_rank.json` on the journal-data branch. The S&P 500 reports that changed most are listed under the card:
+  a look-before-you-buy list, not a sell list.
+- **Hidden style bets:** your stocks and funds, weighted as held today, regressed on the Fama-French five factors plus
+  momentum (Kenneth French's free daily files): market sensitivity, and tilts to small or large, value or growth,
+  profitable or not, conservative or aggressive investors, recent winners or losers, next to VOO's own loadings. A tilt
+  counts only at 0.15+ and t of 2+. Coins are left out and their share is shown.
 
 **Home → What moved today:** today's change in dollars by holding with the news desk's likely reason; a move over twice
 the holding's usual daily move (and 3%+) pushes to your phone once a day, saying whether news explains it.
 
-**Ask the company's filings** (any stock's page): a question answered from its latest 10-K and/or 10-Q with the passages
-quoted (Claude with citations; uses your Anthropic key: roughly $0.50-0.75 for the first question on a report, cents for
-follow-ups while it's cached).
+**Ask the company's filings** (any stock's page): a question answered from its latest 10-K, 10-Q and/or results press
+release with the passages quoted (Claude with citations; uses your Anthropic key: roughly $0.50-0.75 for the first
+question on a report, cents for follow-ups while it's cached).
+
+**Latest results** (any stock's page): the company's results press release (the 8-K item 2.02 exhibit 99.1, free on EDGAR
+the moment it's filed): its headline sentences quoted in order, the outlook and whether it was raised, lowered or kept,
+the stock's move on the first trading day after (against a normal day), and, once the 10-Q is out, the audited revenue and
+EPS against a year earlier. Releases lead with the company's own adjusted figures; the 10-Q numbers are the check.
+
+## Ask Claude about your portfolio (read-only connector)
+
+`mt mcp` runs Plumbline as a Model Context Protocol server, so Claude Desktop or Claude Code can answer "why am I down this
+month?" or "which of my dividends look shaky?" from your own data. It has 24 tools and every one is a GET to the running
+app (portfolio, accounts, weekly recap, brief, what moved, hold plan, news, performance, crises, overlap, style bets,
+10-K changes, earnings recap, dividend safety, income, taxes, events, data confidence, advice record, quote,
+fundamentals, analysis). There is no tool that records a trade, places an order, changes a setting or runs the paid
+filing Q&A. Install with `pip install -e ".[mcp]"`, then in Claude Desktop's config:
+
+```json
+{"mcpServers": {"plumbline": {"command": "mt", "args": ["mcp"],
+  "env": {"PLUMBLINE_URL": "http://127.0.0.1:8000", "PLUMBLINE_PASSWORD": "only if the app has one"}}}}
+```
+
+`PLUMBLINE_URL` can point at your hosted copy; the connector logs in with the app's password like the browser does.
 
 ## Taxes (Portfolio → Taxes)
 
@@ -517,9 +546,21 @@ account held, and marked so. Dates come from Nasdaq where the company has declar
 otherwise they're projected from the usual spacing and marked estimated. A one-off special dividend isn't treated as if
 it would repeat.
 
-## Morning brief (8:30 ET)
+**Dividend safety** grades each dividend-paying stock A to F from its own filings: dividends against free cash flow
+(the strongest warning sign) and profit over the last four quarters, net debt against operating profit before
+depreciation, years of raises, and any cut in the last three years, with the reasons written out. Rules of thumb, not a
+fitted model; real estate trusts get a caveat (they're judged on funds from operations, which filings don't tag).
 
-Each weekday at 8:30 ET the app pushes one notification and shows the same brief on **Home**: holdings that need a decision
+## Weekly recap (Sunday 5pm ET) and the morning brief
+
+**The weekly recap** is the default push: one notification on Sunday evening, also on **Home → This week**. Your
+holdings' change over the week in dollars (biggest first), what needs a decision, news confirmed by several outlets,
+big moves, new annual reports (with the S&P 500 rank), next week's earnings and releases, and how much of your money was
+checked against a broker, with what to fix. Checking less often means fewer fear-driven sales (Benartzi & Thaler's
+myopic loss aversion). Urgent things still push the moment they happen. Choose on Home: weekly recap, daily brief only,
+or both.
+
+**The morning brief** is always on Home each weekday (and pushes at 8:30 ET if you choose daily or both): holdings that need a decision
 and why, new serious filings on your companies, your earnings today or tomorrow (with the move in dollars), CPI/jobs/Fed
 releases, pre-market moves of 2% or more and what the whole portfolio is doing, early-wire hits on your holdings, crypto
 radar items and tax dates this week. On a quiet day it says so. `POST /api/brief/send` pushes it now to test your phone.
@@ -662,6 +703,7 @@ market_tracker/
 | `journal.yml` | weekdays after the US close, on demand | records the 15-symbol universe and commits `signal_journal.csv` to the `journal-data` branch; the job summary shows the track record |
 | `score-backtest.yml` | on demand | rebuilds the score month by month from 2016 using only data public at each date, and reports how well each component ranked later returns |
 | `insider-alerts.yml` | daily at 10:30 UTC (catch-up), on demand (with an optional backfill) | scans every Form 4 the SEC indexed since the last run and opens an `insider-alert` issue for each new cluster buy (rules below). State lives on the `journal-data` branch |
+| `tenk-rank.yml` | Sundays 07:17 UTC, on demand (with an optional company limit) | ranks every S&P 500 company by how much of its latest 10-K's Risk Factors is new; only companies with a new 10-K are re-read. Writes `tenk_rank.json` to the `journal-data` branch |
 | `watch.yml` | every 5 min on weekdays, every 3 h at weekends | reads EDGAR's latest-filings feed for Form 4 purchases and Schedule 13D/13G stakes; opens `insider-alert` / `stake-alert` issues and pushes phone notifications (below) |
 | `site.yml` | every 30 min in US market hours, every 6 h otherwise, after journal and alert runs | builds the public site (`mt site`) and deploys it to GitHub Pages |
 

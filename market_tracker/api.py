@@ -1876,21 +1876,8 @@ async def newsdesk_view(refresh: bool = False):
 def confidence_view():
     """How much of the portfolio (by value) was checked against a broker or a statement lately,
     and the list of things to fix."""
-    from . import confidence, health
-    with db.connect() as conn:
-        led = db.ledger(conn)
-        syncs, diffs, stmts = confidence.load_inputs(conn)
-        legs = transfers.from_rows(db.transfer_legs(conn))
-        unread = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
-    prices = {}
-    if led:
-        try:
-            prices = {p["symbol"]: p["price"] for p in service.portfolio_summary(led, False)["positions"] if p.get("price")}
-        except (ValueError, http.DataUnavailable):
-            prices = {}
-    st = confidence.status(led, prices, syncs, diffs, stmts, confidence.now_utc())
-    fixes = confidence.fix_list(st, transfers.open_items(legs)["open"], unread, health.problems())
-    return dict(st, fixes=fixes)
+    from . import confidence
+    return confidence.current()
 
 
 @app.get("/api/setup")
@@ -2037,17 +2024,121 @@ async def tenk_view():
                     errors.append(err)
                 elif r:
                     out.append(r)
+        from . import tenkrank
+        ranking = tenkrank.load()
+        for r in out:
+            r["rank"] = tenkrank.percentile(ranking, ((r.get("sections") or {}).get("risk") or {}).get("new_share"))
         order = {"big": 0, "some": 1, "little": 2}
         out.sort(key=lambda r: (order.get(r.get("level"), 3), -(((r.get("sections") or {}).get("risk") or {}).get("new_share") or 0)))
-        return {"companies": out, "errors": errors, "skipped": [s for s in syms if s not in {r["symbol"] for r in out}]}
+        return {"companies": out, "errors": errors, "skipped": [s for s in syms if s not in {r["symbol"] for r in out}],
+                "ranking_as_of": (ranking or {}).get("as_of")}
     key = ("tenk", _ledger_key(), date.today().isoformat())
     return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+@app.get("/api/tenk/most-changed")
+async def tenk_most_changed(n: int = Query(25, ge=1, le=100)):
+    """S&P 500 companies whose latest 10-K Risk Factors changed most (from the weekly ranking job)."""
+    from . import tenkrank
+    data = await asyncio.to_thread(tenkrank.load)
+    if not data:
+        raise HTTPException(503, "The S&P 500 ranking hasn't been built yet (the weekly job fills it).")
+    return {"as_of": data.get("as_of"), "universe": data.get("universe"), "companies": tenkrank.most_changed(data, n)}
+
+
+# ------------------------------------------------------------------ earnings recap, dividend safety, style bets, weekly recap
+
+@app.get("/api/earnings/{symbol}")
+async def earnings_view(symbol: str):
+    """The company's latest results press release (8-K exhibit 99.1): headline sentences, outlook,
+    the stock's reaction, and the audited quarter once the 10-Q is out."""
+    from . import earnings
+    sym = market.normalize_symbol(symbol)
+    if market.asset_class(sym) != "stock":
+        raise HTTPException(404, "Only company stocks file results releases.")
+
+    def run():
+        return earnings.recap(sym)
+    try:
+        r = await asyncio.to_thread(_analysis_cache.get, ("earnings", sym, date.today().isoformat()), run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"SEC: {exc}")
+    if not r:
+        raise HTTPException(404, f"No results release (8-K item 2.02) on file for {sym}: funds don't file them.")
+    return r
+
+
+@app.get("/api/income/safety")
+async def dividend_safety_view():
+    """A-F dividend safety grade per dividend-paying stock you hold, with the reasons."""
+    from . import divsafety
+
+    def run():
+        positions, _ = _valued_positions()
+        syms = [p["symbol"] for p in positions if market.asset_class(p["symbol"]) == "stock" and p.get("quantity")]
+        grades, errors = divsafety.build(syms)
+        order = {"F": 0, "D": 1, "C": 2, "?": 3, "B": 4, "A": 5}
+        return {"grades": sorted(grades.values(), key=lambda g: (order.get(g["grade"], 3), g["symbol"])), "errors": errors,
+                "not_graded": [s for s in syms if s not in grades]}
+    return await asyncio.to_thread(_analysis_cache.get, ("divsafety", _ledger_key(), date.today().isoformat()), run)
+
+
+@app.get("/api/factors")
+async def factors_view():
+    """Your portfolio's loadings on the market, size, value, profitability, investment and momentum factors."""
+    from . import factors
+
+    def run():
+        positions, _ = _valued_positions()
+        return factors.build(positions, lambda s: _closes(s, 800))
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, ("factors", _ledger_key(), date.today().isoformat()), run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"Factor data: {exc}")
+
+
+weekly_cache = pulse.Cache(1800)
+
+
+@app.get("/api/weekly")
+async def weekly_view(refresh: bool = False):
+    """The weekly recap: the week in dollars, decisions, confirmed news, next week, and your data."""
+    from . import weekly
+    if refresh:
+        weekly_cache.store.clear()
+    r = await asyncio.to_thread(weekly_cache.get, "weekly", weekly.gather)
+    with db.connect() as conn:
+        cadence = db.get_meta(conn, "push_cadence", "weekly") or "weekly"
+    return dict(r, cadence=cadence)
+
+
+@app.post("/api/weekly/send")
+async def weekly_send():
+    """Push this week's recap to your phone now (to try it)."""
+    from . import weekly
+    r = await asyncio.to_thread(weekly_cache.get, "weekly", weekly.gather)
+    sent = await asyncio.to_thread(notify.send, notify.Message(title=r["title"], body=weekly.push_text(r), priority=3, tags=("calendar",)))
+    if not sent:
+        raise HTTPException(400, "Phone alerts aren't set up (Accounts → Setup → Phone alerts).")
+    return {"sent": True}
+
+
+class CadenceIn(BaseModel):
+    cadence: Literal["weekly", "daily", "both"]
+
+
+@app.post("/api/push-cadence")
+def push_cadence(body: CadenceIn):
+    """Which recap pushes to your phone: the weekly recap, the daily morning brief, or both."""
+    with db.connect() as conn:
+        db.set_meta(conn, "push_cadence", body.cadence)
+    return {"cadence": body.cadence}
 
 
 class AskIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
     question: str = Field(min_length=3, max_length=600)
-    filings: list[Literal["10-K", "10-Q"]] = Field(default_factory=lambda: ["10-K"], min_length=1, max_length=2)
+    filings: list[Literal["10-K", "10-Q", "earnings"]] = Field(default_factory=lambda: ["10-K"], min_length=1, max_length=3)
 
 
 @app.post("/api/ask-filing")

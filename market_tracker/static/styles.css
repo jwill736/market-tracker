@@ -425,7 +425,7 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .pk-card { border-top: 1px solid var(--grid); padding: 10px 0; display: grid; gap: 4px; }
 #pk-suggested { margin: 6px 0; align-items: center; }
 #pk-suggested .chip { cursor: pointer; border: 0; }
-.brief-list button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
+.brief-list button.linkish, .brief-card button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
 .pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #nm-out button.linkish, #ye-body button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 .hp-thesis button.linkish { color: var(--accent); }
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
@@ -553,6 +553,11 @@ table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-varian
 .tk-level { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .tk-big .tk-level { color: var(--bad); }
 .tk-some .tk-level { color: var(--s2); }
+.ds-item { border-top: 1px solid var(--grid); padding: 8px 0; display: grid; gap: 4px; }
+.ds-grade { display: inline-grid; place-items: center; min-width: 26px; height: 26px; border-radius: 6px; font-weight: 800;
+  border: 1px solid var(--grid); margin-right: 6px; }
+.fx-table td:last-child { white-space: normal; }
+#home-weekly select { font: inherit; max-width: 100%; }
 .ask-answer { line-height: 1.55; margin: 8px 0; white-space: pre-wrap; }
 sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .ask-sources { padding-left: 22px; display: grid; gap: 6px; }

@@ -133,3 +133,23 @@ def remember_statement(conn, account: str, result: dict, today: date | None = No
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def current() -> dict:
+    """The score and fix list from the app's stored state (the Home card, the weekly recap)."""
+    import json
+
+    from . import db, health, http, service, transfers
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        syncs, diffs, stmts = load_inputs(conn)
+        legs = transfers.from_rows(db.transfer_legs(conn))
+        unread = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
+    prices = {}
+    if led:
+        try:
+            prices = {p["symbol"]: p["price"] for p in service.portfolio_summary(led, False)["positions"] if p.get("price")}
+        except (ValueError, http.DataUnavailable):
+            prices = {}
+    st = status(led, prices, syncs, diffs, stmts, now_utc())
+    return dict(st, fixes=fix_list(st, transfers.open_items(legs)["open"], unread, health.problems()))

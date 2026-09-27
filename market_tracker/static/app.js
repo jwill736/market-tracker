@@ -625,6 +625,7 @@ async function openSymbol(raw) {
   renderPosition();
   loadChart();
   loadSymbolDetails(sym);
+  loadEarnings(sym);
 }
 async function loadChart() {
   const { sym, range } = symState;
@@ -1624,7 +1625,7 @@ async function loadHome(quiet = false) {
   loadMoved();
   renderHomeLists();
   loadHomeFeeds();
-  if (!quiet || Date.now() - briefState.loadedAt > 600000) loadBrief();
+  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); }
   if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
   try {
     const d = await api("/api/portfolio/history?range=" + homeState.range);
@@ -2820,6 +2821,7 @@ $("#tk-load").addEventListener("click", async () => {
           <a href="${esc(c.current.url)}" target="_blank" rel="noopener noreferrer">this year's</a> · <a href="${esc(c.previous.url)}" target="_blank" rel="noopener noreferrer">last year's</a></span></div>
         <div class="muted">Risk Factors: ${pct(sec.new_share)} new (${sec.new_count || 0} new sentences, ${sec.removed_count || 0} dropped), similarity ${sec.similarity == null ? "—" : sec.similarity.toFixed(2)} ·
           Legal Proceedings: ${pct(leg.new_share)} new</div>
+        ${c.rank ? `<div class="small"><b>${esc(c.rank.text)}</b> <span class="muted">(S&amp;P 500 median ${pct(c.rank.median)}, ${c.rank.of} reports)</span></div>` : ""}
         ${sec.new && sec.new.length ? `<details${c.level === "big" ? " open" : ""}><summary class="small">What's new in Risk Factors</summary><ul class="hp-lines">${sec.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
         ${leg.new && leg.new.length ? `<details><summary class="small">What's new in Legal Proceedings</summary><ul class="hp-lines">${leg.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
     }).join("") || `<p class="muted">No company stocks to compare (funds and coins don't file 10-Ks).</p>`)
@@ -2830,7 +2832,7 @@ $("#tk-load").addEventListener("click", async () => {
 // ---------------------------------------------------------------- ask the company's filings
 $("#ask-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const which = [...($("#ask-10k").checked ? ["10-K"] : []), ...($("#ask-10q").checked ? ["10-Q"] : [])];
+  const which = [...($("#ask-10k").checked ? ["10-K"] : []), ...($("#ask-10q").checked ? ["10-Q"] : []), ...($("#ask-er").checked ? ["earnings"] : [])];
   if (!which.length) { $("#ask-out").innerHTML = `<p class="down">Pick at least one report.</p>`; return; }
   const sym = symState.sym;
   $("#ask-out").innerHTML = `<p class="muted">Reading ${esc(sym)}'s ${esc(which.join(" and "))} (about a minute)…</p>`;
@@ -2844,3 +2846,97 @@ $("#ask-form").addEventListener("submit", async (e) => {
         · ${Math.round((r.usage.input + r.usage.cache_read + r.usage.cache_write) / 1000)}k tokens read${r.usage.cache_read ? " (mostly from cache)" : ""}</p>`;
   } catch (err) { $("#ask-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
 });
+
+// ---------------------------------------------------------------- weekly recap (Home)
+const weeklyState = { data: null, all: false };
+async function loadWeekly() {
+  if (!holdingsList.length) { $("#home-weekly").hidden = true; return; }
+  try { weeklyState.data = await api("/api/weekly"); renderWeekly(); } catch { /* offline: leave hidden */ }
+}
+function renderWeekly() {
+  const w = weeklyState.data;
+  $("#home-weekly").hidden = false;
+  $("#wk-title").textContent = w.title.replace(/^Your week: /, "This week: ");
+  $("#wk-cadence").value = w.cadence || "weekly";
+  $("#wk-list").innerHTML = w.lines.slice(0, weeklyState.all ? 99 : 8).map((ln) => `<li class="lvl${ln.level}"><span class="hb-sec">${esc(ln.section)}</span>
+    ${ln.symbol ? `<button type="button" class="linkish" data-open="${esc(ln.symbol)}">${esc(ln.text)}</button>` : esc(ln.text)}</li>`).join("")
+    + (w.lines.length > 8 && !weeklyState.all ? `<li><button type="button" class="linkish" id="wk-more">Show all ${w.lines.length}</button></li>` : "");
+  document.querySelectorAll("#wk-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+  const more = $("#wk-more");
+  if (more) more.addEventListener("click", () => { weeklyState.all = true; renderWeekly(); });
+}
+$("#wk-cadence").addEventListener("change", async (e) => {
+  try { await api("/api/push-cadence", { method: "POST", body: JSON.stringify({ cadence: e.target.value }) }); $("#wk-note").textContent = "Saved: your phone gets the " + e.target.selectedOptions[0].textContent + "."; }
+  catch (err) { $("#wk-note").textContent = err.message; }
+});
+$("#wk-send").addEventListener("click", async () => {
+  try { await api("/api/weekly/send", { method: "POST" }); $("#wk-note").textContent = "Sent: check your phone."; } catch (err) { $("#wk-note").textContent = err.message; }
+});
+
+// ---------------------------------------------------------------- review: hidden style bets
+$("#fx-load").addEventListener("click", async () => {
+  $("#fx-out").innerHTML = `<p class="muted">Reading two years of daily prices and the factor files…</p>`;
+  try {
+    const r = await api("/api/factors");
+    if (r.empty) { $("#fx-out").innerHTML = `<p class="muted">${esc(r.note || "No stocks or funds with price history to measure.")}</p>`; return; }
+    const ref = Object.fromEntries(((r.reference || {}).loadings || []).map((l) => [l.factor, l.beta]));
+    $("#fx-out").innerHTML = `<p class="verdict-line">${esc(r.summary)}</p>
+      <table class="data fx-table"><thead><tr><th>Factor</th><th>You</th><th>VOO</th><th>What it means</th></tr></thead><tbody>
+      ${r.loadings.map((l) => `<tr><td>${esc(l.name)}</td><td><b>${l.beta.toFixed(2)}</b> <span class="muted">t ${l.t.toFixed(1)}</span></td>
+        <td class="muted">${ref[l.factor] != null ? ref[l.factor].toFixed(2) : "—"}</td><td>${esc(l.text)}</td></tr>`).join("")}</tbody></table>
+      <p class="muted">${esc(r.start)} to ${esc(r.end)} (${r.days} trading days, the factor file's latest), ${r.holdings} holdings${r.crypto_share ? `; coins (${r.crypto_share}% of your money) left out` : ""}${r.missing.length ? `; no prices for ${esc(r.missing.join(", "))}` : ""}.
+        Left over after the factors: ${fmtPct(r.alpha_annual)} a year (t ${r.alpha_t.toFixed(1)}), which two years of data can't tell from luck.</p>`;
+  } catch (err) { $("#fx-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- review: the S&P 500's most-changed annual reports
+$("#tk-most").addEventListener("toggle", async (e) => {
+  if (!e.target.open || $("#tk-most-out").dataset.loaded) return;
+  $("#tk-most-out").innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const r = await api("/api/tenk/most-changed?n=25");
+    $("#tk-most-out").dataset.loaded = "1";
+    $("#tk-most-out").innerHTML = `<ul class="hp-lines">${r.companies.map((c) => `<li>${tick(c.symbol)} <b>${Math.round(c.risk_new * 100)}% new</b>
+        <span class="muted">${esc(c.name)} · ${esc(c.sector)} · filed ${esc(c.filed)}</span>
+        ${(c.sample || []).length ? `<details><summary class="small">New sentences</summary><ul>${c.sample.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</li>`).join("")}</ul>
+      <p class="muted">Ranking built ${esc((r.as_of || "").slice(0, 10))} from ${r.universe} companies.</p>`;
+    $("#tk-most-out").querySelectorAll(".tk").forEach((el) => el.addEventListener("click", () => openSymbol(el.textContent.trim())));
+  } catch (err) { $("#tk-most-out").innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- income: dividend safety
+const GRADE_CLS = { A: "up", B: "up", C: "", D: "down", F: "down", "?": "muted" };
+$("#ds-load").addEventListener("click", async () => {
+  $("#ds-out").innerHTML = `<p class="muted">Reading each company's cash flows from the SEC…</p>`;
+  try {
+    const r = await api("/api/income/safety");
+    $("#ds-meta").textContent = r.grades.length ? `${r.grades.length} graded` : "";
+    $("#ds-out").innerHTML = (r.grades.map((g) => `<div class="ds-item"><div class="row"><span class="ds-grade ${GRADE_CLS[g.grade] || ""}">${esc(g.grade)}</span>
+        ${tick(g.symbol)} <span class="muted">${g.fcf_payout != null ? `${Math.round(g.fcf_payout)}% of free cash flow` : ""}${g.net_debt_ebitda != null ? ` · net debt ${g.net_debt_ebitda.toFixed(1)}× operating profit` : ""}${g.history && g.history.years_growing ? ` · ${g.history.years_growing} years of raises` : ""}</span></div>
+        <ul class="hp-lines">${g.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")
+      || `<p class="muted">None of your stocks pays a dividend.</p>`)
+      + (r.errors.length ? `<p class="muted">Couldn't read: ${esc(r.errors.join("; "))}</p>` : "")
+      + `<p class="muted">Funds and coins aren't graded. Quarter ends and figures come from the companies' 10-Q and 10-K filings.</p>`;
+  } catch (err) { $("#ds-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- symbol page: latest results
+async function loadEarnings(sym) {
+  const card = $("#sym-earn");
+  card.hidden = true;
+  if (/-USD$/.test(sym)) return;
+  try {
+    const r = await api("/api/earnings/" + encodeURIComponent(sym));
+    if (sym !== symState.sym) return;
+    const DIR = { raised: "Outlook raised", lowered: "Outlook lowered", kept: "Outlook kept", given: "Outlook given", none: "No outlook in the release" };
+    const re = r.reaction, au = r.audited;
+    $("#se-meta").innerHTML = `<a href="${esc(r.release.url)}" target="_blank" rel="noopener noreferrer">release filed ${esc(r.release.filed)}</a>`;
+    $("#se-out").innerHTML = `${re ? `<p>Stock <b class="${cls(re.move_pct)}">${fmtPct(re.move_pct)}</b> on ${esc(re.day)}${re.times_usual ? ` (${re.times_usual}× a normal day)` : ""}</p>` : ""}
+      <ul class="hp-lines">${r.highlights.map((x) => `<li>“${esc(x)}”</li>`).join("") || `<li class="muted">No headline numbers found in the release text.</li>`}</ul>
+      <p><b>${esc(DIR[r.outlook.direction] || "")}</b></p>${r.outlook.lines.length ? `<ul class="hp-lines">${r.outlook.lines.map((x) => `<li>“${esc(x)}”</li>`).join("")}</ul>` : ""}
+      ${au ? `<p class="muted">From the ${esc(au.quarter_end)} quarterly report (audited XBRL): revenue ${fmtPct(au.revenue_yoy)} on a year earlier,
+        diluted EPS ${au.eps != null ? "$" + au.eps.toFixed(2) : "—"} (${fmtPct(au.eps_yoy)})${au.operating_margin != null ? `, operating margin ${au.operating_margin}%` : ""}.</p>`
+        : `<p class="muted">The quarterly report's audited numbers appear here once the 10-Q is filed. The release leads with the company's own (often adjusted) figures.</p>`}`;
+    card.hidden = false;
+  } catch { /* funds and companies without a results release: no card */ }
+}

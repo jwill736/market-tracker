@@ -31,9 +31,15 @@ changed definitions, going-concern or material-weakness language.
 
 
 def pick(symbol: str, which: list[str], get=None) -> list[dict]:
-    """The latest filing of each requested kind (10-K, 10-Q)."""
+    """The latest filing of each requested kind (10-K, 10-Q, or the results press release)."""
     out = []
     for kind in which:
+        if kind == "earnings":
+            from . import earnings
+            rel = earnings.latest_release(symbol, get)
+            if rel:
+                out.append(dict(rel, form="earnings release (8-K ex. 99.1)"))
+            continue
         docs = filings.filings_for(symbol, FORMS[kind], 1, get)
         if docs:
             out.append(docs[0])
