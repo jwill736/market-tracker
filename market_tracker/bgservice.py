@@ -9,12 +9,19 @@
 The app writes to plumbline.log in its folder. `mt service update` pulls the latest version,
 reinstalls and restarts; `status`, `restart` and `uninstall` do what they say. Starting the app
 the usual way (start.sh / start.bat) while the service runs just opens the browser.
+
+Windows desktop icon: `mt shortcut` puts a Plumbline icon on the Desktop and in the Start menu. It
+starts the app hidden if it isn't running (no console window to keep open) and opens the browser;
+if it's already running it just opens the browser. "Stop Plumbline" in the Start menu (or `mt stop`)
+stops it. The icon skips start.bat's update step: run start.bat now and then to get new versions.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import platform
+import struct
 import shutil
 import signal
 import subprocess
@@ -211,3 +218,131 @@ def status(port: int = 8000, say=print) -> int:
     up = answering(port)
     say(f"Starts at login: {'yes' if inst else 'no'}. Running now: {'yes, http://localhost:%d' % port if up else 'no'}.")
     return 0 if up else 1
+
+
+# ------------------------------------------------------------------ Windows desktop icon
+
+ICON_FILE = "plumbline.ico"
+SERVE_ARGS = "-m market_tracker.cli serve --open --port {port} --log " + LOG_FILE + " --pidfile " + PID_FILE
+
+
+def ico_from_png(png: bytes) -> bytes:
+    """A Windows .ico holding one PNG image (Windows Vista and later read these), no imaging library needed."""
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    w, h = struct.unpack(">II", png[16:24])
+    if w > 256 or h > 256:
+        raise ValueError("an icon image is at most 256 pixels")
+    header = struct.pack("<HHH", 0, 1, 1)
+    entry = struct.pack("<BBBBHHII", w % 256, h % 256, 0, 0, 1, 32, len(png), 6 + 16)
+    return header + entry + png
+
+
+def shortcut_script(pythonw: str, root: str, icon: str, port: int, remove: bool = False) -> str:
+    """PowerShell that makes (or removes) the Desktop and Start menu shortcuts; prints each path it touched."""
+    q = lambda s: "'" + s.replace("'", "''") + "'"  # noqa: E731  (PowerShell doubles quotes inside '...')
+    lines = ["$ErrorActionPreference = 'Stop'",
+             "$desk = [Environment]::GetFolderPath('Desktop')",          # follows OneDrive's moved Desktop
+             "$menu = [Environment]::GetFolderPath('Programs')",
+             "$made = @(@((Join-Path $desk 'Plumbline.lnk'), " + q(SERVE_ARGS.format(port=port)) + ", 'Open Plumbline'),",
+             "          @((Join-Path $menu 'Plumbline.lnk'), " + q(SERVE_ARGS.format(port=port)) + ", 'Open Plumbline'),",
+             "          @((Join-Path $menu 'Stop Plumbline.lnk'), " + q(f"-m market_tracker.cli stop --port {port}") + ", 'Stop Plumbline'))"]
+    if remove:
+        lines += ["foreach ($m in $made) { if (Test-Path -LiteralPath $m[0]) { Remove-Item -LiteralPath $m[0]; Write-Output $m[0] } }"]
+    else:
+        lines += ["$sh = New-Object -ComObject WScript.Shell",
+                  "foreach ($m in $made) {",
+                  "  $s = $sh.CreateShortcut($m[0])",
+                  f"  $s.TargetPath = {q(pythonw)}",
+                  "  $s.Arguments = $m[1]",
+                  f"  $s.WorkingDirectory = {q(root)}",
+                  f"  $s.IconLocation = {q(icon + ',0')}",
+                  "  $s.Description = $m[2]",
+                  "  $s.Save()",
+                  "  Write-Output $m[0]",
+                  "}"]
+    body = "\r\n".join("  " + x for x in lines[1:])
+    # Errors come back as plain text on stdout (redirected PowerShell errors arrive as unreadable CLIXML otherwise).
+    return lines[0] + "\r\ntry {\r\n" + body + "\r\n} catch { Write-Output ('ERROR: ' + $_.Exception.Message); exit 1 }\r\n"
+
+
+def _powershell(script: str) -> subprocess.CompletedProcess:
+    enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")   # no quoting problems with spaces or quotes in paths
+    return subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, text=True)
+
+
+def shortcut(port: int = 8000, say=print, remove: bool = False) -> int:
+    root = root_dir()
+    if platform.system() != "Windows":
+        say(f"mt shortcut makes a Windows desktop icon. On a Mac or Linux: mt service install, then bookmark http://localhost:{port}.")
+        return 1
+    from . import firstrun
+    if not remove and not os.path.exists(os.path.join(root, firstrun.ENV)):
+        say("Run start.bat once first: it sets the app up. Then run this again.")
+        return 2
+    pythonw = venv_bin("pythonw")
+    icon = os.path.join(root, ICON_FILE)
+    if not remove:
+        with open(os.path.join(root, "market_tracker", "static", "icon-192.png"), "rb") as fh:
+            png = fh.read()
+        with open(icon, "wb") as fh:
+            fh.write(ico_from_png(png))
+    try:
+        done = _powershell(shortcut_script(pythonw, root, icon, port, remove))
+    except OSError as e:
+        say(f"Couldn't run PowerShell: {e}")
+        return 1
+    lines = [x.strip() for x in done.stdout.splitlines() if x.strip()]
+    if done.returncode != 0:
+        err = next((x[7:] for x in lines if x.startswith("ERROR: ")), "PowerShell stopped (exit code %d)" % done.returncode)
+        say("Couldn't " + ("remove" if remove else "make") + " the shortcuts: " + err)
+        return 1
+    paths = lines
+    if remove:
+        say("Removed: " + (", ".join(paths) if paths else "there were no Plumbline shortcuts."))
+        return 0
+    say("Made: " + ", ".join(paths))
+    say("Double-click Plumbline on your Desktop: it starts the app in the background (no window to keep open) and opens it in "
+        "your browser. Stop it with Stop Plumbline in the Start menu. To pin it to the taskbar: Start → Plumbline → right-click → Pin to taskbar.")
+    say("The icon doesn't update the app; double-click start.bat now and then for new versions (then close its window: the icon keeps working).")
+    return 0
+
+
+def _pid(root: str) -> int | None:
+    try:
+        with open(os.path.join(root, PID_FILE)) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _is_python(pid: int) -> bool:
+    """Whether that process is a Python (the app) and not something that reused an old process id."""
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+        return out.strip().strip('"').lower().startswith("python")
+    out = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+    return "market_tracker" in out or "mt serve" in out
+
+
+def stop(port: int = 8000, say=print) -> int:
+    """Stop the app started by the icon or the service (it starts again at next login if the service is installed)."""
+    root = root_dir()
+    if not answering(port):
+        say("Plumbline isn't running.")
+        return 0
+    pid = _pid(root)
+    if pid is None or not _is_python(pid):   # a stale pid file must never stop some other program
+        say("Plumbline is running, but not in a way this can stop: close the window it runs in (or mt service uninstall).")
+        return 1
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    for _ in range(20):
+        if not answering(port, 0.5):
+            say("Stopped.")
+            return 0
+        time.sleep(0.5)
+    say(f"It's still answering on port {port}: if you started it with start.bat, close that window.")
+    return 1
