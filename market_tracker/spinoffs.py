@@ -33,14 +33,14 @@ def _clean(name: str) -> tuple[str, str | None, str]:
     return base, tick.group(1) if tick else None, cik.group(1) if cik else ""
 
 
-def registrations(today: date, get=None) -> list[dict]:
+def registrations(today: date, get=None, days: int = LOOKBACK_DAYS, pages: int = PAGES) -> list[dict]:
     """[{cik, name, ticker, first_filed, last_filed, filings}] for spin-off registrations in the lookback."""
     from .config import settings
     get = get or (lambda params: http.get(FTS, params=params, headers={"User-Agent": settings.sec_user_agent}, ttl=6 * 3600))
     by_cik: dict[str, dict] = {}
-    for page in range(PAGES):
+    for page in range(pages):
         d = get({"q": '"spin-off" OR "spinoff" OR "separation and distribution"', "forms": "10-12B,10-12B/A", "dateRange": "custom",
-                 "startdt": (today - timedelta(days=LOOKBACK_DAYS)).isoformat(), "enddt": today.isoformat(), "from": page * 100})
+                 "startdt": (today - timedelta(days=days)).isoformat(), "enddt": today.isoformat(), "from": page * 100})
         hits = (d.get("hits") or {}).get("hits") or []
         for h in hits:
             src = h.get("_source") or {}

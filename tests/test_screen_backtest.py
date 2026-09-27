@@ -74,3 +74,18 @@ def test_run_end_to_end_on_synthetic_history():
     assert s["large"]["growth"]["screen"] > s["large"]["growth"]["spy"]
     assert 0 < out["survivorship_pct"] < 1 and "Survivorship" in out["verdict"]
     assert set(out["periods"][0]["groups"]["large"]["top"][:2]) == {"S238", "S239"}     # the best of each sector
+    assert s["bottom_quality"]["check"] and s["bottom_quality"]["3m"]["avg_edge"] < 0      # quality drives returns here
+    assert s["large"]["12m"]["t"] is not None and s["large"]["3m"]["breakeven_missing"] is not None
+    assert "Of the four grades alone" in out["verdict"]
+
+
+def test_newey_west_widens_overlapping_errors():
+    import random
+    rng = random.Random(3)
+    base = [rng.gauss(0.01, 0.05) for _ in range(60)]
+    overlapping = [sum(base[i:i + 4]) for i in range(57)]       # 12-month holds started each quarter
+    plain = sb.newey_west_t(overlapping, 0)
+    nw = sb.newey_west_t(overlapping, 3)
+    assert plain is not None and nw is not None and abs(nw) < abs(plain)
+    assert sb.newey_west_t([0.1] * 5, 1) is None
+    assert sb.breakeven_missing(0.3, 0.3) == 1.0 and sb.breakeven_missing(None, 0.3) is None

@@ -43,6 +43,16 @@ GROUPS = {
     "bottom": "Bottom 50 worth $2B+ (should lag)",
     "everyone": "Every company screened, equal weight",
 }
+# Checks on the bottom of the ranking: which grade carries it, and whether a wider cut still lags.
+CHECKS = {
+    "bottom_10pct": "Bottom 10% worth $2B+",
+    "bottom_20pct": "Bottom 20% worth $2B+",
+    "bottom_quality": "Bottom 50 worth $2B+ on quality alone",
+    "bottom_value": "Bottom 50 worth $2B+ on value alone",
+    "bottom_momentum": "Bottom 50 worth $2B+ on momentum alone",
+    "bottom_low_issuance": "Bottom 50 worth $2B+ on dilution alone (heaviest issuers)",
+}
+ALL_GROUPS = {**GROUPS, **CHECKS}
 MAX_CAP = 6e12                                     # a market value above this is a unit error in the filing
 
 
@@ -117,9 +127,15 @@ def period_rows(F: dict, universe: dict[str, dict], p: Prices, i: int) -> dict[s
 def picks(rows: dict[str, dict]) -> dict[str, list[str]]:
     ranked = sorted((s for s in rows if rows[s]["score"] is not None), key=lambda s: (-rows[s]["score"], s))
     big = [s for s in ranked if rows[s]["cap"] >= 2e9]
-    return {"large": [s for s in ranked if rows[s]["cap"] >= 1e10][:30], "all": big[:50],
-            "small_mid": [s for s in ranked if rows[s]["cap"] < screen.SLEEPER_MAX_CAP and not rows[s]["flaws"]][:50],
-            "bottom": big[::-1][:50], "everyone": ranked}
+    out = {"large": [s for s in ranked if rows[s]["cap"] >= 1e10][:30], "all": big[:50],
+           "small_mid": [s for s in ranked if rows[s]["cap"] < screen.SLEEPER_MAX_CAP and not rows[s]["flaws"]][:50],
+           "bottom": big[::-1][:50], "everyone": ranked,
+           "bottom_10pct": big[::-1][:max(1, len(big) // 10)], "bottom_20pct": big[::-1][:max(1, len(big) // 5)]}
+    bigs = [s for s in rows if rows[s]["cap"] >= 2e9]
+    for comp in ("quality", "value", "momentum", "low_issuance"):
+        have = [s for s in bigs if (rows[s].get("grades") or {}).get(comp) is not None]
+        out[f"bottom_{comp}"] = sorted(have, key=lambda s: (rows[s]["grades"][comp], s))[:50]
+    return out
 
 
 def forward(p: Prices, syms: list[str], i: int, h: int) -> tuple[float | None, int]:
@@ -134,12 +150,41 @@ def forward(p: Prices, syms: list[str], i: int, h: int) -> tuple[float | None, i
     return (sum(rets) / len(rets) if rets else None), len(rets)
 
 
+def newey_west_t(xs: list[float], lags: int) -> float | None:
+    """t-statistic of the mean with Newey-West standard errors: overlapping 6- and 12-month holds
+    started every quarter share returns, which a plain t-test would count as independent."""
+    n = len(xs)
+    if n < 8:
+        return None
+    m = sum(xs) / n
+    d = [x - m for x in xs]
+    var = sum(e * e for e in d) / n
+    for lag in range(1, lags + 1):
+        cov = sum(d[i] * d[i - lag] for i in range(lag, n)) / n
+        var += 2 * (1 - lag / (lags + 1)) * cov
+    return round(m / math.sqrt(var / n), 2) if var > 0 else None
+
+
+def breakeven_missing(edge: float | None, gone_share: float | None) -> float | None:
+    """How much worse per holding period the missing companies (bankrupt, bought out, delisted since)
+    would have to have done than the visible ones, if they'd been picked in proportion, to erase
+    this group's edge over SPY. A positive edge that survives only small numbers is fragile."""
+    if edge is None or not gone_share:
+        return None
+    return round(edge / gone_share, 2)
+
+
 def summarize(periods: list[dict]) -> dict:
     out = {}
-    for g in GROUPS:
-        row = {"label": GROUPS[g]}
+    surv = [pr["large_filers_gone"] / pr["large_filers"] for pr in periods if pr.get("large_filers")]
+    gone = sum(surv) / len(surv) if surv else None
+    for g in ALL_GROUPS:
+        if not any(g in pr["groups"] for pr in periods):
+            continue
+        row = {"label": ALL_GROUPS[g], "check": g in CHECKS}
         for h in HOLD:
-            pairs = [(pr["groups"][g][h], pr["spy"][h]) for pr in periods if pr["groups"][g].get(h) is not None and pr["spy"].get(h) is not None]
+            pairs = [(pr["groups"][g][h], pr["spy"][h]) for pr in periods
+                     if g in pr["groups"] and pr["groups"][g].get(h) is not None and pr["spy"].get(h) is not None]
             if not pairs:
                 row[h] = None
                 continue
@@ -150,9 +195,12 @@ def summarize(periods: list[dict]) -> dict:
             row[h] = {"periods": n, "avg": round(sum(a for a, _ in pairs) / n * 100, 2), "avg_spy": round(sum(b for _, b in pairs) / n * 100, 2),
                       "avg_edge": round(mean * 100, 2), "beat_pct": round(sum(e > 0 for e in edges) / n * 100),
                       "worst_edge": round(min(edges) * 100, 1), "best_edge": round(max(edges) * 100, 1),
-                      "t": round(mean / (sd / math.sqrt(n)), 2) if sd > 0 and h == "3m" else None}
+                      "t": (round(mean / (sd / math.sqrt(n)), 2) if sd > 0 else None) if h == "3m"
+                      else newey_west_t(edges, HOLD[h] // 63 - 1),
+                      "breakeven_missing": breakeven_missing(round(mean * 100, 2), gone)}
         # $10,000 rebalanced every quarter (3-month holds back to back) against SPY
-        chain = [(pr["groups"][g]["3m"], pr["spy"]["3m"]) for pr in periods if pr["groups"][g].get("3m") is not None and pr["spy"].get("3m") is not None]
+        chain = [(pr["groups"][g]["3m"], pr["spy"]["3m"]) for pr in periods
+                 if g in pr["groups"] and pr["groups"][g].get("3m") is not None and pr["spy"].get("3m") is not None]
         grow, spy = 10000.0, 10000.0
         for a, b in chain:
             grow *= 1 + a
@@ -189,9 +237,14 @@ def verdict(summary: dict, survivorship: float | None) -> str:
     if ev["cagr"] is not None and b:
         line += (f" The average screened stock, equal-weighted, made {ev['cagr']:+.1f}% a year, so beating SPY at all took picking well;"
                  f" the bottom 50 trailed SPY by {-b['avg_edge']:.1f} points a quarter.")
+    checks = [(g, summary[g]["3m"]) for g in CHECKS if g in summary and summary[g].get("3m")]
+    comps = [(g, q) for g, q in checks if g.startswith("bottom_") and not g.endswith("pct")]
+    if comps:
+        g, q = min(comps, key=lambda x: x[1]["avg_edge"])
+        line += f" Of the four grades alone, the worst on {g.replace('bottom_', '').replace('_', ' ')} lagged most ({q['avg_edge']:+.1f} points a quarter)."
     if survivorship:
         line += (f" Survivorship: up to {survivorship:.0f}% of large SEC filers from those dates have no ticker today and are missing,"
-                 " which flatters every number here.")
+                 " which flatters the buy lists and, since the missing are more often failures, understates how badly the bottom did.")
     return line
 
 
