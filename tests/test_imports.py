@@ -49,7 +49,10 @@ def test_holdings_list():
     got = [(t["symbol"], t["quantity"], round(t["price"], 4), t["date"], t["account"]) for t in res.transactions]
     assert got == [("VOO", 3.214, round(1450.20 / 3.214, 4), "2024-03-01", "Stash"),
                    ("BTC-USD", 0.004, 65000.0, "2026-09-25", "Stash")]
-    assert "date unknown" in res.transactions[1]["note"] and len(res.errors) == 2
+    assert "date unknown" in res.transactions[1]["note"] and len(res.errors) == 3
+    assert any("BTC-USD has no purchase date" in e for e in res.errors)
+    typo = importers.parse_holdings_list("Bitcoin 0.001 60\nBRK.B 2 800 2024-01-02", "Stash", "2026-09-25")
+    assert [t["symbol"] for t in typo.transactions] == ["BRK.B"] and "'Bitcoin' isn't a ticker" in typo.errors[0]
 
 
 def test_import_endpoint_all_sources_and_accounts(monkeypatch):

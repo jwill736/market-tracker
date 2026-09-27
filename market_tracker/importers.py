@@ -232,6 +232,8 @@ def parse_coinbase(text: str) -> ImportResult:
 
 # ------------------------------------------------------------------ quick holdings list (Stash, anything else)
 
+TICKER_LIKE = re.compile(r"^[A-Z]{1,5}(?:[.-][A-Z]{1,2})?$|^[A-Z0-9]{2,10}-USD$")
+
 def parse_holdings_list(text: str, account: str, today: str) -> ImportResult:
     """One holding per line: SYMBOL SHARES TOTAL_COST [YYYY-MM-DD], separated by spaces, commas or tabs.
     For accounts with no trade export (Stash offers only PDF statements): the shares and the total
@@ -257,6 +259,12 @@ def parse_holdings_list(text: str, account: str, today: str) -> ImportResult:
             res.errors.append(f"Line {n}: shares must be above zero.")
             continue
         sym = market.normalize_symbol(parts[0])
+        if not TICKER_LIKE.match(sym):
+            res.errors.append(f"Line {n}: '{parts[0]}' isn't a ticker; use the symbol (VOO, AAPL, BTC).")
+            continue
+        if not day:
+            res.errors.append(f"Line {n}: {sym} has no purchase date, so it's recorded as bought today and any gain looks "
+                              "short-term; add the date (YYYY-MM-DD) if you know it.")
         key = f"hl:{account.lower()}:" + hashlib.sha1(f"{sym}|{qty}|{cost}|{day}".encode()).hexdigest()[:16]
         res.transactions.append({"symbol": sym, "side": "buy", "quantity": qty, "price": cost / qty, "fees": 0.0,
                                  "date": day or today, "note": f"{account} holdings" + ("" if day else " (date unknown)"),

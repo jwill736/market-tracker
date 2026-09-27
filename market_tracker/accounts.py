@@ -76,8 +76,8 @@ def sync_coinbase() -> dict:
     except (http.DataUnavailable, ValueError) as exc:
         raise SyncError(502, f"Coinbase: {exc}")
     with db.connect() as conn:
-        known = db.import_keys(conn)
-        new = [t for t in txs if t["import_key"] not in known]
+        # By key, and by content: the same fill may already be here from Coinbase's CSV, under another key.
+        new, dup = snaptrade.new_only(txs, db.import_keys(conn), db.list_transactions(conn), snaptrade.match)
         try:
             positions = service.pf.build_positions(db.ledger(conn) + new)
         except ValueError as exc:
@@ -90,7 +90,7 @@ def sync_coinbase() -> dict:
         from . import cash
         cash.save(conn, "Coinbase", sum(bal.get(c, 0.0) for c in ("USD", "USDC")), None, date.today(), "Coinbase sync")
     diffs = coinbase_sync.reconcile(bal, cb_qty)
-    return {"new": len(new), "duplicates": len(txs) - len(new), "differences": diffs,
+    return {"new": len(new), "duplicates": dup, "differences": diffs,
             "by_account": {"Coinbase": [{"symbol": d["coin"] + "-USD", "difference": d["difference"]} for d in diffs]},
             "positions": sorted(p.symbol for p in positions.values() if p.quantity > 0 and p.symbol.endswith("-USD"))}
 
