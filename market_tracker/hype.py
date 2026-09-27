@@ -97,13 +97,15 @@ def pe_history(eps_q: dict[str, float], bars: list[tuple[str, float]]) -> list[t
 
 def valuation(eps_q: dict[str, float], bars: list[tuple[str, float]]) -> dict | None:
     """Today's P/E against its own quarter-end P/Es over about five years."""
-    hist = pe_history(eps_q, bars)
     ends = sorted(eps_q)
-    if len(hist) < 8 or len(ends) < 4:
+    if len(ends) < 4 or not bars:
         return None
     ttm = sum(eps_q[e] for e in ends[-4:])
     if ttm <= 0:
         return {"pe": None, "note": "Losing money over the last year: no P/E to compare."}
+    hist = pe_history(eps_q, bars)
+    if len(hist) < 8:
+        return None
     pe = bars[-1][1] / ttm
     past = sorted(v for _, v in hist[-20:])
     pct = round(sum(1 for v in past if v < pe) / len(past) * 100)

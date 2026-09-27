@@ -21,3 +21,22 @@ from market_tracker import macro, hype  # noqa: E402
 print("macro pace:", macro.build()["pace"])
 th = hype.themes()
 print("themes:", [(r["theme"], r["last_6m"], r["prior_6m"], r["level"]) for r in th])
+from market_tracker import idealab, screen as scr  # noqa: E402
+scr.load = lambda get=None: d
+t = time.time()
+c = idealab.chatter()
+print(f"chatter ({time.time() - t:.0f}s):", c["errors"], [(r["symbol"], r["reddit"], r["rising"], r["stocktwits"], r["caution"], r["warnings"][:2]) for r in c["rows"][:10]])
+t = time.time()
+mf = idealab.money_flow()
+for w in mf["waves"]:
+    print("wave", w["wave"], "total", w["total"], "growth", w["growth"], [(s["symbol"], s["capex"], s["growth"]) for s in w["spenders"]])
+    print("   ", [(c2["category"], [(x["symbol"], x["score"], x["priced_in"]) for x in c2["companies"]]) for c2 in w["suppliers"][:3]])
+print(f"lagging ({time.time() - t:.0f}s):", [(x["symbol"], x["why"]) for x in mf["lagging"][:8]])
+print("contracts LMT:", idealab.contracts_for("LMT"))
+print("contracts PLTR:", idealab.contracts_for("PLTR"))
+t = time.time()
+sl = idealab.sleepers()
+print(f"sleepers ({time.time() - t:.0f}s):", sl["note"], [(x["symbol"], x["level"], x["why"]) for x in sl["sleepers"][:10]])
+from market_tracker import hype as hp  # noqa: E402
+print("priced-in NVDA:", hp.for_symbol("NVDA", d))
+print("priced-in PLTR:", hp.for_symbol("PLTR", d))

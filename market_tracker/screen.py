@@ -3,7 +3,8 @@ order-backlog screen, rebuilt weekly by a GitHub job (`mt screen`) into screen.j
 journal-data branch.
 
 The evidence (rated in README): what has held up best after publication is
-- quality: gross profit over total assets (Novy-Marx 2013), about as strong as value;
+- quality: operating profit over total assets (Ball, Gerakos, Linnainmaa & Nikolaev 2016 found it
+  a better measure than Novy-Marx's gross profit, and far more companies tag it in SEC data);
 - value: earnings yield and book value against the market value;
 - momentum: the last 12 months' return, skipping the most recent month (Jegadeesh & Titman);
 - not diluting shareholders: companies issuing lots of new shares tend to lag (Pontiff & Woodgate).
@@ -38,6 +39,9 @@ MIN_CAP = 3e8               # $300M: below this, prices are too easy to push aro
 SLEEPER_MAX_CAP = 1e10
 DISQUALIFY = 10             # a component in the bottom 10% of its sector caps the total
 REVENUE = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"]
+NET_INCOME = ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]
+SHARES_Q = "WeightedAverageNumberOfDilutedSharesOutstanding"
+MIN_RPO_BASE = 0.10         # last year's backlog must be at least 10% of revenue, or growth "from nothing" dominates
 
 
 # ------------------------------------------------------------------ sources
@@ -123,14 +127,15 @@ def momentum(closes: list[float]) -> tuple[float | None, float | None, float | N
 def metrics(f: dict, cap: float) -> dict:
     """f: the company's SEC numbers. Returns the raw inputs to the score."""
     assets = f.get("assets")
-    gp = f.get("gross_profit")
-    q = (gp / assets) if gp is not None and assets else None       # banks and insurers report no gross profit: scored without it
+    op = f.get("operating_income")
+    q = (op / assets) if op is not None and assets else None       # banks and insurers report no operating income: scored without it
     ey = f["net_income"] / cap if f.get("net_income") is not None and cap else None
     bm = f["equity"] / cap if f.get("equity") is not None and cap else None
     iss = (f["shares"] / f["shares_ya"] - 1) if f.get("shares") and f.get("shares_ya") else None
     ag = (assets / f["assets_ya"] - 1) if assets and f.get("assets_ya") else None
     rg = (f["rev_q"] / f["rev_q_ya"] - 1) if f.get("rev_q") and f.get("rev_q_ya") and f["rev_q_ya"] > 0 else None
-    rpo_g = (f["rpo"] / f["rpo_ya"] - 1) if f.get("rpo") and f.get("rpo_ya") else None
+    base_ok = f.get("rpo_ya") and f.get("revenue") and f["rpo_ya"] >= MIN_RPO_BASE * f["revenue"]
+    rpo_g = (f["rpo"] / f["rpo_ya"] - 1) if f.get("rpo") and base_ok else None
     cover = f["rpo"] / f["revenue"] if f.get("rpo") and f.get("revenue") else None
     return {"quality": q, "earnings_yield": ey,
             "book_to_market": bm, "issuance": iss, "asset_growth": ag, "revenue_growth": rg, "rpo_growth": rpo_g, "rpo_cover": cover}
@@ -193,9 +198,9 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
     F = {
         "assets": frame("Assets", per_i, get=get), "assets_ya": frame("Assets", per_i_ya, get=get),
         "equity": frame_any(["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], per_i, get),
-        "shares": frame("EntityCommonStockSharesOutstanding", per_i, "shares", "dei", get),
-        "shares_ya": frame("EntityCommonStockSharesOutstanding", per_i_ya, "shares", "dei", get),
-        "gross_profit": frame("GrossProfit", f"CY{yr}", get=get), "net_income": frame("NetIncomeLoss", f"CY{yr}", get=get),
+        "shares": frame(SHARES_Q, per, "shares", get=get) or frame("EntityCommonStockSharesOutstanding", per_i, "shares", "dei", get),
+        "shares_ya": frame(SHARES_Q, per_ya, "shares", get=get) or frame("EntityCommonStockSharesOutstanding", per_i_ya, "shares", "dei", get),
+        "operating_income": frame("OperatingIncomeLoss", f"CY{yr}", get=get), "net_income": frame_any(NET_INCOME, f"CY{yr}", get),
         "revenue": frame_any(REVENUE, f"CY{yr}", get), "rev_q": frame_any(REVENUE, per, get), "rev_q_ya": frame_any(REVENUE, per_ya, get),
         "rpo": frame("RevenueRemainingPerformanceObligation", per_i, get=get),
         "rpo_ya": frame("RevenueRemainingPerformanceObligation", per_i_ya, get=get),
@@ -204,13 +209,16 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
     tmap = sec.ticker_map()
     lst = (listed_fn or listed)()
     rows: dict[str, dict] = {}
-    for sym, info in lst.items():
+    seen: set[int] = set()
+    # One listing per company (Alphabet trades as GOOGL and GOOG): the most valuable line, then the shortest ticker.
+    for sym, info in sorted(lst.items(), key=lambda kv: (-kv[1]["cap"], len(kv[0]), kv[0])):
         if info["cap"] < MIN_CAP:
             continue
         cik = tmap.cik_for(sym)
-        if not cik:
+        if not cik or int(cik) in seen:
             continue
         c = int(cik)
+        seen.add(c)
         f = {k: v.get(c) for k, v in F.items()}
         if f["assets"] is None or f["net_income"] is None:
             continue
