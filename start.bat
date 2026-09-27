@@ -11,5 +11,5 @@ if not exist .venv (
 git pull --ff-only -q 2>nul
 .venv\Scripts\python -m pip install -q -e .
 .venv\Scripts\mt setup --if-needed
-.venv\Scripts\mt serve --open
+.venv\Scripts\mt serve --open --pidfile plumbline.pid
 pause

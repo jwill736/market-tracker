@@ -530,8 +530,8 @@ def cmd_serve(args) -> int:
         with open(args.pidfile, "w") as pf:
             pf.write(str(os.getpid()))
     print(f"Plumbline is running at {url}  (Ctrl+C to stop)")
-    if args.open:
-        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    if args.open:   # once it answers: started from the desktop icon there's no window saying it's still starting
+        threading.Thread(target=lambda: bgservice.wait_until_up(args.port) and webbrowser.open(url), daemon=True).start()
     uvicorn.run("market_tracker.api:app", host=args.host, port=args.port, reload=False, log_level="warning")
     return 0
 
@@ -562,6 +562,18 @@ def cmd_service(args) -> int:
     if args.action == "install":
         return bgservice.install(args.port, lan=args.lan)
     return getattr(bgservice, args.action)(args.port)
+
+
+def cmd_shortcut(args) -> int:
+    """A Plumbline icon on the Windows Desktop and Start menu."""
+    from . import bgservice
+    return bgservice.shortcut(args.port, remove=args.remove)
+
+
+def cmd_stop(args) -> int:
+    """Stop the app started from the desktop icon."""
+    from . import bgservice
+    return bgservice.stop(args.port)
 
 
 def cmd_tenk_rank(args) -> int:
@@ -854,6 +866,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--lan", action="store_true", help="install: also reachable from your phone on the same Wi-Fi (needs APP_PASSWORD)")
     s.set_defaults(func=cmd_service)
+
+    s = sub.add_parser("shortcut", help="Windows: a Plumbline icon on the Desktop and in the Start menu")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--remove", action="store_true", help="Take the icons away again")
+    s.set_defaults(func=cmd_shortcut)
+
+    s = sub.add_parser("stop", help="Stop the app started from the desktop icon")
+    s.add_argument("--port", type=int, default=8000)
+    s.set_defaults(func=cmd_stop)
 
     args = p.parse_args(argv)
     if args.command == "portfolio" and args.action == "add" and not (args.symbol and args.quantity and args.price is not None):

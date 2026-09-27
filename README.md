@@ -75,6 +75,13 @@ script in your Startup folder, no administrator rights needed; Linux: a systemd 
 While it runs, `start.sh` / `start.bat` just open the browser. It only watches while the computer is awake: a laptop
 that sleeps misses the 8:30 brief (keep it plugged in with sleep off, or use the server row above).
 
+**A desktop icon (Windows).** After the first `start.bat`, from the app's folder in PowerShell:
+`.venv\Scripts\mt shortcut`. It puts Plumbline on your Desktop and in the Start menu (pin it to the taskbar from
+there). Double-clicking it starts the app in the background, with no window to keep open, and opens it in your browser;
+if it's already running, it just opens the browser. **Stop Plumbline** in the Start menu (or `mt stop`) stops it, and
+`mt shortcut --remove` takes the icons away. The icon doesn't update the app: double-click `start.bat` now and then
+for new versions. Combined with `mt service install`, the app is already running at login and the icon only opens it.
+
 ## Run it in your browser (no install)
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/jwill736/market-tracker?quickstart=1)
