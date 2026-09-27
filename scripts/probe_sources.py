@@ -1,101 +1,44 @@
-"""Temporary probe (removed before merge): data sources for the idea engine."""
-import json
+"""Temporary probe (removed before merge): Nasdaq's stock list, Yahoo history speed, FRED single series."""
 import sys
 import time
-from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, ".")
-from market_tracker import http  # noqa: E402
-from market_tracker.providers import sec  # noqa: E402
+from market_tracker import http, macro  # noqa: E402
+from market_tracker.providers import market  # noqa: E402
+from market_tracker.reading import BROWSER_UA  # noqa: E402
+
+t = time.time()
+try:
+    d = http.get("https://api.nasdaq.com/api/screener/stocks", params={"tableonly": "true", "limit": "10000", "download": "true"},
+                 ttl=0, headers={"User-Agent": BROWSER_UA, "Accept": "application/json, text/plain, */*"})
+    rows = (d.get("data") or {}).get("rows") or []
+    print(f"NASDAQ screener: {len(rows)} rows in {time.time() - t:.1f}s; keys {sorted(rows[0]) if rows else None}; e.g. {rows[:2]}")
+    big = [r for r in rows if r.get("marketCap") and float(r["marketCap"] or 0) >= 3e8]
+    print("  >= $300M market cap:", len(big), "sectors:", sorted({r.get('sector') for r in big})[:20])
+except Exception as exc:  # noqa: BLE001
+    print("NASDAQ screener FAIL", type(exc).__name__, str(exc)[:300])
+
+syms = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "V", "KO", "PEP", "XOM", "CVX", "WMT", "HD", "UNH", "LLY", "AVGO", "ORCL", "COST",
+        "MU", "AMD", "INTC", "QCOM", "TXN", "CAT", "DE", "GE", "HON", "LMT", "RTX", "NOC", "GD", "BA", "UPS", "FDX", "NKE", "SBUX", "MCD", "DIS",
+        "NFLX", "CRM", "ADBE", "NOW", "SNOW", "PLTR", "UBER", "ABNB", "SHOP", "SQ"]
+t = time.time()
+ok = 0
 
 
-def show(title, fn):
-    t = time.time()
+def one(s):
     try:
-        out = fn()
-        print(f"OK   {title} ({time.time() - t:.1f}s): {out}")
+        return len(market.get_history(s, 260))
     except Exception as exc:  # noqa: BLE001
-        print(f"FAIL {title}: {type(exc).__name__}: {str(exc)[:300]}")
+        return str(exc)[:80]
 
 
-FR = "https://data.sec.gov/api/xbrl/frames/{tax}/{tag}/{unit}/{period}.json"
-
-
-def frame(tax, tag, unit, period):
-    d = sec._sec_get(FR.format(tax=tax, tag=tag, unit=unit, period=period), ttl=0)
-    rows = d.get("data", [])
-    s = rows[0] if rows else {}
-    return f"{len(rows)} rows, keys {sorted(s)}, e.g. {json.dumps(s)[:200]}"
-
-
-for tax, tag, unit, per in [("us-gaap", "GrossProfit", "USD", "CY2025Q2"), ("us-gaap", "Assets", "USD", "CY2025Q2I"),
-                            ("us-gaap", "RevenueRemainingPerformanceObligation", "USD", "CY2025Q2I"),
-                            ("us-gaap", "NetIncomeLoss", "USD", "CY2025Q2"), ("us-gaap", "StockholdersEquity", "USD", "CY2025Q2I"),
-                            ("dei", "EntityCommonStockSharesOutstanding", "shares", "CY2025Q2I"),
-                            ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD", "CY2025Q2"),
-                            ("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", "CY2025Q2"),
-                            ("us-gaap", "GrossProfit", "USD", "CY2026Q2")]:
-    show(f"frames {tag} {per}", lambda: frame(tax, tag, unit, per))
-
-
-def fred():
-    txt = http.get("https://fred.stlouisfed.org/graph/fredgraph.csv", params={"id": "DGS10,BAMLH0A0HYM2,SAHMREALTIME,NFCI,T10Y3M,ICSA,DCOILBRENTEU,NEWORDER"},
-                   ttl=0, as_json=False, headers={"User-Agent": "Plumbline/1.0 (https://github.com/jwill736/market-tracker)"})
-    lines = txt.strip().splitlines()
-    return f"{len(lines)} lines; header {lines[0]}; last {lines[-1]}; {lines[-40]}"
-
-
-show("FRED multi-series CSV", fred)
-
-
-def usasp():
-    import httpx
-    today = date.today()
-    body = {"filters": {"recipient_search_text": ["LOCKHEED MARTIN"], "award_type_codes": ["A", "B", "C", "D"],
-                        "time_period": [{"start_date": (today - timedelta(days=365)).isoformat(), "end_date": today.isoformat()}]},
-            "fields": ["Award ID", "Recipient Name", "Award Amount", "Awarding Agency", "Start Date", "Description"],
-            "sort": "Award Amount", "order": "desc", "limit": 5, "page": 1}
-    r = httpx.post("https://api.usaspending.gov/api/v2/search/spending_by_award/", json=body, timeout=60)
-    d = r.json()
-    return f"{r.status_code}; {len(d.get('results', []))} results; {json.dumps(d.get('results', [])[:2])[:400]}; meta {json.dumps(d.get('page_metadata'))[:200]}"
-
-
-show("USAspending awards (Lockheed, 12 months)", usasp)
-
-
-def usasp_total():
-    import httpx
-    today = date.today()
-    body = {"filters": {"recipient_search_text": ["LOCKHEED MARTIN"], "award_type_codes": ["A", "B", "C", "D"],
-                        "time_period": [{"start_date": (today - timedelta(days=365)).isoformat(), "end_date": today.isoformat()}]},
-            "category": "recipient", "limit": 5, "page": 1}
-    r = httpx.post("https://api.usaspending.gov/api/v2/search/spending_by_category/recipient/", json=body, timeout=60)
-    return f"{r.status_code}; {json.dumps(r.json().get('results', [])[:3])[:500]}"
-
-
-show("USAspending by recipient total", usasp_total)
-
-FTS = "https://efts.sec.gov/LATEST/search-index"
-
-
-def fts(q, forms, days=180):
-    d = sec._sec_get(f"{FTS}?q={q}&forms={forms}&dateRange=custom&startdt={(date.today() - timedelta(days=days)).isoformat()}&enddt={date.today().isoformat()}", ttl=0)
-    hits = d.get("hits", {})
-    items = hits.get("hits", [])
-    return f"total {hits.get('total')}; e.g. {[ (h['_source'].get('display_names'), h['_source'].get('form'), h['_source'].get('file_date')) for h in items[:3]]}"
-
-
-show("FTS new funds 'artificial intelligence'", lambda: fts('%22artificial%20intelligence%22', "N-1A,485APOS"))
-show("FTS new funds 'nuclear'", lambda: fts('%22nuclear%22', "N-1A,485APOS"))
-show("FTS customer mention 'Microsoft' of our revenue", lambda: fts('%22Microsoft%22%20%22of%20our%20revenue%22', "10-K", 400))
-show("FTS customer 'accounted for' 'Apple'", lambda: fts('%22Apple%22%20%22accounted%20for%22', "10-K", 400))
-
-
-def apewisdom():
-    d = http.get("https://apewisdom.io/api/v1.0/filter/all-stocks/page/1", ttl=0)
-    r = d.get("results", [])
-    return f"{len(r)} rows; keys {sorted(r[0]) if r else None}; top {[ (x.get('ticker'), x.get('mentions'), x.get('mentions_24h_ago')) for x in r[:5]]}"
-
-
-show("ApeWisdom Reddit mentions", apewisdom)
-show("SEC submissions SIC (NVDA)", lambda: {k: sec._sec_get(sec.SUBMISSIONS.format(cik="0001045810"), ttl=0).get(k) for k in ("sic", "sicDescription", "tickers")})
+with ThreadPoolExecutor(max_workers=6) as pool:
+    res = list(pool.map(one, syms))
+print(f"Yahoo 1y histories: {sum(isinstance(r, int) for r in res)}/{len(syms)} in {time.time() - t:.1f}s; failures {[r for r in res if not isinstance(r, int)][:3]}")
+t = time.time()
+try:
+    data = macro.load()
+    print(f"FRED per series: {len(data)} series in {time.time() - t:.1f}s; " + "; ".join(f"{k} {v[-1]}" for k, v in data.items()))
+except Exception as exc:  # noqa: BLE001
+    print("FRED FAIL", exc)
