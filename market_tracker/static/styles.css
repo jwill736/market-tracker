@@ -428,7 +428,7 @@ button.linkbtn { background: none; border: 0; color: var(--ink); font-weight: 70
 .brief-list button.linkish, .brief-card button.linkish, #hp-reinvest button.linkish, #hp-events button.linkish, .hp-thesis button.linkish,
 .pk-card button.linkish, #pk-list button.linkish, #tab-income button.linkish, #tab-ideas button.linkish, #tab-sleepers button.linkish,
 #tab-chatter button.linkish, #tab-moneyflow button.linkish, #sym-pi button.linkish, #nm-out button.linkish, #ye-body button.linkish,
-.decide-card button.linkish, #tab-decisions button.linkish, #home-ideas button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
+.decide-card button.linkish, #tab-decisions button.linkish, #home-ideas button.linkish, .tt-cool button.linkish { font: inherit; color: inherit; text-decoration: underline; text-decoration-color: var(--axis); text-align: left; }
 .hp-thesis button.linkish { color: var(--accent); }
 .hp-lines { list-style: none; margin: 0; padding: 0; display: grid; }
 .hp-lines li { display: block; padding: 8px 0; border-top: 1px solid var(--grid); line-height: 1.5; }
@@ -616,3 +616,10 @@ sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .dc-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .dc-head .dc-title { flex: 1 1 auto; min-width: 0; }
 .dc-buttons { align-items: center; }
+
+/* lists without a forward record: research, not advice */
+.research-note { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-ink); }
+.tk-level.research { opacity: .8; cursor: help; }
+.tt-cool { margin: 8px 0; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-ink); }
+.tt-cool textarea { width: 100%; box-sizing: border-box; }
+.cool-dim { opacity: .45; }

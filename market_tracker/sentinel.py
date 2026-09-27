@@ -208,6 +208,11 @@ class Sentinel:
                     await asyncio.to_thread(newsdesk_cache.get, tuple(sorted(held_now)), lambda: build_newsdesk(sorted(held_now)))
             except Exception:
                 pass
+            try:
+                await asyncio.to_thread(scorecard_monthly)
+                await asyncio.to_thread(letter_weekly)
+            except Exception:
+                pass
             await asyncio.sleep(RADAR_SECONDS)
 
     def start(self) -> None:
@@ -324,8 +329,63 @@ def decisions_daily(now: datetime | None = None, gather_fn=None) -> int:
         advice.record(conn, day.isoformat(), decisions.advice_items(visible), lambda s: market.get_quote(s).price)
     msg = decisions.push_text(visible)
     if msg:
-        notify.send(notify.Message(title=msg[0], body=msg[1], priority=4, tags=("compass",)))
+        from . import auth
+        acts = decisions.push_actions(visible, os.environ.get("PLUMBLINE_URL", ""), auth.sign_action)
+        notify.send(notify.Message(title=msg[0], body=msg[1], priority=4, tags=("compass",), actions=acts))
     return len([d for d in visible if d.get("new")])
+
+
+def letter_weekly(now: datetime | None = None, write_fn=None) -> int:
+    """Sundays from 5:30pm ET (after the weekly recap): Claude writes this week's letter and it's pushed.
+    Only with an Anthropic key, and only while this month's automatic spend is under the budget."""
+    from . import assistant
+    from .weekly import ET
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    week = f"{now.isocalendar()[0]}-{now.isocalendar()[1]}"
+    if now.weekday() != 6 or (now.hour, now.minute) < (17, 30):
+        return 0
+    if write_fn is None and not os.environ.get("ANTHROPIC_API_KEY"):
+        return 0
+    with db.connect() as conn:
+        if db.get_meta(conn, "letter_week", "") == week:
+            return 0
+        db.set_meta(conn, "letter_week", week)
+        spent, cap = assistant.month_spend(conn), assistant.budget(conn)
+    if spent >= cap:
+        notify.send(notify.Message(title="No letter this week", body=f"Plumbline's automatic Claude budget (${cap:.2f} this month) is used up "
+                                   f"(${spent:.2f}). Raise it on the Decisions page, or write one there by hand.", priority=2))
+        return 0
+    out = (write_fn or assistant.letter)()
+    out["written"] = now.strftime("%Y-%m-%dT%H")
+    with db.connect() as conn:
+        db.set_meta(conn, "letter_latest", json.dumps(out))
+    body = assistant.plain(out.get("answer") or "")
+    base = os.environ.get("PLUMBLINE_URL", "").rstrip("/")
+    notify.send(notify.Message(title="Your letter from Plumbline", body=body[:1500] + ("…" if len(body) > 1500 else ""), priority=3,
+                               tags=("envelope",), url=f"{base}/#decisions" if base else ""))
+    return 1
+
+
+def scorecard_monthly(now: datetime | None = None, card_fn=None) -> int:
+    """On the 1st of the month from 9am ET: how following Plumbline's calls has gone, in one push."""
+    from . import cash, decisions
+    from .weekly import ET
+    now = (now or datetime.now(timezone.utc)).astimezone(ET)
+    month = now.strftime("%Y-%m")
+    if now.day != 1 or now.hour < 9:
+        return 0
+    with db.connect() as conn:
+        if db.get_meta(conn, "scorecard_month", "") == month:
+            return 0
+        db.set_meta(conn, "scorecard_month", month)
+        card = (card_fn or (lambda c: decisions.scorecard(c, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)],
+                                                          now.date(), cash.tbill_yield()[0])))(conn)
+    if not card["followed"] and not card["skipped"]:
+        return 0
+    base = os.environ.get("PLUMBLINE_URL", "").rstrip("/")
+    notify.send(notify.Message(title="Plumbline's record this month", body=card["text"], priority=3, tags=("bar_chart",),
+                               url=f"{base}/#decisions" if base else ""))
+    return 1
 
 
 def freshness_check(now: datetime | None = None, check_fn=None) -> int:

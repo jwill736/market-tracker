@@ -508,7 +508,7 @@ EPS against a year earlier. Releases lead with the company's own adjusted figure
 ## Ask Claude about your portfolio (read-only connector)
 
 `mt mcp` runs Plumbline as a Model Context Protocol server, so Claude Desktop or Claude Code can answer "why am I down this
-month?" or "which of my dividends look shaky?" from your own data. It has 39 tools and every one is a GET to the running
+month?" or "which of my dividends look shaky?" from your own data. It has 43 tools and every one is a GET to the running
 app (portfolio, accounts, weekly recap, brief, what moved, hold plan, news, performance, crises, overlap, style bets,
 10-K changes, earnings recap, dividend safety, income, taxes, events, data confidence, advice record, the screen, the
 idea scorecard, sleepers, chatter, theme crowding, money flow, the economy, priced-in checks, government contracts,
@@ -532,13 +532,36 @@ each in dollars, with its reasons and how strong the evidence is:
 |---|---|---|
 | **Your rule or a hard fact** | act on it | a broken connection, your own tripwire, a position over your cap, a tax-loss harvest, idle cash |
 | **Tested, not proven** | worth a look | an idea you logged whose stated reason has gone (thesis break) |
-| **Unproven** | optional, small | a spin-off to size; a holding in the screen's bottom 50 (the replay couldn't tell that from luck) |
+| **Unproven** | optional, small | a holding in the screen's bottom 50 (the replay couldn't tell that from luck) |
 
 "Hold: nothing needs you" is a real answer and the usual one. **Do it** opens the trade ticket with the dollar amount
 filled in; you preview and confirm there. **Plumbline never places an order by itself.** Skip hides a decision for 30
 days, Later for 7, and every approved or skipped call with a stock is written to the advice record at that day's price,
 so the app's own calls get scored against simply holding VOO. New decisions that matter (a sync to fix, a sell, stale
 data, a harvest, a switch backed by a broken thesis, a trim, idle cash) are pushed to your phone once.
+
+**From your phone.** With `PLUMBLINE_URL` set to where the app runs (`deploy_fly.sh` sets it), a push about one new
+decision carries three buttons: **Do it** opens that decision with its trade ticket filled in, **Later** and **Skip** record
+your answer straight from the notification through a signed link that does only that and expires in a week.
+
+**Plumbline's record** (Decisions page): every call you approved or skipped, scored from the day you decided against doing
+nothing, in points and dollars at 1, 3 and 12 months: a sell against keeping the stock, idle cash against leaving it in
+cash (at the T-bill yield), an optional idea against the same money in VOO. Skipped calls show whether skipping was
+right; harvests count the tax they saved. It says "too early" until 20 calls have a 3-month result, and a summary is
+pushed on the 1st of each month. This is how you find out whether the app deserves your trust.
+
+**Tax-sheltered accounts** (Accounts page): say what each account is (taxable, Roth IRA, traditional IRA, 401(k), HSA) and
+what you've put into the sheltered ones this year. The app shows the room left under the IRS limits (2026: $7,500 for IRAs,
+$8,600 from age 50; $24,500 for a 401(k)), the deadline, and holdings paying 3%+ a year that sit in a taxable account (buy
+more of those inside the IRA; it never suggests selling to move them). With no sheltered account, Decisions suggests
+opening a Roth IRA; with room left, funding it.
+
+**Recurring buys** (Portfolio → Auto-invest schedules): if you've been investing by hand most months, the app suggests
+one recurring buy of the same size into your target or VOO, to set up at your broker and record here.
+
+**Cooling-off.** A sell that no rule of yours backs (not a hold-plan Sell? or Trim, not a harvest, not an open decision)
+asks why and waits 48 hours; then it goes through with your reason shown back to you. "Sell anyway" skips the wait and is
+logged as an override.
 
 **Exit review.** A holding flagged by a broken thesis or a low screen grade gets the tax arithmetic from your own lots:
 the tax to switch to VOO today, how much better than VOO it would have to do each year for 3 or 5 years to be worth
@@ -548,8 +571,10 @@ keeping, and what waiting for long-term rates would save.
 connector above: "should I sell TSLA?", "why am I behind VOO?". It speaks as an advisor: the uncomfortable answer
 first, each claim tagged [Certain], [Likely] or [Guessing], and "I disagree because..." when your plan looks wrong. It
 can't trade or change anything. **The weekly letter** (Decisions page, Write this week's letter) is the same in 200
-words: the one thing that matters, what to do in dollars, what to leave alone. Both need `ANTHROPIC_API_KEY`; a
-question that uses a few tools costs a few cents.
+words: the one thing that matters, what to do in dollars, what to leave alone. It's written by itself every Sunday at
+5:30pm ET and pushed to your phone, while this month's Claude spend stays under a budget you set (default $2; the page
+shows the month's estimated spend, Ask included). Both need `ANTHROPIC_API_KEY`; a question that uses a few tools costs
+a few cents.
 
 **Data freshness.** Every file the GitHub jobs write (screen, idea log, insider buys, 10-K ranks, backtests) has a
 maximum age; one that goes stale shows on Home and in Decisions and is pushed once, so a quiet job can't leave you
@@ -592,8 +617,13 @@ each kind of idea is doing against VOO so far.
   $100k+, planned 10b5-1 trades out, routine same-month buyers split off): about +1 point on SPY over 6 months, within
   luck; only the smallest companies showed more, where the missing-company bias is worst. Spin-offs since 2005 (Form 10
   registrations): bought 20 days after they start trading, they beat SPY by 23 points over 12 months on average, but the
-  median was 7 and a few big winners carry it; the two-year median trailed. Both results show on the Sleepers and
-  Events pages and set how the app words those ideas.
+  median was 7 and a few big winners carry it; the two-year median trailed. A stress test asks how badly the half with no
+  prices (bought out, merged or failed) would have had to do to erase it: trailing SPY by about 24 points, which failed
+  companies easily do, so spin-offs stay unproven too.
+- **Research, not advice.** Because every backtested list fell short, each list starts as research: shown, logged and
+  scored, but with no Size it amount and never in Decisions. A list earns a dollar amount when its own forward record beats
+  VOO: its paper portfolio ahead after 12 months, or 20 logged ideas ahead at 6 months (more than 55% of the time). Your
+  own ideas are yours to size.
 - **Paper portfolios** (each list, forward): on the first weekday of every month the idea job buys each list's top 20
   on paper at the close, equal weight, and keeps chaining them against VOO: the what-to-buy lists, sleepers, spin-offs
   and the bottom 50. A record that starts now can't be fitted to history. Shown on the Ideas page under the scorecard.
@@ -617,7 +647,7 @@ each kind of idea is doing against VOO so far.
   more than 1.5 times a normal day (the after-earnings drift: strong in older data, much weaker in large companies
   now), and spin-offs from their SEC registrations (Form 10-12B), registered and newly trading, with how each has done
   against SPY since its first day.
-- **Size it** (every idea list): a dollar amount inside your limits: 5% of the portfolio for one core idea, 2% for a
+- **Size it** (lists that have earned it, and your own ideas): a dollar amount inside your limits: 5% of the portfolio for one core idea, 2% for a
   speculative one inside the 10% speculative limit, half that for stocks that move 60%+ a year, 25% in one sector, and
   what you already own counts. Chatter names show an amount only after a 48-hour wait.
 - **Is the reason still there?** For ideas you bought or hold, the app checks each week, after the Sunday screen,
@@ -769,6 +799,7 @@ It never publishes your portfolio, deep dives or keys; those stay in the local a
 |---|---|
 | `SEC_USER_AGENT` | **Required by SEC**: `"your-app your@email.com"`. Requests are throttled below SEC's 10 req/s limit |
 | `ANTHROPIC_API_KEY` | Deep-dive research, Ask Plumbline and the weekly letter (or any credential source the Anthropic SDK resolves) |
+| `PLUMBLINE_URL` | Where the app runs (e.g. `https://your-app.fly.dev`): push buttons (Do it, Later, Skip) and links reach it. `deploy_fly.sh` sets it |
 | `MT_RESEARCH_MODEL` | Default `claude-opus-5`. Requests opt into server-side refusal fallbacks (`fallbacks="default"`) |
 | `FINNHUB_API_KEY` | Optional: real-time US stock trades (streamed to the private app), quotes and company news |
 | `MT_DB_PATH` | SQLite file (default `market_tracker.db`) |

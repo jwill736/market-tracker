@@ -104,8 +104,8 @@ function selectTab(name) {
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   recordUsage(name);
-  if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
-  if (name === "accounts") { loadUsage(); loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
+  if (name === "portfolio") { loadPortfolio(); loadSchedules(); loadRecurring(); }
+  if (name === "accounts") { loadShelter(); loadUsage(); loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
   if (name === "review") loadPerformance();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
@@ -113,7 +113,7 @@ function selectTab(name) {
   if (name === "pulse") loadPulse();
   if (name === "plan") loadPlan();
   if (name === "home") loadHome();
-  if (name === "decisions") { loadDecisions(); loadLetter(); }
+  if (name === "decisions") { loadDecisions(); loadLetter(); loadScorecard(); loadBudget(); }
   if (name === "ask") setTimeout(() => $("#ask-q").focus(), 50);
   if (name === "early") loadEarly();
   if (name === "people") { loadPeople(); loadPickers(); }
@@ -122,6 +122,7 @@ function selectTab(name) {
   if (name === "mynews") { loadNewsDesk(); loadMyNews(); loadHeadsup(true); }
   if (name === "reading") loadReading();
   if (name === "radar") { loadRadar(); loadCryptoRadar(); }
+  if (["ideas", "sleepers", "chatter", "moneyflow"].includes(name) && !evidenceState.sources) loadEvidence();
   if (name === "ideas") { loadScreen(); loadScreenBacktest(); loadIdeas(); loadEvents(); loadSignalBacktests(); loadPaper(); }
   if (name === "sleepers") { loadSleepers(); loadSignalBacktests(); }
   if (name === "chatter") loadChatter();
@@ -1004,6 +1005,46 @@ function paintScDays() {
     : WEEKDAYS.slice(0, 5).map((w, i) => `<option value="${i}">on ${w}</option>`).join("");
 }
 $("#sc-every").addEventListener("change", paintScDays); paintScDays();
+async function loadRecurring() {
+  try {
+    const r = await api("/api/recurring");
+    $("#sc-suggest").hidden = !r.suggest;
+    if (r.suggest) $("#sc-suggest").innerHTML = `<b>Suggested:</b> ${esc(r.suggest.text)}`;
+  } catch { $("#sc-suggest").hidden = true; }
+}
+async function loadShelter() {
+  let r;
+  try { r = await api("/api/shelter"); } catch (err) { $("#sh-verdict").textContent = err.message; return; }
+  renderShelter(r);
+}
+function renderShelter(r) {
+  $("#sh-meta").textContent = `${r.limits_year} limits`;
+  $("#sh-verdict").textContent = r.text;
+  const opts = (cur) => `<option value="">What is it?</option>` + Object.entries(r.types).map(([k, v]) => `<option value="${k}"${k === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
+  $("#sh-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Account</th><th>Type</th><th>Put in this year</th></tr></thead><tbody>
+    ${r.accounts.map((a) => `<tr data-acct="${esc(a.account)}"><td>${esc(a.account)}</td><td><select class="sh-type" aria-label="Type of ${esc(a.account)}">${opts(a.type)}</select></td>
+      <td>${a.type && a.type !== "taxable" ? `<label>$<input class="sh-amt" type="number" min="0" step="any" value="${a.contributed || 0}" style="width:7em" aria-label="Contributed this year"></label>` : `<span class="muted">—</span>`}</td></tr>`).join("")}</tbody></table></div>
+    <p><label><input type="checkbox" id="sh-50"${r.age50 ? " checked" : ""}> I'm 50 or older this year (catch-up contributions)</label>
+      <label><input type="checkbox" id="sh-fam"${r.hsa_family ? " checked" : ""}> Family HSA</label></p>
+    ${r.room.filter((x) => x.have).map((x) => `<p><b>${esc(x.label)}:</b> ${fmtMoney(x.left, 0)} of ${fmtMoney(x.limit, 0)} left, until ${esc(x.deadline)}.</p>`).join("")}
+    ${r.location.length ? `<h3 class="small">Better sheltered</h3><ul class="hp-lines">${r.location.map((m) => `<li>${esc(m.text)}</li>`).join("")}</ul>` : ""}`;
+  const save = async (tr) => {
+    const type = tr.querySelector(".sh-type").value, amt = tr.querySelector(".sh-amt");
+    if (!type) return;
+    try { renderShelter(await api("/api/shelter/account", { method: "POST", body: JSON.stringify({ account: tr.dataset.acct, type, contributed: amt ? Number(amt.value) : null }) })); }
+    catch (err) { alert(err.message); }
+  };
+  $("#sh-out").querySelectorAll("tr[data-acct]").forEach((tr) => {
+    tr.querySelector(".sh-type").addEventListener("change", () => save(tr));
+    const amt = tr.querySelector(".sh-amt");
+    if (amt) amt.addEventListener("change", () => save(tr));
+  });
+  const person = async () => {
+    try { renderShelter(await api("/api/shelter/person", { method: "POST", body: JSON.stringify({ age50: $("#sh-50").checked, hsa_family: $("#sh-fam").checked }) })); }
+    catch (err) { alert(err.message); }
+  };
+  $("#sh-50").addEventListener("change", person); $("#sh-fam").addEventListener("change", person);
+}
 async function loadSchedules() {
   if (!$("#sc-start").value) $("#sc-start").value = localDate();
   try {
@@ -1874,6 +1915,7 @@ function openTradeTicket(sym, side = "buy") {
       <label>You own<output>${held ? held.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 }) : "0"}</output></label>
     </div>
     <p class="muted small" id="tt-note"></p>
+    <div class="tt-cool" id="tt-cool-box" hidden></div>
     <div class="pc-buttons">
       <button type="button" id="tt-copy">Copy order</button>
       <a class="button-secondary" id="tt-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in ${esc(acct === "Coinbase" ? "Coinbase" : "Robinhood")} ↗</a>
@@ -1887,7 +1929,36 @@ function openTradeTicket(sym, side = "buy") {
     document.querySelectorAll("#tt-side button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === tradeState.side)));
     $$("tt-est-word").textContent = tradeState.side === "buy" ? "cost" : "credit";
     $("#trade-modal").dataset.side = tradeState.side;
+    coolCheck();
   };
+  // Cooling-off (cooloff.py): a sell no rule of yours backs asks why and waits 48 hours, whichever way you place it.
+  async function coolCheck() {
+    const box = $$("tt-cool-box");
+    tradeState.coolBlocked = false;
+    ["tt-copy", "tt-open"].forEach((id) => $$(id).classList.remove("cool-dim"));
+    if (tradeState.side !== "sell") { box.hidden = true; return; }
+    let r;
+    try { r = await api(`/api/cooloff/${encodeURIComponent(sym)}`); } catch { box.hidden = true; return; }
+    if (tradeState.side !== "sell") return;
+    tradeState.coolBlocked = r.blockers.length > 0;
+    ["tt-copy", "tt-open"].forEach((id) => $$(id).classList.toggle("cool-dim", tradeState.coolBlocked));
+    box.hidden = false;
+    box.innerHTML = r.warnings.map((w) => `<p class="small">${esc(w)}</p>`).join("") + r.blockers.map((w) => `<p class="small"><b>${esc(w)}</b></p>`).join("")
+      + (r.cooling && r.cooling.state === "ask" ? `<form class="stack" id="tt-cool"><label class="small">Why sell ${esc(sym.replace(/-USD$/, ""))} now? It's shown back to you in 48 hours.
+          <textarea id="tt-why" rows="2" maxlength="300" minlength="10" required></textarea></label>
+        <div class="row"><button type="submit" class="secondary small">Start the 48 hours</button>
+          <button type="button" class="linkish small" id="tt-override">Sell anyway (logged as an override)</button></div></form>` : "");
+    const form = $$("tt-cool");
+    if (!form) return;
+    const send = async (override) => {
+      const reason = $$("tt-why").value.trim();
+      if (reason.length < 10) { $$("tt-why").focus(); $$("tt-status").textContent = "Write at least a sentence: why now?"; return; }
+      try { await api("/api/cooloff", { method: "POST", body: JSON.stringify({ symbol: sym, reason, override }) }); coolCheck(); }
+      catch (err) { $$("tt-status").textContent = err.message; }
+    };
+    form.addEventListener("submit", (ev) => { ev.preventDefault(); send(false); });
+    $$("tt-override").addEventListener("click", () => send(true));
+  }
   const price = () => tradeState.type === "limit" && +$$("tt-limit").value > 0 ? +$$("tt-limit").value : (Live.prices[sym]?.price || 0);
   const shares = () => tradeState.unit === "dollars" ? (price() ? (+$$("tt-qty").value || 0) / price() : 0) : (+$$("tt-qty").value || 0);
   const update = () => {
@@ -1907,6 +1978,11 @@ function openTradeTicket(sym, side = "buy") {
   });
   $$("tt-unit").addEventListener("change", (e) => { tradeState.unit = e.target.value; $$("tt-qty-label").textContent = tradeState.unit === "dollars" ? "Dollars" : (isCryptoSym(sym) ? "Coins" : "Shares"); update(); });
   ["tt-qty", "tt-limit"].forEach((id) => $$(id).addEventListener("input", update));
+  ["tt-copy", "tt-open"].forEach((id) => $$(id).addEventListener("click", (ev) => {
+    if (!tradeState.coolBlocked) return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    $$("tt-status").textContent = "Cooling-off: write down why first (above), or choose Sell anyway.";
+  }));
   $$("tt-copy").addEventListener("click", async () => {
     const q = shares(), txt = `${tradeState.side.toUpperCase()} ${+q.toFixed(6)} ${sym} ${tradeState.type === "limit" ? "LIMIT " + price() : "MARKET"}`;
     try { await navigator.clipboard.writeText(txt); $$("tt-status").textContent = "Copied: " + txt; } catch { $$("tt-status").textContent = txt; }
@@ -2417,9 +2493,14 @@ async function loadCryptoRadar() {
 
 // ---------------------------------------------------------------- start
 api("/api/session").then((s) => { $("#signout").hidden = !s.auth; }).catch(() => {});
-loadHoldings().then(() => { if (!location.hash || location.hash.length < 2) loadHome(); });
+// A push's "Do it" opens #decisions?do=<key>: that decision's trade ticket, filled in.
+let pendingDo = null;
+const route = location.hash.match(/^#decisions(?:\?do=(.+))?$/);
+if (route) { pendingDo = route[1] ? decodeURIComponent(route[1]) : null; history.replaceState(null, "", location.pathname); }
+loadHoldings().then(() => { if (!route && (!location.hash || location.hash.length < 2)) loadHome(); });
 loadHeadsup();
-if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
+if (route) selectTab("decisions");
+else if (location.hash.length > 1) openSymbol(decodeURIComponent(location.hash.slice(1)));
 // Installable on a phone (Add to Home Screen). Browsers only allow this on https or localhost.
 if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -2709,7 +2790,7 @@ async function loadNewsDesk(refresh = false) {
 $("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));
 
 // ---------------------------------------------------------------- setup and what's been checked
-const GO = { ask: ["ask", "#ask-q"], decisions: ["decisions", "#dc-list"], offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
+const GO = { ask: ["ask", "#ask-q"], decisions: ["decisions", "#dc-list"], shelter: ["accounts", "#sh-card"], offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
   "cx-rh": ["accounts", "#cx-rh"], "cx-email": ["accounts", "#cx-email"], statement: ["portfolio", "#st-form"], live: ["accounts", "#live"],
   brokers: ["accounts", "#brokers"], transfers: ["accounts", "#transfers"], health: ["accounts", "#health"], connections: ["accounts", "#cx-email"] };
 function goTo(where) {
@@ -2978,7 +3059,24 @@ async function loadEarnings(sym) {
 }
 
 // ---------------------------------------------------------------- size it: a dollar amount for an idea
-const sizeBtn = (sym, src) => `<button type="button" class="secondary small size-btn" data-size="${esc(sym)}" data-src="${esc(src)}">Size it</button>`;
+// A list that hasn't beaten VOO in its own forward record is research: no dollar amount (evidence.py).
+const evidenceState = { sources: null };
+const sizeBtn = (sym, src) => {
+  const st = evidenceState.sources && evidenceState.sources[src];
+  if (st && !st.earned) return `<span class="tk-level research" title="${esc(st.why)}">Research</span>`;
+  return `<button type="button" class="secondary small size-btn" data-size="${esc(sym)}" data-src="${esc(src)}">Size it</button>`;
+};
+async function loadEvidence() {
+  try { evidenceState.sources = (await api("/api/evidence")).sources; } catch { return; }
+  // lists drawn before this arrived: swap their buttons now
+  document.querySelectorAll(".size-btn").forEach((b) => { b.outerHTML = sizeBtn(b.dataset.size, b.dataset.src); });
+  const research = Object.values(evidenceState.sources).filter((s) => !s.earned).length;
+  document.querySelectorAll(".research-note").forEach((el) => {
+    el.hidden = !research;
+    el.textContent = "Research, not advice: none of these lists has beaten VOO in its own forward record yet (a paper portfolio ahead after 12 months, "
+      + "or 20 logged ideas ahead at 6 months), and their backtests didn't either. They're shown and scored, not sized: no dollar amounts until one earns it.";
+  });
+}
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-size]");
   if (!b) return;
@@ -3050,7 +3148,7 @@ document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener(
 const EV_WORD = { rule: "rule", mixed: "tested", unproven: "unproven" };
 function decisionHtml(d, compact) {
   const act = d.action;
-  const doLabel = !act ? "" : act.type === "trade" ? (act.side === "buy" ? `Buy${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}` : `Sell${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}`) : "Fix it";
+  const doLabel = !act ? "" : act.type === "trade" ? (act.side === "buy" ? `Buy${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}` : `Sell${act.dollars ? " " + fmtMoney(act.dollars, 0) : ""}`) : (d.kind.startsWith("fix_") ? "Fix it" : "Set it up");
   return `<div class="dc-item" data-key="${esc(d.key)}">
     <div class="dc-head">${d.new ? `<span class="dc-new">New</span>` : ""}<span class="dc-title">${esc(d.title)}</span>
       <span class="dc-ev ${esc(d.evidence.level)}" title="${esc(d.evidence.label)}">${esc(EV_WORD[d.evidence.level] || d.evidence.level)}</span></div>
@@ -3097,9 +3195,37 @@ async function loadDecisions() {
   $("#dc-meta").textContent = `updated ${String(r.as_of).replace("T", " ")}:00`;
   $("#dc-list").innerHTML = r.decisions.map((d) => decisionHtml(d, false)).join("") || `<p class="muted">Nothing open.</p>`;
   wireDecisions($("#dc-list"), r.decisions, loadDecisions);
+  if (pendingDo) {                     // opened from a push's "Do it" button
+    const b = $("#dc-list").querySelector(`.dc-item[data-key="${CSS.escape(pendingDo)}"] [data-dc="do"]`);
+    pendingDo = null;
+    if (b) b.click();
+  }
   $("#dc-history").innerHTML = r.history.length ? `<div class="table-scroll"><table class="data"><thead><tr><th>Decision</th><th>You</th><th>When</th></tr></thead><tbody>
     ${r.history.map((h) => `<tr><td>${esc(h.title)}</td><td>${esc(h.status)}${h.until ? ` <span class="muted">until ${esc(h.until)}</span>` : ""}</td><td class="muted">${esc(h.decided)}</td></tr>`).join("")}</tbody></table></div>`
     : `<p class="muted">Nothing decided yet.</p>`;
+}
+async function loadScorecard() {
+  let r;
+  try { r = await api("/api/decisions/scorecard"); } catch (err) { $("#ds-verdict").textContent = err.message; return; }
+  $("#ds-verdict").textContent = r.text;
+  $("#ds-meta").textContent = `${r.followed} followed · ${r.skipped} skipped`;
+  const cell = (x) => x && x.n ? `<span class="${cls(x.avg_edge)}">${fmtPct(x.avg_edge)}</span> <span class="muted">· ${x.dollars >= 0 ? "+" : "−"}${fmtMoney(Math.abs(x.dollars), 0)} · ${x.n}</span>` : `<span class="muted">none yet</span>`;
+  const row = (label, g) => `<tr><td>${label}</td><td>${cell(g[30])}</td><td>${cell(g[91])}</td><td>${cell(g[365])}</td></tr>`;
+  $("#ds-out").innerHTML = r.items.length ? `<div class="table-scroll"><table class="data"><thead><tr><th>Calls</th><th>1 month</th><th>3 months</th><th>12 months</th></tr></thead><tbody>
+    ${row("You followed", r.summary.followed)}${row("You skipped (what following would have made)", r.summary.skipped)}</tbody></table></div>` : "";
+}
+async function loadBudget() {
+  try {
+    const b = await api("/api/claude-budget");
+    $("#lt-budget").innerHTML = (b.key ? `Written automatically every Sunday at 5:30pm ET and pushed to your phone, while this month's automatic Claude spend
+      stays under <label>$<input id="lt-cap" type="number" min="0" max="100" step="0.5" value="${b.budget}" style="width:5em"></label> (spent ~${fmtMoney(b.spent, 2)} this month, Ask included).`
+      : "Add ANTHROPIC_API_KEY to turn on the Sunday letter and Ask.")
+      + (b.push ? "" : " Phone buttons (Do it, Later, Skip) need PLUMBLINE_URL set to where the app runs.");
+    const cap = $("#lt-cap");
+    if (cap) cap.addEventListener("change", async () => {
+      try { await api("/api/claude-budget", { method: "POST", body: JSON.stringify({ budget: Number(cap.value) }) }); } catch (err) { alert(err.message); }
+    });
+  } catch { /* optional */ }
 }
 function letterHtml(r) {
   return `<div class="ask-msg pl">${esc(r.answer)}</div>${r.tools && r.tools.length ? `<p class="muted">From: ${esc(r.tools.join(", "))}</p>` : ""}`;
@@ -3275,7 +3401,7 @@ async function loadSignalBacktests() {
     $("#ib-out").innerHTML = `<div class="table-scroll"><table class="data"><thead><tr><th>Purchases</th><th>3 months vs SPY</th><th>6 months</th><th>12 months</th></tr></thead><tbody>
       ${Object.values(ins.summary).map((g) => `<tr><td>${esc(g.label)}</td><td>${c(g["3m"])}</td><td>${c(g["6m"])}</td><td>${c(g["12m"])}</td></tr>`).join("")}</tbody></table></div>`;
   }
-  if (r.spinoff) $("#ev-spin-bt").textContent = r.spinoff.verdict;
+  if (r.spinoff) $("#ev-spin-bt").textContent = r.spinoff.verdict + (r.spinoff.stress ? " " + r.spinoff.stress.text : "");
 }
 
 // ---------------------------------------------------------------- chatter and themes

@@ -21,6 +21,7 @@ Skipping a decision hides it for 30 days; "later" for 7.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 SCHEMA = """
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 """
 PRIORITY = {"fix_sync": 95, "sell": 85, "fix_data": 70, "harvest": 60, "switch": 55, "trim": 50, "invest_cash": 45,
-            "wait_long_term": 30, "optional_idea": 10, "hold": 0}
+            "shelter": 40, "automate": 35, "wait_long_term": 30, "tax_setup": 25, "optional_idea": 10, "hold": 0}
 EVIDENCE = {"rule": "Your rule or a hard fact", "mixed": "Tested, not proven", "unproven": "Unproven: optional, keep it small"}
 WEAK_SWITCH_PRIORITY = 20       # a switch on the screen grade alone ranks below putting idle cash to work
 IDLE_MIN = 100.0
@@ -53,9 +54,11 @@ def _d(kind, title, lines, evidence, *, symbol="", amount=None, side=None, page=
 
 
 def build(plan: dict, *, reviews: list[dict] | None = None, idle_cash: float = 0.0, health: list[dict] | None = None,
-          freshness: list[dict] | None = None, optional: list[dict] | None = None, bottom_note: str = "", today: date | None = None) -> list[dict]:
+          freshness: list[dict] | None = None, optional: list[dict] | None = None, bottom_note: str = "", today: date | None = None,
+          shelter: dict | None = None, automate: dict | None = None) -> list[dict]:
     """plan: holdplan.build(); reviews: exitreview.for_holdings(); health: health.problems(); freshness: freshness.check();
-    optional: [{symbol, source, amount, why}] already sized (see sizing.py)."""
+    optional: [{symbol, source, amount, why}] already sized (see sizing.py); shelter: shelter.decision();
+    automate: recurring.plan()["suggest"]."""
     today = today or date.today()
     out: list[dict] = []
     for p in health or []:
@@ -109,6 +112,12 @@ def build(plan: dict, *, reviews: list[dict] | None = None, idle_cash: float = 0
                        "Cash is the one certain drag on a long-term portfolio; the index is the default, not a pick."]
                       + ([f"Your own list also has {other['symbol']} ({other.get('why', '')}): that's a pick, so size it with Size it if you want it."] if other else []),
                       "rule", symbol=dest["symbol"], amount=idle_cash, side="buy"))
+    if shelter:
+        out.append(_d(shelter["kind"], shelter["title"], shelter["why"], "rule", amount=shelter.get("amount"), page="accounts",
+                      key=f"{shelter['kind']}:{today.year}"))
+    if automate and automate.get("weekly"):
+        out.append(_d("automate", f"Automate it: ${automate['weekly']:,} a week into {automate['symbol']}", [automate["text"]], "rule",
+                      page="portfolio", key=f"automate:{today.year}-{(today.month - 1) // 3}"))
     for h in rows.values():
         if h.get("verdict") in ("Sell?", "Trim") or not h.get("wait_until") or h.get("wait_saves", 0) < 100:
             continue
@@ -166,11 +175,122 @@ def history(conn, limit: int = 60) -> list[dict]:
     return [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE status != 'open' ORDER BY decided DESC LIMIT ?", (limit,))]
 
 
+# ------------------------------------------------------------------ did following them help?
+
+# What "doing nothing" means for each kind of call, so each is scored against the choice you actually had:
+# a sell or trim against keeping the stock (the money goes to VOO), idle cash against leaving it in cash
+# (at the T-bill yield), an optional idea against putting the same money in VOO. Harvests are about tax,
+# not return, and are counted by the tax they saved instead.
+SCORE_KINDS = {"sell": "sell", "trim": "sell", "switch": "sell", "invest_cash": "cash", "optional_idea": "buy"}
+SCORE_DAYS = (30, 91, 365)
+SCORE_MIN = 20
+FOLLOWED = ("approved", "done")
+
+
+def _close_on_or_after(bars: list[tuple[str, float]], day: str) -> float | None:
+    for d, c in bars:
+        if d >= day:
+            return c
+    return None
+
+
+def scorecard(conn, history_fn, today: date, cash_yield: float = 0.04) -> dict:
+    """history_fn(symbol) -> [(date, close)] oldest first. Every call you approved or skipped, scored
+    from the day you decided at 1, 3 and 12 months: points and dollars against doing nothing."""
+    from .advice import BENCH
+    conn.executescript(SCHEMA)
+    rows = [dict(r) for r in conn.execute("SELECT * FROM decisions WHERE status IN ('approved', 'done', 'skipped') AND decided != ''")]
+    cache: dict[str, list] = {}
+
+    def bars(sym):
+        if sym not in cache:
+            try:
+                cache[sym] = history_fn(sym)
+            except Exception:  # noqa: BLE001 - no history leaves the call unscored, not the page broken
+                cache[sym] = []
+        return cache[sym]
+    groups = {g: {h: [] for h in SCORE_DAYS} for g in ("followed", "skipped")}
+    items, saved = [], 0.0
+    for r in rows:
+        group = "followed" if r["status"] in FOLLOWED else "skipped"
+        if r["kind"] == "harvest":
+            m = re.search(r"saves ~\$([\d,]+)", r["title"])
+            if m and group == "followed":
+                saved += float(m.group(1).replace(",", ""))
+            continue
+        how = SCORE_KINDS.get(r["kind"])
+        if not how or not r["symbol"]:
+            continue
+        item = {"key": r["key"], "title": r["title"], "symbol": r["symbol"], "decided": r["decided"], "you": group,
+                "amount": r["amount"], "results": {}}
+        s0, b0 = _close_on_or_after(bars(r["symbol"]), r["decided"]), _close_on_or_after(bars(BENCH), r["decided"])
+        for h in SCORE_DAYS:
+            end = (date.fromisoformat(r["decided"]) + timedelta(days=h)).isoformat()
+            if end > today.isoformat() or not (s0 and b0):
+                continue
+            s1, b1 = _close_on_or_after(bars(r["symbol"]), end), _close_on_or_after(bars(BENCH), end)
+            if not (s1 and b1):
+                continue
+            stock, voo = s1 / s0 - 1, b1 / b0 - 1
+            edge = {"sell": voo - stock, "cash": stock - cash_yield * h / 365, "buy": stock - voo}[how]
+            dollars = edge * (r["amount"] or 0)
+            item["results"][h] = {"edge": round(edge * 100, 2), "dollars": round(dollars, 2)}
+            groups[group][h].append((edge, dollars))
+        items.append(item)
+    summary = {}
+    for g, by_h in groups.items():
+        summary[g] = {h: {"n": len(v), "avg_edge": round(sum(e for e, _ in v) / len(v) * 100, 2) if v else None,
+                          "helped_pct": round(sum(e > 0 for e, _ in v) / len(v) * 100) if v else None,
+                          "dollars": round(sum(d for _, d in v), 2), "enough": len(v) >= SCORE_MIN} for h, v in by_h.items()}
+    out = {"summary": summary, "items": sorted(items, key=lambda x: x["decided"], reverse=True), "harvest_saved": round(saved, 2),
+           "followed": sum(1 for r in rows if r["status"] in FOLLOWED), "skipped": sum(1 for r in rows if r["status"] == "skipped"),
+           "min": SCORE_MIN}
+    out["text"] = scorecard_text(out)
+    return out
+
+
+def scorecard_text(card: dict) -> str:
+    f, s = card["summary"]["followed"][91], card["summary"]["skipped"][91]
+    if not card["followed"] and not card["skipped"]:
+        return "No decisions made yet: approve or skip a few and this starts scoring the app's calls against doing nothing."
+    parts = [f"You followed {card['followed']} call{'s' if card['followed'] != 1 else ''} and skipped {card['skipped']}."]
+    if f["n"]:
+        parts.append(f"The ones you followed: {f['avg_edge']:+.1f} points ({'+' if f['dollars'] >= 0 else '-'}${abs(f['dollars']):,.0f}) against "
+                     f"doing nothing over 3 months, {f['n']} with a result.")
+    if s["n"]:
+        parts.append(f"The ones you skipped would have made {s['avg_edge']:+.1f} points: "
+                     + ("skipping them cost you." if s["avg_edge"] > 0 else "skipping them was right."))
+    if card["harvest_saved"]:
+        parts.append(f"Harvests you did saved about ${card['harvest_saved']:,.0f} in tax.")
+    if not f["enough"]:
+        parts.append(f"Too early to judge the app: that takes {card['min']} results at 3 months, and a few lucky ones prove nothing.")
+    elif f["avg_edge"] < -1:
+        parts.append("So far its calls have cost you: weigh them less and lean on the index.")
+    return " ".join(parts)
+
+
 def advice_items(items: list[dict]) -> list[dict]:
     """The stock decisions, as advice-track-record rows (scored against VOO later)."""
     act = {"sell": "Sell?", "trim": "Trim", "switch": "Sell?", "harvest": "Sell?", "invest_cash": "Buy", "optional_idea": "Buy"}
     return [{"symbol": d["symbol"], "action": act[d["kind"]], "source": "decision", "reason": d["title"][:200]}
             for d in items if d["kind"] in act and d["symbol"]]
+
+
+def push_actions(items: list[dict], base: str, sign) -> tuple[str, ...]:
+    """Buttons for the decision push: with one new decision, Do it (opens it in the app, trade ticket
+    filled in), Later and Skip (recorded straight from the notification through a signed link);
+    with several, one button that opens the Decisions page. No base URL, no buttons."""
+    from urllib.parse import quote
+    new = [d for d in items if d.get("new") and d["priority"] >= 45]
+    if not base or not new:
+        return ()
+    base = base.rstrip("/")
+    if len(new) > 1:
+        return (f"view, Open decisions, {base}/#decisions, clear=true",)
+    d = new[0]
+    return (f"view, {'Do it' if d.get('action') else 'Open'}, {base}/#decisions?do={quote(d['key'], safe='')}, clear=true",
+            f"http, Later, {base}/act/{sign('decide|later|' + d['key'])}, method=POST, clear=true",
+            f"http, Skip, {base}/act/{sign('decide|skipped|' + d['key'])}, method=POST, clear=true")
 
 
 def push_text(items: list[dict]) -> tuple[str, str] | None:
@@ -215,8 +335,19 @@ def gather(today: date | None = None) -> list[dict]:
     note = screen_backtest.bottom_sentence(screen_backtest.load())
     optional = []
     try:
+        from . import evidence, paper
+        books = paper.load()
+        spin_books = [b for b in books if b["list"] == "spinoffs"]
+        st = evidence.status(paper.performance(spin_books, lambda s: [(b.date, b.close) for b in market_history(s)], today),
+                             [], {"spinoff": "Spin-offs"})
+        spin_earned = st["spinoff"]["earned"]
+    except Exception:  # noqa: BLE001 - no record, no optional idea
+        spin_earned = False
+    try:
+        # Spin-offs are research only (evidence.py) until their paper portfolio beats VOO; until then no optional idea.
         spec = {r["symbol"] for r in logged if r["source"] in sizing.SPECULATIVE and r["decision"] == "bought"}
-        cands = [r for r in spinoffs.build(today, lookup_fn=lambda s: screen.lookup(data, s)) if r["loggable"] and r["ticker"] not in held]
+        cands = [r for r in spinoffs.build(today, lookup_fn=lambda s: screen.lookup(data, s))
+                 if r["loggable"] and r["ticker"] not in held] if spin_earned else []
         for c in cands[:1]:
             sz = sizing.size(c["ticker"], "spinoff", market_price(c["ticker"]), positions, float(sum(a["amount"] for a in accts.values())),
                              lambda s: (screen.lookup(data, s) or {}).get("sector"), spec)
@@ -225,8 +356,26 @@ def gather(today: date | None = None) -> list[dict]:
                                  "why": [f"Spin-off trading since {c['trading_since']} ({c['name'][:60]}).", spin_note(), sz["lines"][0]]})
     except (http.DataUnavailable, KeyError, ValueError):
         pass
+    shelter_d = automate = None
+    try:
+        from . import accounts, recurring, schedules, shelter
+        with db.connect() as conn:
+            st, inc, scheds = shelter.settings(conn), db.income(conn), schedules.load(conn)
+        names = sorted({t.get("account") or "Unlabeled" for t in txs} | set(accts))
+        pos = [{"account": a["name"], "symbol": p["symbol"], "value": p["quantity"] * prices.get(p["symbol"], 0.0)}
+               for a in accounts.overview(txs, inc, today) for p in a["positions"]]
+        year_ago = (today - timedelta(days=365)).isoformat()
+        div: dict[tuple[str, str], float] = {}
+        for r in inc:
+            if r["kind"] in ("dividend", "reinvested") and r["day"] >= year_ago:
+                div[(r["account"], r["symbol"])] = div.get((r["account"], r["symbol"]), 0.0) + r["amount"]
+        if names:
+            shelter_d = shelter.decision(shelter.view(st, names, pos, div, today))
+        automate = recurring.plan(txs, scheds, today, idle)["suggest"]
+    except Exception:  # noqa: BLE001 - the rest of the decisions don't wait on these
+        pass
     return build(plan, reviews=reviews, idle_cash=idle, health=health.problems(), freshness=freshness.check(today),
-                 optional=optional, bottom_note=note, today=today)
+                 optional=optional, bottom_note=note, today=today, shelter=shelter_d, automate=automate)
 
 
 def spin_note() -> str:
@@ -236,8 +385,15 @@ def spin_note() -> str:
     s = (((bt or {}).get("summary") or {}).get("from_day20") or {}).get("12m")
     if not s:
         return "Spin-offs have beaten the market in older studies; this app hasn't replayed them yet: small and optional at most."
+    st = spinoff_backtest.stress(bt)
     return (f"In the replay since 2005, spin-offs bought after their first 20 days led SPY by {s['avg_edge']:+.0f} points over 12 months on "
-            f"average but {s['median_edge']:+.0f} for the typical one, and half the spin-offs are missing (no ticker today): small and optional at most.")
+            f"average but {s['median_edge']:+.0f} for the typical one. " + (st["text"] if st else "Half the spin-offs are missing (no ticker today).")
+            + " Small and optional at most.")
+
+
+def market_history(sym: str):
+    from .providers import market
+    return market.get_history(sym, 800)
 
 
 def market_price(sym: str) -> float:

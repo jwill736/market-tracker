@@ -42,3 +42,15 @@ def test_run_prices_spinoffs_and_drops_exchange_moves():
     s = out["summary"]["from_day20"]["12m"]
     assert s["spinoffs"] == 14 and s["avg_edge"] > 0 and s["beat_pct"] == 100
     assert "1 of 16 registrants have no ticker" in out["verdict"]
+
+
+def test_stress_test_on_the_missing_half():
+    from market_tracker import spinoff_backtest as sb
+    bt = {"priced": 171, "missing": 164, "summary": {"from_day20": {"12m": {"spinoffs": 160, "avg_edge": 23.1, "t": 2.46}}}}
+    st = sb.stress(bt)
+    assert -26 < st["breakeven"] < -22                    # the missing ones trailing SPY by ~24 points erases it
+    assert st["scenarios"][0]["avg_edge"] > 10 and st["scenarios"][1]["avg_edge"] < 0
+    assert not st["robust"] and "unproven" in st["text"]
+    few = dict(bt, missing=10)
+    assert sb.stress(few)["robust"]                       # with few missing, a -30 on them still leaves an edge
+    assert sb.stress({"priced": 0}) is None

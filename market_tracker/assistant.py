@@ -26,6 +26,10 @@ from . import mcp_server
 from .config import settings
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Dollars per million tokens: input, output, cache read, cache write. Claude Opus 5's list prices; other
+# models are estimated at the same rate (the spend shown is an estimate either way).
+PRICES = {"claude-opus-5": (5.0, 25.0, 0.50, 6.25)}
+AUTO_BUDGET = 2.0                 # dollars a month the automatic Sunday letter may spend (Ask isn't capped)
 MAX_TOOL_ROUNDS = 8
 MAX_RESULT_CHARS = 40_000
 KEEP_CONVERSATIONS = 50
@@ -47,8 +51,12 @@ specific risk in their approach. Hold your position unless they give you new inf
 What you know about the evidence (from the app's own backtests):
 - The weekly screen's buy lists have not beaten SPY by more than luck would explain, and its bottom 50 trailed \
 by under a point a quarter (also luck), so a low grade is not a sell reason. Opportunistic insider buying showed no \
-edge. Spin-offs bought 20 days in beat SPY on average, but the median was small and it rests on a few big winners. \
-Signals, sleepers and chatter are unproven; say so when they come up. VOO is the default, not a pick.
+edge. Spin-offs bought 20 days in beat SPY on average, but the median was small, a few big winners carry it, and it \
+vanishes if the half with no prices trailed SPY by about 24 points. So every idea list is research, not advice, until \
+its forward record beats VOO (list_evidence tool); don't give dollar amounts for them. VOO is the default, not a pick.
+- The returns the user controls beat any signal: tax-sheltered room (tax_shelter tool), money left in cash, a recurring \
+buy (recurring_plan), fees, and not selling in a panic (a sell no rule backs waits 48 hours in the app). Raise these \
+when they apply.
 - The decisions tool is the app's ranked answer to "what should I do": prefer it when asked what to do, and \
 explain its evidence level (rule / mixed / unproven).
 
@@ -135,7 +143,7 @@ def ask(question: str, conversation: str | None = None, client: anthropic.Anthro
     app = app or LocalApp()
     tools = tool_defs()
     used: list[str] = []
-    usage = {"input": 0, "output": 0, "cache_read": 0}
+    usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     for _ in range(MAX_TOOL_ROUNDS + 1):
         resp = client.beta.messages.create(
             model=settings.research_model, max_tokens=16000, system=SYSTEM, tools=tools, messages=messages,
@@ -144,14 +152,15 @@ def ask(question: str, conversation: str | None = None, client: anthropic.Anthro
         usage["input"] += u.input_tokens
         usage["output"] += u.output_tokens
         usage["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
+        usage["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
         messages.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason == "refusal":
-            return {"conversation": cid, "answer": "Claude declined to answer that one.", "tools": used, "usage": usage, "refused": True}
+            return _spent({"conversation": cid, "answer": "Claude declined to answer that one.", "tools": used, "usage": usage, "refused": True})
         if resp.stop_reason != "tool_use":
             text = "\n\n".join(b.text for b in resp.content if b.type == "text").strip()
             _conversations[cid] = (time.time(), messages)
-            return {"conversation": cid, "answer": text, "tools": used, "usage": usage, "model": resp.model,
-                    "truncated": resp.stop_reason == "max_tokens"}
+            return _spent({"conversation": cid, "answer": text, "tools": used, "usage": usage, "model": resp.model,
+                           "truncated": resp.stop_reason == "max_tokens"})
         results = []
         for b in resp.content:
             if b.type != "tool_use":
@@ -169,8 +178,44 @@ def ask(question: str, conversation: str | None = None, client: anthropic.Anthro
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": f"The tool failed: {exc}", "is_error": True})
         messages.append({"role": "user", "content": results})
     _conversations[cid] = (time.time(), messages)
-    return {"conversation": cid, "answer": "That needed more lookups than one answer allows; ask a narrower question.", "tools": used,
-            "usage": usage, "truncated": True}
+    return _spent({"conversation": cid, "answer": "That needed more lookups than one answer allows; ask a narrower question.", "tools": used,
+                   "usage": usage, "truncated": True})
+
+
+def cost(usage: dict, model: str | None = None) -> float:
+    p = PRICES.get(model or settings.research_model, PRICES["claude-opus-5"])
+    return (usage["input"] * p[0] + usage["output"] * p[1] + usage.get("cache_read", 0) * p[2] + usage.get("cache_write", 0) * p[3]) / 1e6
+
+
+def _spent(out: dict) -> dict:
+    """Adds the estimated cost to the answer and to this month's running total (meta claude_spend)."""
+    out["cost"] = round(cost(out["usage"]), 4)
+    try:
+        from . import db
+        month = time.strftime("%Y-%m")
+        with db.connect() as conn:
+            spend = json.loads(db.get_meta(conn, "claude_spend", "{}") or "{}")
+            spend[month] = round(spend.get(month, 0.0) + out["cost"], 4)
+            db.set_meta(conn, "claude_spend", json.dumps(dict(sorted(spend.items())[-12:])))
+    except Exception:  # noqa: BLE001 - a failed tally must not lose the answer
+        pass
+    return out
+
+
+def month_spend(conn) -> float:
+    from . import db
+    try:
+        return float(json.loads(db.get_meta(conn, "claude_spend", "{}") or "{}").get(time.strftime("%Y-%m"), 0.0))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def budget(conn) -> float:
+    from . import db
+    try:
+        return float(db.get_meta(conn, "claude_auto_budget", "") or AUTO_BUDGET)
+    except ValueError:
+        return AUTO_BUDGET
 
 
 LETTER_PROMPT = """Write this week's letter to me: at most 200 words. Start with the one thing that matters most \

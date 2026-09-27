@@ -88,6 +88,14 @@ def steps(conn, today: date | None = None) -> list[dict]:
                 "go": "ask", "test": False})
     decided = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions'").fetchone() and \
         conn.execute("SELECT COUNT(*) FROM decisions WHERE status != 'open'").fetchone()[0]
+    try:
+        tagged = bool((json.loads(db.get_meta(conn, "account_tax", "{}") or "{}")).get("accounts"))
+    except ValueError:
+        tagged = False
+    out.append({"key": "shelter", "title": "Say which accounts are tax-sheltered",
+                "why": "Taxable, Roth IRA, traditional IRA, 401(k) or HSA: the app then shows this year's contribution room, which for most "
+                       "people is worth more than any stock pick.",
+                "done": tagged, "detail": "Done" if tagged else "Accounts → Tax-sheltered accounts", "go": "shelter", "test": False})
     out.append({"key": "decide", "title": "Make your first decision",
                 "why": "Approve, skip or put off one of this week's decisions (Home → Decisions): that's how the app learns what you act on.",
                 "done": bool(decided), "detail": "Done" if decided else "Home → Decisions", "go": "decisions", "test": False})

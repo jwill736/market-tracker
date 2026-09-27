@@ -683,6 +683,7 @@
           <select id="sc-every"><option value="week">every week</option><option value="2weeks">every 2 weeks</option><option value="month">every month</option></select>
           <select id="sc-day"></select><label>from <input id="sc-start" type="date" required></label><button type="submit">Add</button></form>
         <ul class="hp-lines small" id="sc-list"></ul>
+        <p class="small" id="sc-suggest" hidden></p>
         <h2 class="mt">Check a statement</h2>
         <form class="inline-form" id="st-form"><select id="st-acct"><option>Stash</option><option>Robinhood</option><option>Coinbase</option><option>Other</option></select>
           <input type="file" id="st-file" accept="application/pdf,.pdf" required><button type="submit">Compare</button></form>
@@ -704,6 +705,7 @@
 
   <!-- Ideas: what to buy, with every idea scored against VOO -->
   <section id="tab-ideas" class="tab" hidden>
+    <p class="research-note small" hidden></p>
     <div class="card">
       <div class="card-head"><h2>What to buy: the weekly screen</h2><span class="muted small" id="sc-meta"></span></div>
       <p class="muted small">Every US-listed company worth $300M+, graded within its sector on the four things that have held up best in the research:
@@ -760,6 +762,7 @@
   </section>
 
   <section id="tab-sleepers" class="tab" hidden>
+    <p class="research-note small" hidden></p>
     <div class="card">
       <div class="card-head"><h2>Sleepers</h2><span class="muted small" id="sl-meta"></span></div>
       <p class="muted small">Companies worth $300M to $10B where several independent pieces of evidence line up while few are watching: a good screen
@@ -780,6 +783,7 @@
   </section>
 
   <section id="tab-chatter" class="tab" hidden>
+    <p class="research-note small" hidden></p>
     <div class="card">
       <div class="card-head"><h2>Water-cooler chatter</h2><span class="muted small" id="ch-meta"></span></div>
       <p class="muted small">What Reddit and StockTwits are talking about most, and how fast that's rising. So you know what everyone else is hearing:
@@ -884,6 +888,15 @@
       <div id="lt-out" class="small"><p class="muted">A short note from Plumbline on what matters this week, written by Claude from your decisions and weekly recap
         (uses your Anthropic API key, a few cents).</p></div>
       <button type="button" class="secondary small" id="lt-write">Write this week's letter</button>
+      <p class="muted small" id="lt-budget"></p>
+    </div>
+    <div class="card" id="ds-card">
+      <div class="card-head"><h2>Plumbline's record</h2><span class="muted small" id="ds-meta"></span></div>
+      <p class="verdict-line" id="ds-verdict"></p>
+      <div id="ds-out" class="small"></div>
+      <p class="muted small">Each call you approved or skipped, scored from the day you decided against doing nothing: a sell against keeping the
+        stock, idle cash against leaving it in cash, an optional idea against the same money in VOO. Skipped calls show whether skipping was right.
+        A summary is pushed on the 1st of each month.</p>
     </div>
     <div class="card">
       <h2>Decided</h2>
@@ -909,6 +922,13 @@
   </section>
 
   <section id="tab-accounts" class="tab" hidden>
+    <div class="card" id="sh-card">
+      <div class="card-head"><h2>Tax-sheltered accounts</h2><span class="muted small" id="sh-meta"></span></div>
+      <p class="verdict-line" id="sh-verdict"></p>
+      <div id="sh-out" class="small"></div>
+      <p class="muted small">IRS limits for the year shown. A Roth IRA has an income limit, and a traditional IRA's deduction can phase out if you have a
+        workplace plan: if either might apply, ask an accountant. The app never suggests selling to move a holding; only where new money goes.</p>
+    </div>
     <div class="card" id="usage-card">
       <div class="card-head"><h2>Pages you use</h2><span class="muted small" id="us-meta"></span></div>
       <p class="muted small" id="us-text">Counted on this app only, never sent anywhere. Hiding a page takes it off the menu; it keeps running.</p>
