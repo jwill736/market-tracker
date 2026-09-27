@@ -85,3 +85,18 @@ def test_joined_sentences_and_word_forms_are_not_new():
     c = filings.compare(prev, cur)
     assert c["new_count"] == 2, c["new"]
     assert sorted(s[:9] for s in c["new"]) == ["Beginning", "The court"]
+
+
+def test_inline_tags_join_like_a_browser():
+    h = ('<p>ITEM 1A. R<span style="font-size:8pt">ISK</span> F<font>ACTORS</font></p>'
+         '<p><span>ITEM 1A. RIS</span><span>K FACTORS</span></p><p><span>We </span><span>face</span> <b>many</b> risks</p>')
+    assert filings.html_to_text(h) == "ITEM 1A. RISK FACTORS\n ITEM 1A. RISK FACTORS\n We face many risks"
+    lower = '<p>I<span style="font-variant:small-caps">tem</span> 1A. R<span style="font-variant:small-caps">isk</span> F<span>actors</span></p>'
+    assert filings.html_to_text(lower) == "Item 1A. Risk Factors"
+
+
+def test_a_late_cross_reference_is_not_the_section():
+    body = "Real risk sentence here. " * 50
+    text = ("Item 1A. Risk Factors .... 12\nItem 1B. Unresolved\nItem 1A. Risk Factors\n" + body + "\nItem 1B. Unresolved Staff Comments\n"
+            + "Exhibits and more. " * 3000 + " as described in Item 1A. Risk Factors, and exhibits " + "Exhibit 10.1 agreement. " * 3000)
+    assert filings.section(text, "risk") == body.strip()

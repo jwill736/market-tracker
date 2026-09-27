@@ -27,7 +27,9 @@ WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 WIKI_UA = "Plumbline/1.0 (https://github.com/jwill736/market-tracker; personal portfolio app) python-httpx"
 FILE = "tenk_rank.json"
 FRESH_DAYS = 400            # a 10-K filed within this many days counts as this year's
+MIN_SIMILARITY = 0.5        # below this, one year's section was cut out wrong: real reports never change this much
 MIN_UNIVERSE = 450
+METHOD = 4                  # bump when the comparison changes: entries from an older method are recomputed
 
 
 def parse_universe(page: str) -> list[dict]:
@@ -97,7 +99,8 @@ def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict
     if len(docs) < 2:
         return dict(co, error="fewer than two 10-Ks on file")
     cur, prev = docs
-    if prev_entry and prev_entry.get("acc") == cur["accession"] and prev_entry.get("prev_acc") == prev["accession"] and not prev_entry.get("error"):
+    if (prev_entry and prev_entry.get("acc") == cur["accession"] and prev_entry.get("prev_acc") == prev["accession"]
+            and not prev_entry.get("error") and prev_entry.get("method") == METHOD):
         return dict(prev_entry, **{k: co[k] for k in ("name", "sector")})
     text_fn = text_fn or (lambda u: filings.document_text(u, get))
     a, b = text_fn(prev["url"]), text_fn(cur["url"])
@@ -109,7 +112,7 @@ def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict
                     error=f"Risk Factors not found ({risk['words']} words; 'Item 1A' appears as: {seen})")
     return dict(co, acc=cur["accession"], prev_acc=prev["accession"], filed=cur["filed"], prev_filed=prev["filed"],
                 url=cur["url"], risk_new=risk["new_share"], risk_sim=risk["similarity"], risk_words=risk["words"],
-                new_count=risk["new_count"], legal_new=legal["new_share"], sample=risk["new"][:2],
+                new_count=risk["new_count"], legal_new=legal["new_share"], sample=risk["new"][:2], method=METHOD,
                 computed=datetime.now(timezone.utc).date().isoformat())
 
 
@@ -164,6 +167,7 @@ def load(get=None) -> dict | None:
 def _current(data: dict, today: date | None = None) -> list[dict]:
     today = today or date.today()
     return [c for c in (data or {}).get("companies", []) if c.get("risk_new") is not None and c.get("filed")
+            and (c.get("risk_sim") is None or c["risk_sim"] >= MIN_SIMILARITY)
             and (today - date.fromisoformat(c["filed"])).days <= FRESH_DAYS]
 
 
