@@ -131,30 +131,34 @@ def events(today: date | None = None) -> dict:
 
 
 def daily_items(today: date | None = None) -> list[dict]:
-    """Today's ideas from every screen, for the idea log (each name is kept once a month per screen)."""
+    """Today's ideas from every screen, for the idea log (each name is kept once a month per screen).
+    One source failing (a site down, a format change) never stops the others: it's logged and skipped."""
+    import logging
+    log = logging.getLogger(__name__)
     today = today or date.today()
     data = screen.load()
-    items = []
-    for r in (data or {}).get("top_large", [])[:10]:
-        items.append({"symbol": r["symbol"], "source": "qvm", "price": r.get("price"), "reason": f"Screen grade {r['score']:.0f}/100",
-                      "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months", "data": {"grades": r.get("grades")}})
-    for r in (data or {}).get("backlog", [])[:5]:
-        items.append({"symbol": r["symbol"], "source": "backlog", "price": r.get("price"), "reason": r["why"],
-                      "wrong_if": "Backlog stops growing faster than revenue"})
-    try:
+    items: list[dict] = []
+
+    def screens():
+        for r in (data or {}).get("top_large", [])[:10]:
+            items.append({"symbol": r["symbol"], "source": "qvm", "price": r.get("price"), "reason": f"Screen grade {r['score']:.0f}/100",
+                          "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months", "data": {"grades": r.get("grades")}})
+        for r in (data or {}).get("backlog", [])[:5]:
+            items.append({"symbol": r["symbol"], "source": "backlog", "price": r.get("price"), "reason": r["why"],
+                          "wrong_if": "Backlog stops growing faster than revenue"})
+
+    def sleeper_ideas():
         for r in sleepers(today)["sleepers"]:
             if r["evidence"] >= 2:
                 items.append({"symbol": r["symbol"], "source": "sleeper", "reason": "; ".join(r["why"])[:300],
                               "wrong_if": "Insiders sell, or the screen grade falls below 50"})
-    except (http.DataUnavailable, KeyError, ValueError):
-        pass
-    try:
+
+    def chatter_ideas():
         for r in chatter()["rows"][:5]:
             items.append({"symbol": r["symbol"], "source": "chatter", "reason": f"{r['reddit']} Reddit mentions" + (", trending on StockTwits" if r.get("stocktwits") else ""),
                           "wrong_if": "Logged to measure chatter, not as a recommendation"})
-    except (http.DataUnavailable, KeyError, ValueError):
-        pass
-    try:
+
+    def event_ideas():
         ev = events(today)
         for r in ev["pead"]:
             items.append({"symbol": r["symbol"], "source": "pead", "reason": r["why"][:300],
@@ -165,8 +169,11 @@ def daily_items(today: date | None = None) -> list[dict]:
                 items.append({"symbol": r["ticker"], "source": "spinoff",
                               "reason": f"Spin-off trading since {r['trading_since']} ({r['name'][:80]})",
                               "wrong_if": "It trails VOO by 15+ points after 12 months", "data": {"cik": r["cik"]}})
-    except (http.DataUnavailable, KeyError, ValueError):
-        pass
+    for part in (screens, sleeper_ideas, chatter_ideas, event_ideas):
+        try:
+            part()
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            log.warning("idea source %s skipped: %s", part.__name__, exc)
     for it in items:
         if not it.get("price"):
             try:

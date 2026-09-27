@@ -103,3 +103,19 @@ def test_sync_imports_the_github_log_once():
     def down(u):
         raise http.DataUnavailable("404")
     assert ideas.load_remote(get=down) is None
+
+
+def test_daily_items_survive_a_broken_source(monkeypatch):
+    from market_tracker import idealab, screen
+    from market_tracker.providers import market
+    monkeypatch.setattr(screen, "load", lambda get=None: {"top_large": [{"symbol": "AAA", "score": 81.0, "price": 10.0, "grades": {}}],
+                                                         "backlog": [{"symbol": "BBB", "why": "Backlog +40%", "price": 5.0}]})
+    monkeypatch.setattr(idealab, "sleepers", lambda today=None: 1 / 0)
+    monkeypatch.setattr(idealab, "chatter", lambda: {"rows": [{"symbol": "CCC", "reddit": 99, "stocktwits": True}]})
+
+    def boom(today=None):
+        raise RuntimeError("site changed")
+    monkeypatch.setattr(idealab, "events", boom)
+    monkeypatch.setattr(market, "get_quote", lambda s: market.Quote(s, "stock", 7.0, 7.0, 0.0, "USD", "t", "2026-01-01"))
+    got = {(i["symbol"], i["source"], i["price"]) for i in idealab.daily_items(date(2026, 3, 2))}
+    assert got == {("AAA", "qvm", 10.0), ("BBB", "backlog", 5.0), ("CCC", "chatter", 7.0)}
