@@ -90,6 +90,8 @@ def test_joined_sentences_and_word_forms_are_not_new():
 def test_small_caps_headings_join_but_other_tags_keep_words_apart():
     h = '<p>ITEM 1A. R<span style="font-size:8pt">ISK</span> F<font>ACTORS</font></p><p><span>We</span><span>face</span> <b>many</b>RISKS</p>'
     assert filings.html_to_text(h) == "ITEM 1A. RISK FACTORS \n We face many RISKS"
+    lower = '<p>I<span style="font-variant:small-caps">tem</span> 1A. R<span style="font-variant:small-caps">isk</span> F<span>actors</span></p>'
+    assert filings.html_to_text(lower) == "Item 1A. Risk Factors"
 
 
 def test_a_late_cross_reference_is_not_the_section():
