@@ -75,6 +75,7 @@ TOOLS: dict[str, tuple[str, str]] = {
     "decision_record": ("/api/decisions/scorecard", "Did following Plumbline's calls beat doing nothing? Approved and skipped calls scored at 1, 3 and 12 months, in points and dollars."),
     "list_evidence": ("/api/evidence", "Which idea lists have earned a dollar amount (a forward record ahead of VOO) and which are research only."),
     "tax_shelter": ("/api/shelter", "Which accounts are tax-sheltered, this year's IRA/401(k)/HSA room left, and holdings better held in an IRA."),
+    "worth_it": ("/api/worth", "Is Plumbline worth it? Dollars it saved (calls followed, harvests, sells held off) against hosting and Claude costs."),
     "recurring_plan": ("/api/recurring", "How much you invest by hand each month, what's on autopilot, and a suggested recurring buy."),
     "quote": ("/api/quote/{symbol}", "Latest price and day change for a symbol."),
     "fundamentals": ("/api/fundamentals/{symbol}", "A company's quarterly revenue, margins, EPS, free cash flow and share count from its SEC filings."),

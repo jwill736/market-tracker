@@ -2219,10 +2219,12 @@ async def decisions_view():
     def run():
         return decisions.gather()
     items = await asyncio.to_thread(_analysis_cache.get, ("decisions", _ledger_key(), datetime_hour()), run)
+    from . import golive
     with db.connect() as conn:
         visible = decisions.sync(conn, items, date.today())
         past = decisions.history(conn, 20)
-    return {"as_of": datetime_hour(), "decisions": visible, "history": past, "evidence": decisions.EVIDENCE}
+        settle = golive.settling(golive.live_since(conn, bool(db.ledger(conn)), date.today()), date.today())
+    return {"as_of": datetime_hour(), "decisions": visible, "history": past, "evidence": decisions.EVIDENCE, "settling": settle}
 
 
 @app.post("/act/{token}")
@@ -2246,13 +2248,37 @@ async def decisions_scorecard():
     from . import cash, decisions
 
     def run():
+        from . import golive
         y, _ = cash.tbill_yield()
         with db.connect() as conn:
-            return decisions.scorecard(conn, lambda s: _closes(s, 800), date.today(), y)
+            since = golive.record_start(db.get_meta(conn, "live_since", "") or None)
+            return decisions.scorecard(conn, lambda s: _closes(s, 800), date.today(), y, since)
     with db.connect() as conn:
         conn.executescript(decisions.SCHEMA)
         stamp = tuple(conn.execute("SELECT COUNT(*), MAX(decided) FROM decisions WHERE decided != ''").fetchone())
     return await asyncio.to_thread(_analysis_cache.get, ("dscore", stamp, date.today().isoformat()), run)
+
+
+@app.get("/api/worth")
+async def worth_view():
+    """Is Plumbline worth it? Dollars it saved you against hosting and Claude costs."""
+    import json as _json
+    import os as _os
+
+    from . import cash, decisions, golive, worth
+
+    def run():
+        today = date.today()
+        y, _ = cash.tbill_yield()
+        with db.connect() as conn:
+            live = db.get_meta(conn, "live_since", "") or None
+            since = golive.record_start(live)
+            card = decisions.scorecard(conn, lambda s: _closes(s, 800), today, y, since)
+            log = _json.loads(db.get_meta(conn, "cooloff_log", "[]") or "[]")
+            txs, sp, host = db.ledger(conn), worth.spend(conn), worth.hosting_monthly(conn, _os.environ.get("PLUMBLINE_URL", ""))
+        kept = worth.held_off(log, txs, lambda s: _closes(s, 800), today, since)
+        return worth.view(card, kept, sp, live, today, host)
+    return await asyncio.to_thread(_analysis_cache.get, ("worth", _ledger_key(), date.today().isoformat()), run)
 
 
 class DecideIn(BaseModel):

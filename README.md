@@ -28,6 +28,19 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 | **Income** | Dividends received, forward income, yield on cost, upcoming ex/pay dates and the next 12 months | Robinhood CSV / SnapTrade, Yahoo, Nasdaq |
 | **Deep dive** | Streaming research memo. Claude takes the quantitative snapshot, then uses web search and fetch to read current primary sources. The memo ends in a structured verdict: rating, catalysts, risks, what would invalidate the thesis, and max position | Claude API (`claude-opus-5`) |
 
+## Going live (the order that matters)
+
+1. **Run it where it stays on**: `./deploy_fly.sh` (about $4-5 a month). It asks for a password, your email for the SEC
+   contact and your ntfy topic, and sets `PLUMBLINE_URL` so push buttons work.
+2. **Bring in your holdings**: Robinhood's account-activity CSV, Coinbase's API key (read-only is enough), and Stash typed
+   in from a statement (Accounts → Setup walks through each).
+3. **Check them**: upload a recent statement per account (Portfolio → Holdings → Check a statement). Money decisions stay
+   off until at least half your portfolio's value matches a broker or statement.
+4. **Say which accounts are tax-sheltered** (Accounts → Tax-sheltered accounts).
+5. **Add `ANTHROPIC_API_KEY`** for Ask and the Sunday letter (`fly secrets set ANTHROPIC_API_KEY=...`).
+6. **Wait out the two settling-in weeks**, then act on what Decisions says and let the record build. The first honest
+   verdict on whether the app helps comes at three months; on whether it's worth running, at six.
+
 ## Always on (alerts while your laptop sleeps)
 
 The app watches filings, the early wire, news and the people you follow only while it runs. Three ways to run it:
@@ -508,7 +521,7 @@ EPS against a year earlier. Releases lead with the company's own adjusted figure
 ## Ask Claude about your portfolio (read-only connector)
 
 `mt mcp` runs Plumbline as a Model Context Protocol server, so Claude Desktop or Claude Code can answer "why am I down this
-month?" or "which of my dividends look shaky?" from your own data. It has 43 tools and every one is a GET to the running
+month?" or "which of my dividends look shaky?" from your own data. It has 44 tools and every one is a GET to the running
 app (portfolio, accounts, weekly recap, brief, what moved, hold plan, news, performance, crises, overlap, style bets,
 10-K changes, earnings recap, dividend safety, income, taxes, events, data confidence, advice record, the screen, the
 idea scorecard, sleepers, chatter, theme crowding, money flow, the economy, priced-in checks, government contracts,
@@ -539,6 +552,20 @@ filled in; you preview and confirm there. **Plumbline never places an order by i
 days, Later for 7, and every approved or skipped call with a stock is written to the advice record at that day's price,
 so the app's own calls get scored against simply holding VOO. New decisions that matter (a sync to fix, a sell, stale
 data, a harvest, a switch backed by a broken thesis, a trim, idle cash) are pushed to your phone once.
+
+**It won't act on numbers it hasn't checked.** Money decisions (sell, trim, harvest, switch, idle cash, automate) are held
+back, and one "Check your numbers" decision shows instead, while more than 2% of the portfolio's value sits in holdings whose
+share count differs from a broker sync or statement, or less than half the value has been checked against either
+(Portfolio → Holdings → Check a statement, or an automatic sync). Tax-account, connection and data items still show.
+
+**Settling in.** For 14 days after the app first has your holdings, decisions show but aren't pushed (connection and data
+problems still are), and nothing decided in those weeks counts toward Plumbline's record: first imports are usually messy.
+
+**Is Plumbline worth it?** (Home, under Plumbline's call): dollars from calls you followed, tax that harvests saved, and
+sells the cooling-off talked you out of (what the shares you kept have done since, which can be negative), against
+hosting (counted at $5 a month when the app runs on Fly.io) and the estimated Claude spend. It gives a verdict at
+six months, and if the app has cost more than it saved, it says to switch it off and hold VOO. It undercounts a little:
+fees you cut and tax saved by waiting aren't visible to it.
 
 **From your phone.** With `PLUMBLINE_URL` set to where the app runs (`deploy_fly.sh` sets it), a push about one new
 decision carries three buttons: **Do it** opens that decision with its trade ticket filled in, **Later** and **Skip** record

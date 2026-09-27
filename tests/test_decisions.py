@@ -72,6 +72,7 @@ def test_sentinel_decides_once_a_day_and_pushes_new(monkeypatch):
     with db.connect() as conn:
         conn.execute("DROP TABLE IF EXISTS decisions")
         db.set_meta(conn, "decisions_day", "")
+        db.set_meta(conn, "live_since", "2026-01-05")                  # past the settling-in weeks
     early = datetime(2026, 9, 28, 10, tzinfo=timezone.utc)      # 6am ET: too early
     assert sentinel.decisions_daily(early, gather_fn=lambda d: items) == 0
     t = datetime(2026, 9, 28, 14, tzinfo=timezone.utc)
@@ -81,3 +82,21 @@ def test_sentinel_decides_once_a_day_and_pushes_new(monkeypatch):
     from market_tracker import advice
     with db.connect() as conn:
         assert any(r["source"] == "decision" and r["symbol"] == "BAD" for r in advice.logged(conn))
+
+
+def test_settling_in_pushes_only_problems_and_logs_nothing(monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda m: sent.append(m))
+    items = decisions.build(_plan(holdings=[{"symbol": "BAD", "verdict": "Sell?", "value": 5000.0, "triggers": []}]),
+                            health=[{"key": "health:cb:x", "name": "Coinbase", "text": "Coinbase: failing"}], today=date(2026, 9, 28))
+    from market_tracker import advice
+    with db.connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS decisions")
+        conn.executescript(advice.SCHEMA)
+        conn.execute("DELETE FROM advice_log")
+        db.set_meta(conn, "decisions_day", "")
+        db.set_meta(conn, "live_since", "2026-09-20")                  # 8 days in
+    assert sentinel.decisions_daily(datetime(2026, 9, 28, 14, tzinfo=timezone.utc), gather_fn=lambda d: items) == 2
+    assert [m.title for m in sent] == ["Fix the Coinbase connection"]
+    with db.connect() as conn:
+        assert advice.logged(conn) == [] or all(r["source"] != "decision" for r in advice.logged(conn))
