@@ -179,6 +179,7 @@ class Sentinel:
                     pass
             try:
                 await asyncio.to_thread(send_brief_if_due)
+                await asyncio.to_thread(send_weekly_if_due)
             except Exception:
                 pass
             try:
@@ -246,13 +247,33 @@ def send_brief_if_due(now: datetime | None = None, gather_fn=None) -> bool:
     now = now or datetime.now(timezone.utc)
     with db.connect() as conn:
         last = db.get_meta(conn, "brief_sent", "")
-    if not brief.due(now, last):
+        cadence = db.get_meta(conn, "push_cadence", "weekly") or "weekly"
+    if cadence == "weekly" or not brief.due(now, last):
         return False
     b = (gather_fn or brief.gather)(now=now)
     with db.connect() as conn:
         db.set_meta(conn, "brief_sent", b["date"])
         db.set_meta(conn, "brief_latest", json.dumps(b))
     notify.send(notify.Message(title=b["title"], body=brief.push_text(b), priority=3, tags=("sunrise",)))
+    return True
+
+
+def send_weekly_if_due(now: datetime | None = None, gather_fn=None) -> bool:
+    """The weekly recap, Sunday 5pm Eastern (saved for the app; pushed unless you chose daily only)."""
+    import json
+    from . import weekly
+    now = now or datetime.now(timezone.utc)
+    with db.connect() as conn:
+        last = db.get_meta(conn, "weekly_sent", "")
+        cadence = db.get_meta(conn, "push_cadence", "weekly") or "weekly"
+    if not weekly.due(now, last):
+        return False
+    r = (gather_fn or weekly.gather)(now=now)
+    with db.connect() as conn:
+        db.set_meta(conn, "weekly_sent", now.astimezone(weekly.ET).date().isoformat())
+        db.set_meta(conn, "weekly_latest", json.dumps(r))
+    if cadence != "daily":
+        notify.send(notify.Message(title=r["title"], body=weekly.push_text(r), priority=3, tags=("calendar",)))
     return True
 
 

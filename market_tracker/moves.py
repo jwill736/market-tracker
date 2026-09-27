@@ -22,7 +22,8 @@ NEWS_HOURS = 36
 
 def typical_move(closes: list[float], n: int = 60) -> float | None:
     """Standard deviation of daily % changes over the last n days."""
-    rets = [(b / a - 1) * 100 for a, b in zip(closes[-n - 1:], closes[-n:]) if a > 0]
+    tail = closes[-n - 1:]
+    rets = [(b / a - 1) * 100 for a, b in zip(tail, tail[1:]) if a > 0]
     if len(rets) < 20:
         return None
     m = sum(rets) / len(rets)

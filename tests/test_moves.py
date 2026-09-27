@@ -29,3 +29,9 @@ def test_today_attributes_dollars_and_flags_big_moves_with_reasons():
     assert out["headline"].startswith("Down $") and "NKE took off $1,000" in out["headline"]
     title, body = moves.push_text(nke)
     assert title.startswith("NKE down 10.0% (-$1,000), 5.6× its usual move") and "Nike cuts outlook" in body
+
+
+def test_typical_move_with_fewer_than_sixty_days():
+    closes = [100.0, 101.0] * 15          # 30 closes: every day +1% or about -1%
+    sd = moves.typical_move(closes)
+    assert sd is not None and 0.9 < sd < 1.1

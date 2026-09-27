@@ -36,6 +36,8 @@ WATCH_WORDS = re.compile(r"investigat|subpoena|material weakness|going concern|r
 def html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<(script|style|ix:header)[^>]*>.*?</\1>", " ", html)
     html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table)>", "\n", html)
+    # Inline tags join what they wrap: small-caps headings are often "R<span>ISK</span> F<span>ACTORS</span>".
+    html = re.sub(r"(?i)</?(span|font|a|b|i|u|em|strong|small|sup|sub|ix:[a-z]+)\b[^>]*>", "", html)
     text = htmllib.unescape(re.sub(r"<[^>]+>", " ", html))
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -161,10 +163,21 @@ def _cache_dir() -> str:
     return d
 
 
-def filings_for(symbol: str, forms: set[str], n: int = 2, get=None) -> list[dict]:
+def cik_of(symbol: str) -> str | None:
+    """SEC's ticker list writes share classes with a dash (BRK-B); other sources use a dot."""
+    from .providers import sec
+    m = sec.ticker_map()
+    for t in dict.fromkeys((symbol, symbol.replace(".", "-"), symbol.replace("-", "."))):
+        cik = m.cik_for(t)
+        if cik:
+            return cik
+    return None
+
+
+def filings_for(symbol: str, forms: set[str], n: int = 2, get=None, cik: str | None = None) -> list[dict]:
     """The latest n filings of these forms: {form, filed, period, url, accession}."""
     from .providers import sec
-    cik = sec.ticker_map().cik_for(symbol.replace("-", "."))
+    cik = cik or cik_of(symbol)
     if not cik:
         return []
     data = (get or sec._sec_get)(sec.SUBMISSIONS.format(cik=cik))
@@ -190,7 +203,7 @@ def document_text(url: str, get=None) -> str:
             return fh.read()
     except OSError:
         pass
-    raw = (get or sec._sec_get)(url, ttl=86400, as_json=False)
+    raw = (get or sec._sec_get)(url, ttl=0, as_json=False)      # the text is kept on disk; don't hold the HTML in memory
     text = html_to_text(raw)
     with gzip.open(path, "wt", encoding="utf-8") as fh:
         fh.write(text)

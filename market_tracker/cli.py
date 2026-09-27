@@ -564,6 +564,38 @@ def cmd_service(args) -> int:
     return getattr(bgservice, args.action)(args.port)
 
 
+def cmd_tenk_rank(args) -> int:
+    """Rank every S&P 500 company's latest 10-K changes (the weekly GitHub job runs this)."""
+    import json
+
+    from . import tenkrank
+    previous = None
+    if args.previous and os.path.exists(args.previous):
+        with open(args.previous, encoding="utf-8") as fh:
+            previous = json.load(fh)
+    data = tenkrank.run(previous, budget_seconds=args.budget_minutes * 60, limit=args.limit or None)
+    tmp = args.out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+    os.replace(tmp, args.out)
+    ok = [c for c in data["companies"] if c.get("risk_new") is not None]
+    print(f"{len(ok)} of {data['universe']} companies ranked; most changed:")
+    for c in tenkrank.most_changed(data, 10):
+        print(f"  {c['symbol']:6} {c['risk_new'] * 100:5.1f}% new  ({c['name']}, filed {c['filed']})")
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        print('The Claude connector needs the MCP SDK: pip install -e ".[mcp]"', file=sys.stderr)
+        return 1
+    from . import mcp_server
+    mcp_server.main()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mt", description="Market tracker")
     sub = p.add_subparsers(dest="command", required=True)
@@ -665,6 +697,16 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("setup", help="First-run setup: your SEC contact email and phone alerts")
     s.add_argument("--if-needed", action="store_true", help="Only when .env is missing or has no email yet")
     s.set_defaults(func=cmd_setup)
+
+    s = sub.add_parser("tenk-rank", help="Rank S&P 500 companies by how much their latest 10-K changed")
+    s.add_argument("--out", default="tenk_rank.json")
+    s.add_argument("--previous", help="Last run's file: companies with no new 10-K are reused")
+    s.add_argument("--budget-minutes", type=float, default=240)
+    s.add_argument("--limit", type=int, default=0, help="Only the first N companies (for a quick check)")
+    s.set_defaults(func=cmd_tenk_rank)
+
+    s = sub.add_parser("mcp", help="Read-only Claude connector (MCP over stdio) for Claude Desktop or Claude Code")
+    s.set_defaults(func=cmd_mcp)
 
     s = sub.add_parser("serve", help="Run the web dashboard")
     s.add_argument("--host", default="127.0.0.1")

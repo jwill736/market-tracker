@@ -64,6 +64,10 @@ def test_sentinel_sends_once(monkeypatch):
     now = datetime(2026, 9, 28, 12, 31, tzinfo=timezone.utc)
     with db.connect() as conn:
         db.set_meta(conn, "brief_sent", "")
+        db.set_meta(conn, "push_cadence", "weekly")
+    assert not sentinel.send_brief_if_due(now, gather_fn=lambda now: fake)       # weekly (the default): no daily push
+    with db.connect() as conn:
+        db.set_meta(conn, "push_cadence", "both")
     assert sentinel.send_brief_if_due(now, gather_fn=lambda now: fake)
     assert not sentinel.send_brief_if_due(now, gather_fn=lambda now: fake)
     assert len(sent) == 1 and sent[0].title == fake["title"] and "Holding is the plan." in sent[0].body

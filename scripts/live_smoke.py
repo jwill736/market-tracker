@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, filings, stress, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, divsafety, earnings, factors, filings, stress, tenkrank, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -455,6 +455,52 @@ def _():
     covid = stress.window_return(spy, "2020-02-19", "2020-03-23")
     assert -0.4 < covid < -0.25, covid
     return f"{len(spy):,} days from {spy[0][0]}; 2008 {fall:.0%}, 2020 {covid:.0%}"
+
+
+@check("Style bets: Kenneth French's daily factor files, VOO's loadings")
+def _():
+    ff = factors.load()
+    last = max(ff)
+    assert (date.today() - date.fromisoformat(last)).days < 150, f"factor file ends {last}"
+    voo = [(b.date, b.close) for b in market.get_history("VOO", 800)]
+    r = factors.exposure(factors._returns(voo), ff)
+    mkt = r["loadings"][0]["beta"]
+    assert 0.9 < mkt < 1.1 and r["r2"] > 0.9, r
+    return f"{len(ff):,} days to {last}; VOO market {mkt:.2f}, R² {r['r2']:.2f} over {r['days']} days"
+
+
+@check("Earnings recap: AAPL's latest results release (8-K ex. 99.1)")
+def _():
+    r = earnings.recap("AAPL")
+    assert r and r["release"]["url"].endswith((".htm", ".html")), r
+    assert len(r["highlights"]) >= 2 and any("revenue" in h.lower() or "net sales" in h.lower() or "per share" in h.lower() for h in r["highlights"]), r["highlights"]
+    re_ = r.get("reaction") or {}
+    return (f"filed {r['release']['filed']}; {len(r['highlights'])} headline sentences, outlook {r['outlook']['direction']}; "
+            f"stock {re_.get('move_pct')}% next day; e.g. {r['highlights'][0][:90]}")
+
+
+@check("Dividend safety: KO and JNJ from SEC cash flows and Yahoo dividend history")
+def _():
+    out = []
+    for sym in ("KO", "JNJ"):
+        g = divsafety.for_symbol(sym)
+        assert g and g["grade"] in "ABCD" and g["fcf_payout"] and 20 < g["fcf_payout"] < 150, (sym, g)
+        assert g["history"]["years_growing"] >= 10, (sym, g["history"])
+        out.append(f"{sym} {g['grade']} ({g['fcf_payout']:.0f}% of FCF, {g['history']['years_growing']} yrs of raises)")
+    return "; ".join(out)
+
+
+@check("10-K ranking: S&P 500 list from Wikipedia, one company scored")
+def _():
+    cos = tenkrank.universe()
+    assert len(cos) >= 480, len(cos)
+    aapl = next(c for c in cos if c["symbol"] == "AAPL")
+    assert aapl["cik"] == "0000320193", aapl
+    brk = next((c for c in cos if c["symbol"] == "BRK-B"), None)
+    e = tenkrank.score_one(next(c for c in cos if c["symbol"] == "MSFT"), None)
+    assert e.get("risk_new") is not None and e["risk_words"] > 3000, e
+    src = "Wikipedia" if any(c["sector"] for c in cos) else "IVV holdings (Wikipedia unavailable)"
+    return f"{len(cos)} companies from {src} (BRK-B {'found' if brk else 'missing'}); MSFT 10-K {e['filed']}: {e['risk_new']:.0%} of Risk Factors new"
 
 
 def main() -> int:

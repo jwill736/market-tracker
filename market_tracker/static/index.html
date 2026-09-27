@@ -77,6 +77,14 @@
         <span class="muted small"><span id="hb-when"></span> · <button type="button" class="linkish" id="hb-more">Show all</button></span></div>
       <ul class="brief-list" id="hb-list"></ul>
     </div>
+    <div class="card brief-card" id="home-weekly" hidden>
+      <div class="card-head"><h2 id="wk-title">This week</h2>
+        <span class="muted small"><label>Push to phone <select id="wk-cadence" aria-label="Which recap pushes to your phone">
+          <option value="weekly">weekly recap (Sunday 5pm ET)</option><option value="daily">daily brief only</option><option value="both">both</option></select></label>
+          · <button type="button" class="linkish" id="wk-send">Send now</button></span></div>
+      <ul class="brief-list" id="wk-list"></ul>
+      <p class="muted small" id="wk-note">Checking less often means fewer fear-driven sales. Urgent things (serious filings, big moves, failed syncs) still push the moment they happen.</p>
+    </div>
     <div class="home-grid">
       <div class="home-main">
         <div class="rh-hero">
@@ -214,6 +222,10 @@
     <div class="card"><div class="card-head"><h2>By holding</h2></div>
       <div class="table-wrap"><table class="data in-table"><thead><tr><th>Symbol</th><th>Per share</th><th>A year (yours)</th>
         <th>Yield on cost</th><th>Yield now</th><th>Paid, last 12 mo</th></tr></thead><tbody id="in-rows"></tbody></table></div></div>
+    <div class="card"><div class="card-head"><h2>Dividend safety</h2><span class="muted small" id="ds-meta"></span></div>
+      <p class="muted small">How likely each dividend is to be cut, from the company's own filings: dividends against free cash flow and profit,
+        debt against operating profit, and its record of raises and cuts. Rules of thumb, not a fitted model.</p>
+      <div id="ds-out" class="small"><button type="button" class="secondary small" id="ds-load">Grade my dividends</button></div></div>
     <div class="card"><div class="card-head"><h2>Received</h2></div><ul class="hp-lines" id="in-received"></ul></div>
   </section>
 
@@ -476,6 +488,10 @@
     </div>
     <div class="card"><div class="card-head"><h2>News</h2><span id="sym-news-pill" class="pill"></span></div>
       <div id="sym-news-terms" class="terms"></div><ul id="sym-news" class="news"></ul></div>
+    <div class="card" id="sym-earn" hidden>
+      <div class="card-head"><h2>Latest results</h2><span class="muted small" id="se-meta"></span></div>
+      <div id="se-out" class="small"></div>
+    </div>
     <div class="card" id="sym-ask">
       <h2>Ask the company's filings</h2>
       <p class="muted small">Answered only from its latest annual (10-K) or quarterly (10-Q) report, with the passages quoted. Uses your
@@ -483,7 +499,8 @@
       <form class="stack" id="ask-form">
         <input id="ask-q" maxlength="600" required placeholder="e.g. How much revenue comes from China, and what do they say about tariffs?" aria-label="Question">
         <div class="row"><label class="check"><input type="checkbox" id="ask-10k" checked> Annual report (10-K)</label>
-          <label class="check"><input type="checkbox" id="ask-10q"> Latest quarter (10-Q)</label><button type="submit">Ask</button></div>
+          <label class="check"><input type="checkbox" id="ask-10q"> Latest quarter (10-Q)</label>
+          <label class="check"><input type="checkbox" id="ask-er"> Results press release</label><button type="submit">Ask</button></div>
       </form>
       <div id="ask-out" class="small"></div>
     </div>
@@ -696,6 +713,16 @@
         Research found companies whose reports change a lot tend to do worse afterwards, and the market is slow to notice (Cohen,
         Malloy &amp; Nguyen, "Lazy Prices", 2020).</p>
       <div id="tk-out" class="small"><button type="button" class="secondary small" id="tk-load">Compare the reports</button></div>
+      <details class="small" id="tk-most"><summary>S&amp;P 500 reports that changed most this year</summary>
+        <p class="muted">From a weekly job that reads every S&amp;P 500 company's last two 10-Ks. A look-before-you-buy list, not a sell list:
+          a big change can be a new business as well as new trouble. Read the new sentences.</p><div id="tk-most-out"></div></details>
+    </div>
+    <div class="card">
+      <h2 id="factors">Hidden style bets</h2>
+      <p class="muted small">Your stocks and funds, weighted as you hold them today, against the six standard return factors (Fama-French five plus
+        momentum, from Kenneth French's free data). It shows what you're really exposed to: a portfolio of "different" companies can be one bet on
+        large growth stocks. Coins are left out (the factors are US stocks).</p>
+      <div id="fx-out" class="small"><button type="button" class="secondary small" id="fx-load">Find my style bets</button></div>
     </div>
   </section>
 
