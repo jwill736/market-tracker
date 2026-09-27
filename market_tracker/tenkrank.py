@@ -28,6 +28,7 @@ WIKI_UA = "Plumbline/1.0 (https://github.com/jwill736/market-tracker; personal p
 FILE = "tenk_rank.json"
 FRESH_DAYS = 400            # a 10-K filed within this many days counts as this year's
 MIN_UNIVERSE = 450
+METHOD = 2                  # bump when the comparison changes: entries from an older method are recomputed
 
 
 def parse_universe(page: str) -> list[dict]:
@@ -97,7 +98,8 @@ def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict
     if len(docs) < 2:
         return dict(co, error="fewer than two 10-Ks on file")
     cur, prev = docs
-    if prev_entry and prev_entry.get("acc") == cur["accession"] and prev_entry.get("prev_acc") == prev["accession"] and not prev_entry.get("error"):
+    if (prev_entry and prev_entry.get("acc") == cur["accession"] and prev_entry.get("prev_acc") == prev["accession"]
+            and not prev_entry.get("error") and prev_entry.get("method") == METHOD):
         return dict(prev_entry, **{k: co[k] for k in ("name", "sector")})
     text_fn = text_fn or (lambda u: filings.document_text(u, get))
     a, b = text_fn(prev["url"]), text_fn(cur["url"])
@@ -109,7 +111,7 @@ def score_one(co: dict, prev_entry: dict | None, get=None, text_fn=None) -> dict
                     error=f"Risk Factors not found ({risk['words']} words; 'Item 1A' appears as: {seen})")
     return dict(co, acc=cur["accession"], prev_acc=prev["accession"], filed=cur["filed"], prev_filed=prev["filed"],
                 url=cur["url"], risk_new=risk["new_share"], risk_sim=risk["similarity"], risk_words=risk["words"],
-                new_count=risk["new_count"], legal_new=legal["new_share"], sample=risk["new"][:2],
+                new_count=risk["new_count"], legal_new=legal["new_share"], sample=risk["new"][:2], method=METHOD,
                 computed=datetime.now(timezone.utc).date().isoformat())
 
 

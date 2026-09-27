@@ -36,8 +36,9 @@ WATCH_WORDS = re.compile(r"investigat|subpoena|material weakness|going concern|r
 def html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<(script|style|ix:header)[^>]*>.*?</\1>", " ", html)
     html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table)>", "\n", html)
-    # Inline tags join what they wrap: small-caps headings are often "R<span>ISK</span> F<span>ACTORS</span>".
-    html = re.sub(r"(?i)</?(span|font|a|b|i|u|em|strong|small|sup|sub|ix:[a-z]+)\b[^>]*>", "", html)
+    # Small-caps headings split a word across tags: "R<span>ISK</span> F<span>ACTORS</span>". Join only that
+    # pattern (a lone capital, tags, more capitals); every other tag stays a space so words never run together.
+    html = re.sub(r"(?<![A-Za-z])([A-Z])(?:</?(?:span|font|small|b|strong)\b[^>]*>)+(?=[A-Z])", r"\1", html)
     text = htmllib.unescape(re.sub(r"<[^>]+>", " ", html))
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -46,15 +47,20 @@ def html_to_text(html: str) -> str:
 
 def section(text: str, key: str) -> str:
     """The longest span from a section heading to the next section's heading (skips the table
-    of contents, where the same headings sit a line apart)."""
+    of contents, where the same headings sit a line apart). A heading with no next heading after
+    it is a cross-reference late in the report ("see Item 1A. Risk Factors"), not the section:
+    it's used only when nothing else is found."""
     start_re, end_re = SECTIONS[key]
-    best = ""
+    best, fallback = "", ""
     for m in re.finditer(start_re, text, re.I):
         end = re.compile(end_re, re.I).search(text, m.end())
-        chunk = text[m.end(): end.start() if end else min(len(text), m.end() + 400_000)]
-        if len(chunk) > len(best):
-            best = chunk
-    return best.strip()
+        if end:
+            chunk = text[m.end(): end.start()]
+            if len(chunk) > len(best):
+                best = chunk
+        elif not fallback:
+            fallback = text[m.end(): min(len(text), m.end() + 200_000)]
+    return (best or fallback).strip()
 
 
 STOP = frozenset("""the and for that with are this from not our may could its which have has any other such can been

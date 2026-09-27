@@ -49,7 +49,7 @@ def test_run_reuses_unchanged_companies_and_reads_new_ones(monkeypatch):
         reads.append(url)
         return (new_risk if url.endswith("/2") else risk) + " Item 1B. Unresolved"
     prev = {"companies": [{"symbol": f"C{i}", "name": f"Co {i}", "sector": "X", "acc": f"C{i}-1", "prev_acc": f"C{i}-0", "filed": "2026-02-01",
-                           "risk_new": 0.01} for i in range(460)]}
+                           "risk_new": 0.01, "method": tenkrank.METHOD} for i in range(460)]}
     out = tenkrank.run(prev, get=lambda u, **k: {}, text_fn=text, log=lambda *_: None)
     assert reads == ["u/C1/0", "u/C1/2"]               # only the company with a new 10-K is read
     c1 = next(c for c in out["companies"] if c["symbol"] == "C1")
@@ -71,3 +71,12 @@ def test_universe_falls_back_to_fund_holdings(monkeypatch):
         raise AssertionError("expected DataUnavailable")
     except http.DataUnavailable as exc:
         assert "403 Forbidden" in str(exc) and "IVV holdings: 0 matched" in str(exc)
+
+
+def test_entries_from_an_older_method_are_recomputed(monkeypatch):
+    monkeypatch.setattr(filings, "filings_for", lambda symbol, forms, n=2, get=None, cik=None: [
+        {"accession": "A-1", "url": "u/1", "filed": "2026-02-01"}, {"accession": "A-0", "url": "u/0", "filed": "2025-02-01"}])
+    risk = "Item 1A. Risk Factors " + " ".join(f"Risk sentence number {i} explains a separate hazard for the business." for i in range(80))
+    old = {"symbol": "A", "acc": "A-1", "prev_acc": "A-0", "risk_new": 0.99}
+    e = tenkrank.score_one({"symbol": "A", "name": "A", "sector": "X", "cik": ""}, old, text_fn=lambda u: risk + " Item 1B. Unresolved")
+    assert e["method"] == tenkrank.METHOD and e["risk_new"] == 0.0
