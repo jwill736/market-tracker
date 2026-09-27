@@ -2,20 +2,21 @@ from market_tracker import discover
 
 
 def test_sleepers_need_evidence_and_quiet():
-    screen_data = {"small_mid": [{"symbol": "AAA", "name": "A Co", "score": 80, "flaws": [], "cap": 2e9, "sector": "Tech", "return_12m_pct": 50, "above_200d": 0.05},
-                                 {"symbol": "HOT", "name": "Hot Co", "score": 85, "flaws": [], "cap": 3e9, "sector": "Tech", "return_12m_pct": 97, "above_200d": 0.5},
-                                 {"symbol": "LOUD", "name": "Loud", "score": 75, "flaws": [], "cap": 3e9, "sector": "Tech", "return_12m_pct": 40, "above_200d": 0.1}],
-                   "backlog": [{"symbol": "AAA", "why": "Backlog +40% vs revenue +10%"}]}
+    base = {"flaws": [], "cap": 2e9, "sector": "Tech", "return_12m_pct": 50, "above_200d": 0.05}
+    small_mid = [dict(base, symbol="AAA", name="A Co", score=80), dict(base, symbol="HOT", name="Hot Co", score=85, return_12m_pct=97, above_200d=0.5),
+                 dict(base, symbol="LOUD", name="Loud", score=75)] + [dict(base, symbol=f"F{i}", name=f"Filler {i}", score=72) for i in range(6)]
+    screen_data = {"small_mid": small_mid, "backlog": [{"symbol": "AAA", "why": "Backlog +40% vs revenue +10%"}]}
     ins = {"AAA": {"cik": "1", "company": "A Co", "value": 2e6, "reasons": ["3 insiders bought $2.0M"], "insider": "X", "trade_date": "2026-09-01"},
            "BBB": {"cik": "2", "company": "B Co", "value": 1e6, "reasons": ["2 insiders bought $1.0M"], "insider": "Y", "trade_date": "2026-09-01"}}
     lookup = {"BBB": {"cap": 1e9, "score": 55, "return_12m_pct": 30, "above_200d": 0.0, "sector": "Energy"}}.get
-    news = {"AAA": 1, "HOT": 0, "LOUD": 12, "BBB": 2}
+    news = {"AAA": 3, "HOT": 0, "LOUD": 40, "BBB": 2, **{f"F{i}": 20 + i for i in range(6)}}
     rows = discover.sleepers(screen_data, ins, lookup, lambda s, n: news[s], lambda c: {"kind": "routine"} if c["insider"] == "Y" else {"kind": "opportunistic"})
     by = {r["symbol"]: r for r in rows}
     assert "HOT" not in by                          # already ran
+    assert "BBB" not in by                          # its insider buying is a yearly habit, and being quiet alone isn't evidence
     assert by["AAA"]["level"] == "sleeper" and by["AAA"]["evidence"] == 4 and any("not a yearly habit" in w for w in by["AAA"]["why"])
-    assert by["LOUD"]["evidence"] == 1 and "people are watching" in by["LOUD"]["why"][-1]
-    assert "BBB" not in by           # its insider buying is a yearly habit, and being quiet alone isn't evidence
+    assert "quietest third" in by["AAA"]["why"][-1]
+    assert by["LOUD"]["evidence"] == 1 and by["LOUD"]["why"][-1] == "40 headlines this week"
 
 
 def test_chatter_ranks_by_heat_and_warns():

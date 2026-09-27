@@ -40,3 +40,12 @@ def test_score_against_voo_and_leaderboard():
     assert board["qvm"]["6m"]["beat_voo"] == 100 and board["chatter"]["6m"]["beat_voo"] == 0
     assert board["chatter"]["12m"]["worst"] < -20 and not board["qvm"]["6m"]["enough"]
     assert r["decisions"]["bought"]["n"] == 1 and r["verdict"].startswith("Too early to tell")
+
+
+def test_sentinel_logs_ideas_once_a_day():
+    from market_tracker import sentinel
+    items = [{"symbol": "ZZZ", "source": "qvm", "price": 5.0, "reason": "grade 90"}]
+    with db.connect() as conn:
+        db.set_meta(conn, "ideas_logged", "")
+    assert sentinel.log_ideas_daily(date(2026, 3, 2), items_fn=lambda d: items) == 1
+    assert sentinel.log_ideas_daily(date(2026, 3, 2), items_fn=lambda d: 1 / 0) == 0          # already ran today: not even computed

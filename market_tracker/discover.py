@@ -5,7 +5,9 @@ several independent pieces of evidence line up:
 - a good grade on the weekly quality, value and momentum screen, with no fatal flaw;
 - insiders buying with their own money outside their usual habit (opportunistic buying);
 - contracted backlog growing faster than revenue;
-- little attention: five or fewer headlines this week (a quiet name counts as one more piece of evidence);
+- little attention: among the quietest third of this week's candidates by headline count (a quiet name
+  counts as one more piece of evidence; absolute counts mean little, since news aggregators write
+  something about almost every listed company every day);
 - not already a rocket: 12-month return below the top 10% and less than 30% above the 200-day average.
 One piece of evidence is a lead; three is a sleeper. Smaller companies are where these signals
 have historically been strongest, and also where they fail hardest.
@@ -27,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import http
 
 SPECULATIVE_CAP = 0.10
-QUIET_NEWS_7D = 5
+QUIET_SHARE = 1 / 3
 FUND_WORDS = ("ETF", " FUND", "TRUST", "PROSHARES", "ISHARES", "DIREXION", "SPDR", "INVESCO QQQ", "TREASURY", "ULTRA", "2X", "3X")
 APEWISDOM = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
 
@@ -42,7 +44,7 @@ def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn
             pool[s] = dict(symbol=s, score=row.get("score"), cap=row["cap"], sector=row.get("sector"), return_12m_pct=row.get("return_12m_pct"),
                            above_200d=row.get("above_200d"), name=(insider_cands.get(s) or {}).get("company", ""), flaws=[])
 
-    def assess(s):
+    def evidence(s):
         r = pool[s]
         ev, why = 0, []
         if (r.get("score") or 0) >= 70 and not r.get("flaws"):
@@ -58,22 +60,34 @@ def sleepers(screen_data: dict | None, insider_cands: dict[str, dict], lookup_fn
             ev += 1
             why.append(backlog[s]["why"])
         hot = (r.get("return_12m_pct") or 0) >= 90 or (r.get("above_200d") or 0) >= 0.3
-        if hot or ev == 0:
-            return None
+        return (None if hot or ev == 0 else (ev, why))
+
+    def headlines(s):
         try:
-            n7 = news_fn(s, r.get("name") or None)
+            return news_fn(s, pool[s].get("name") or None)
         except Exception:  # noqa: BLE001 - attention unknown
-            n7 = None
-        if n7 is not None and n7 <= QUIET_NEWS_7D:
-            ev += 1
-            why.append(f"quiet: {n7} headline{'s' if n7 != 1 else ''} this week")
-        elif n7 is not None:
-            why.append(f"{n7} headlines this week: people are watching")
-        return dict(symbol=s, name=r.get("name", ""), sector=r.get("sector"), cap=r.get("cap"), score=r.get("score"), evidence=ev,
-                    level="sleeper" if ev >= 3 else "strong lead" if ev == 2 else "lead", why=why)
+            return None
+
     cands = sorted(pool, key=lambda s: (-(s in insider_cands) - (s in backlog), -(pool[s].get("score") or 0)))[:60]
     with ThreadPoolExecutor(max_workers=6) as ex:
-        found = [x for x in ex.map(assess, cands) if x]
+        ev = dict(zip(cands, ex.map(evidence, cands)))
+        live = [s for s in cands if ev[s]]
+        counts = dict(zip(live, ex.map(headlines, live)))
+    known = sorted(v for v in counts.values() if v is not None)
+    quiet_line = known[max(0, int(len(known) * QUIET_SHARE) - 1)] if len(known) >= 6 else None
+    found = []
+    for s in live:
+        n, why = ev[s]
+        why = list(why)
+        c = counts.get(s)
+        if c is not None and quiet_line is not None and c <= quiet_line:
+            n += 1
+            why.append(f"quiet: {c} headlines this week, among the quietest third of these companies")
+        elif c is not None:
+            why.append(f"{c} headlines this week")
+        r = pool[s]
+        found.append(dict(symbol=s, name=r.get("name", ""), sector=r.get("sector"), cap=r.get("cap"), score=r.get("score"), evidence=n,
+                          level="sleeper" if n >= 3 else "strong lead" if n == 2 else "lead", why=why))
     return sorted(found, key=lambda x: (-x["evidence"], -(x["score"] or 0)))[:limit]
 
 
