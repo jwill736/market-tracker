@@ -28,7 +28,7 @@ WIKI_UA = "Plumbline/1.0 (https://github.com/jwill736/market-tracker; personal p
 FILE = "tenk_rank.json"
 FRESH_DAYS = 400            # a 10-K filed within this many days counts as this year's
 MIN_UNIVERSE = 450
-METHOD = 3                  # bump when the comparison changes: entries from an older method are recomputed
+METHOD = 4                  # bump when the comparison changes: entries from an older method are recomputed
 
 
 def parse_universe(page: str) -> list[dict]:

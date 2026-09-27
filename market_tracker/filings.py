@@ -36,10 +36,9 @@ WATCH_WORDS = re.compile(r"investigat|subpoena|material weakness|going concern|r
 def html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<(script|style|ix:header)[^>]*>.*?</\1>", " ", html)
     html = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d|table)>", "\n", html)
-    # Small-caps headings split a word across tags: "R<span>ISK</span>" or "R<span style=small-caps>isk</span>".
-    # Join only that pattern (a lone capital straight into a tag and more letters); every other tag stays a
-    # space so ordinary words never run together.
-    html = re.sub(r"(?<![A-Za-z])([A-Z])(?:</?(?:span|font|small|b|strong)\b[^>]*>)+(?=[A-Za-z])", r"\1", html)
+    # Inline tags add no space, as in a browser: filings split words across spans at any point
+    # ("RIS</span><span>K FACTORS", "R<span>ISK</span>") and carry their spaces inside the spans.
+    html = re.sub(r"(?i)</?(span|font|a|b|i|u|em|strong|small|sup|sub|ix:[a-z]+)\b[^>]*>", "", html)
     text = htmllib.unescape(re.sub(r"<[^>]+>", " ", html))
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
