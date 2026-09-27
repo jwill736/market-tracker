@@ -7,8 +7,11 @@ Quantity, Price, Amount. Buys and sells become ledger transactions; stock splits
 zero-cost buy of the extra shares (the cost basis is unchanged, the average cost falls).
 Dividends (CDIV, MDIV), foreign tax withheld on them (DTAX) and interest (INT, SLIP) become
 income rows for the Income tab; a reinvested dividend is also its own Buy row in the file.
-Everything else (deposits, options, transfers) is counted and skipped: this ledger tracks share
-positions, and a transferred-in position has no cost basis in the file.
+Shares transferred in from another broker (ACATI) and stock rewards (REC) are imported as shares
+with the cost marked as needed: the file has no price for them, and without them a later sale of
+those shares would look like selling what you never had. Enter the original cost and purchase date
+under Transfers; until then money decisions wait (golive.py). Shares transferred out (ACATO) become
+the "out" side of a move. Everything else (deposits, options) is counted and skipped.
 
 Each imported row carries a key derived from its contents, so importing the same file twice,
 or overlapping date ranges, adds nothing twice.
@@ -27,6 +30,7 @@ from datetime import datetime
 from .providers import market
 
 ROBINHOOD_COLUMNS = {"Activity Date", "Instrument", "Trans Code", "Quantity", "Price", "Amount"}
+NEEDS_COST = {"ACATI": "Transferred in (ACATS): original cost needed", "REC": "Stock reward: value when received needed"}
 ROBINHOOD_INCOME = {"CDIV": "dividend", "MDIV": "dividend", "QDIV": "dividend", "DTAX": "tax_withheld",
                     "INT": "interest", "SLIP": "interest"}
 
@@ -113,6 +117,13 @@ def parse_robinhood(text: str) -> ImportResult:
                                      "price": 0.0, "fees": 0.0, "date": day,
                                      "note": "Robinhood import: stock split shares", "import_key": key,
                                      "account": "Robinhood"})
+        elif code in NEEDS_COST and instrument and day and qty and qty > 0:
+            res.transactions.append({"symbol": market.normalize_symbol(instrument), "side": "buy", "quantity": qty,
+                                     "price": 0.0, "fees": 0.0, "date": day, "note": NEEDS_COST[code], "import_key": key,
+                                     "account": "Robinhood"})
+        elif code == "ACATO" and instrument and day and qty:
+            res.transfers.append({"symbol": market.normalize_symbol(instrument), "direction": "out", "quantity": abs(qty),
+                                  "day": day, "account": "Robinhood", "import_key": key, "note": "ACATS transfer out"})
         elif code in ROBINHOOD_INCOME:
             amount = _money(row.get("Amount", ""))
             if day is None or amount is None:

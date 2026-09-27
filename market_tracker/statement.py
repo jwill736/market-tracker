@@ -14,7 +14,7 @@ import io
 import re
 
 TICKER = re.compile(r"\b([A-Z]{1,5}(?:\.[A-Z])?)\b")
-QTY = re.compile(r"(?<![\d$.,])(\d{1,7}(?:,\d{3})*\.\d{2,6}|\d{1,7}\.\d{2,6}|\d{1,7})(?![\d%])")
+QTY = re.compile(r"(?<![\d$.,])(\d{1,7}(?:,\d{3})*\.\d{1,6}|\d{1,7}\.\d{1,6}|\d{1,7})(?![\d%.])")
 NOT_TICKERS = {"USD", "ETF", "INC", "LLC", "CORP", "CO", "THE", "AND", "FOR", "OF", "TOTAL", "CASH", "NA", "N", "A", "I",
                "PAGE", "YTD", "APR", "APY", "FDIC", "SIPC", "ID", "PO", "ACH", "DRIP", "LTD", "PLC", "TR", "FD", "US"}
 

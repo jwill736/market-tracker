@@ -33,7 +33,8 @@ probabilistic price ranges, and Claude-powered deep-dive research.
 1. **Run it where it stays on**: `./deploy_fly.sh` (about $4-5 a month). It asks for a password, your email for the SEC
    contact and your ntfy topic, and sets `PLUMBLINE_URL` so push buttons work.
 2. **Bring in your holdings**: Robinhood's account-activity CSV, Coinbase's API key (read-only is enough), and Stash typed
-   in from a statement (Accounts → Setup walks through each).
+   in from a statement (Accounts → Setup walks through each). Shares you moved into Robinhood from another broker, and
+   stock rewards, arrive without a cost: enter what you originally paid under Accounts → Transfers.
 3. **Check them**: upload a recent statement per account (Portfolio → Holdings → Check a statement). Money decisions stay
    off until at least half your portfolio's value matches a broker or statement.
 4. **Say which accounts are tax-sheltered** (Accounts → Tax-sheltered accounts).

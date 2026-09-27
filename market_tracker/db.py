@@ -174,6 +174,23 @@ def add_transaction(conn, symbol: str, side: str, quantity: float, price: float,
     return cur.lastrowid
 
 
+NEEDS_COST_NOTES = ("Transferred in (ACATS): original cost needed", "Stock reward: value when received needed")
+
+
+def needs_cost(conn) -> list[dict]:
+    """Shares that arrived without a cost (transfers in, stock rewards): taxes and harvests are wrong until it's entered."""
+    marks = ",".join("?" * len(NEEDS_COST_NOTES))
+    return [dict(r) for r in conn.execute(f"SELECT * FROM transactions WHERE side = 'buy' AND note IN ({marks}) ORDER BY date", NEEDS_COST_NOTES)]
+
+
+def set_cost(conn, tid: int, price: float, day: str) -> bool:
+    """The original cost per share and purchase date for a row from needs_cost()."""
+    marks = ",".join("?" * len(NEEDS_COST_NOTES))
+    cur = conn.execute(f"UPDATE transactions SET price = ?, date = ?, note = note || ' (entered)' WHERE id = ? AND note IN ({marks})",
+                       (price, day, tid, *NEEDS_COST_NOTES))
+    return cur.rowcount == 1
+
+
 def ledger(conn) -> list[dict]:
     """Every trade plus moves between your own accounts (transfers.with_moves): what each account
     holds and what each lot cost. Use list_transactions for the trades alone."""

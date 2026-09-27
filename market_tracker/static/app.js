@@ -1073,7 +1073,7 @@ $("#st-form").addEventListener("submit", async (e) => {
     const r = await api("/api/statement-check", { method: "POST", body: JSON.stringify({ account: $("#st-acct").value, pdf_base64: b64 }) });
     const li = (x, t) => `<li>${tick(x.symbol)} ${t}</li>`;
     $("#st-out").innerHTML = `<p>Read ${r.read} holdings from the statement. ${r.match.length} match.</p>
-      ${r.differences.length ? `<p><b>Different</b> (fix with Stash / other):</p><ul class="hp-lines">${r.differences.map((x) => li(x, `statement ${x.statement} · ledger ${x.ledger}`)).join("")}</ul>` : ""}
+      ${r.differences.length ? `<p><b>Different</b> (a missing trade or transfer: re-import the full history, record it by hand, or for Stash set the right number under Stash / other):</p><ul class="hp-lines">${r.differences.map((x) => li(x, `statement ${x.statement} · ledger ${x.ledger}`)).join("")}</ul>` : ""}
       ${r.not_in_ledger.length ? `<p><b>On the statement, not in the ledger</b>:</p><ul class="hp-lines">${r.not_in_ledger.map((x) => li(x, `${x.statement}`)).join("")}</ul>` : ""}
       ${r.not_on_statement.length ? `<p><b>In the ledger, not found on the statement</b> (sold, or not read):</p><ul class="hp-lines">${r.not_on_statement.map((x) => li(x, `${x.ledger}`)).join("")}</ul>` : ""}
       ${!r.differences.length && !r.not_in_ledger.length && !r.not_on_statement.length ? `<p class="up">Everything matches.</p>` : ""}`;
@@ -1182,10 +1182,12 @@ async function runImport(commit) {
     const r = await api("/api/import/" + impSource, { method: "POST", body: JSON.stringify({ csv: impText, commit, account: impAccount || "Stash" }) });
     const skipped = Object.entries(r.skipped).map(([k, n]) => `${esc(k)} ×${n}`).join(", ");
     const noun = impSource === "holdings" ? "holdings" : "trades";
-    out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} ${noun}.</b>` : `<b>${r.new} new ${noun}</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
+    out.innerHTML = `<p>${commit ? `<b>Imported ${r.new} ${noun}</b>` : `<b>${r.new} new ${noun}</b> to import`}${r.duplicates ? `, ${r.duplicates} already imported` : ""}.
       ${r.income_new ? `<br>Plus ${r.income_new} dividend and interest payment${r.income_new === 1 ? "" : "s"} (${fmtMoney(r.income_total, 2)}) for the Income tab.` : ""}
       ${skipped ? `<br><span class="muted small">Skipped (not trades): ${skipped}</span>` : ""}
-      ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}</p>
+      ${r.errors.length ? `<br><span class="muted small">${r.errors.map(esc).join("<br>")}</span>` : ""}
+      ${r.needs_cost ? `<br><b>${r.needs_cost} holding${r.needs_cost === 1 ? "" : "s"} arrived without a cost</b> (moved in from another broker, or a stock reward):
+        enter what you paid under Accounts → Transfers.` : ""}</p>
       <p class="muted small">Positions after import: ${r.positions.map((p) => `${esc(p.symbol)} ${p.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })}`).join(", ") || "none"}</p>
       ${!commit && (r.new || r.income_new) ? `<button id="rh-commit" type="button">Import${r.new ? ` ${r.new} ${noun}` : ""}${r.income_new ? `${r.new ? " and" : ""} ${r.income_new} payments` : ""}</button>` : ""}`;
     const btn = $("#rh-commit");
@@ -2507,7 +2509,26 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localho
 }
 
 // ---------------------------------------------------------------- transfers between your accounts
+async function loadNeedsCost() {
+  let r;
+  try { r = await api("/api/needs-cost"); } catch { return; }
+  const rows = r.rows.filter((x) => x.price === 0);
+  $("#tf-cost").innerHTML = rows.length ? `<h3 class="small">Needs a cost</h3><p class="muted">These shares arrived without a price (moved in from another
+    broker, or a stock reward). Enter what you originally paid per share and when you bought them (for a reward: its value that day), so taxes,
+    harvests and sale estimates are right. Money decisions wait until these are filled in.</p>`
+    + rows.map((x) => `<form class="inline-form nc-act" data-id="${x.id}"><span><b>${esc(x.symbol)}</b> ${fmtShares(x.quantity)} in ${esc(x.account || "Unlabeled")}, arrived ${esc(x.date)}</span>
+      <label>paid $<input name="price" type="number" step="any" min="0" required style="width:7em"></label>
+      <label>on <input name="acquired" type="date" required value="${esc(x.date)}"></label><button type="submit" class="small">Save cost</button></form>`).join("") : "";
+  document.querySelectorAll(".nc-act").forEach((f) => f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/needs-cost/${f.dataset.id}`, { method: "POST", body: JSON.stringify({ price: Number(f.price.value), acquired: f.acquired.value }) });
+      loadNeedsCost(); loadHoldings();
+    } catch (err) { alert(err.message); }
+  }));
+}
 async function loadTransfers() {
+  loadNeedsCost();
   let v;
   try { v = await api("/api/transfers"); } catch (err) { $("#tf-open").textContent = err.message; return; }
   $("#tf-accts").innerHTML = v.accounts.map((a) => `<option value="${esc(a)}">`).join("");
