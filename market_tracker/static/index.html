@@ -39,6 +39,7 @@
     <button data-tab="hold" data-group="plan">Hold plan</button>
     <button data-tab="income" data-group="plan">Income</button>
     <button data-tab="plan" data-group="plan">Strategy</button>
+    <button data-tab="review" data-group="plan">Review</button>
     <button data-tab="pulse" data-group="discover">Pulse</button>
     <button data-tab="early" data-group="discover">Early wire</button>
     <button data-tab="people" data-group="discover">People</button>
@@ -106,6 +107,10 @@
       <aside class="home-side">
         <div class="rh-list card"><div class="rh-list-head"><h2>Stocks</h2><span class="muted small" id="home-stocks-meta"></span></div><div id="home-stocks"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Crypto</h2></div><div id="home-crypto"></div></div>
+        <div class="card moved-card"><div class="rh-list-head"><h2>What moved today</h2><span class="muted small" id="mv-head"></span></div>
+          <div id="home-moved" class="small"></div></div>
+        <div class="card conf-card"><div class="rh-list-head"><h2>Checked against your brokers</h2>
+          <button type="button" class="link small" id="conf-setup">Setup</button></div><div id="home-conf"></div></div>
         <div class="card acct-card"><div class="rh-list-head"><h2>Accounts</h2><span class="muted small" id="home-acct-meta"></span></div><div id="home-accounts"></div></div>
         <div class="card"><div class="rh-list-head"><h2>vs the market</h2><span class="muted small" id="bm-meta"></span></div><div id="bm-body" class="small"></div></div>
         <div class="rh-list card"><div class="rh-list-head"><h2>Watchlist</h2></div><div id="home-watch"></div></div>
@@ -471,6 +476,17 @@
     </div>
     <div class="card"><div class="card-head"><h2>News</h2><span id="sym-news-pill" class="pill"></span></div>
       <div id="sym-news-terms" class="terms"></div><ul id="sym-news" class="news"></ul></div>
+    <div class="card" id="sym-ask">
+      <h2>Ask the company's filings</h2>
+      <p class="muted small">Answered only from its latest annual (10-K) or quarterly (10-Q) report, with the passages quoted. Uses your
+        Anthropic API credits: roughly $0.50-0.75 for the first question on a report, a few cents for follow-ups within a few minutes.</p>
+      <form class="stack" id="ask-form">
+        <input id="ask-q" maxlength="600" required placeholder="e.g. How much revenue comes from China, and what do they say about tariffs?" aria-label="Question">
+        <div class="row"><label class="check"><input type="checkbox" id="ask-10k" checked> Annual report (10-K)</label>
+          <label class="check"><input type="checkbox" id="ask-10q"> Latest quarter (10-Q)</label><button type="submit">Ask</button></div>
+      </form>
+      <div id="ask-out" class="small"></div>
+    </div>
   </section>
 
   <!-- Analyze -->
@@ -644,8 +660,54 @@
     </div>
   </section>
 
+  <!-- Review: how you've done and how it could go -->
+  <section id="tab-review" class="tab" hidden>
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><h2>What your timing cost (or earned)</h2>
+          <div class="seg" id="pf-period" role="group" aria-label="Period"><button data-p="all" aria-pressed="true">Since your first trade</button><button data-p="ytd" aria-pressed="false">This year</button></div></div>
+        <p class="muted small">Two returns: how the holdings did (time-weighted, what a fund reports) and how your dollars did (money-weighted,
+          counting when you added and took out). The gap is your timing.</p>
+        <p class="verdict-line" id="pf-verdict"></p>
+        <div id="pf-out" class="small"></div>
+      </div>
+      <div class="card">
+        <h2>What made the return</h2>
+        <p class="muted small">Each holding's gain or loss in dollars over the same period: price change, plus sales, minus purchases.</p>
+        <div id="pf-contrib" class="small"></div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2 id="crises">If a past crash happened today</h2>
+        <p class="muted small">Today's holdings run through 2008, 2020 and 2022. Holdings too young for a crisis use a fund that behaves like
+          them. Decide now what you'd do at the bottom; that's the point.</p>
+        <div id="cr-out" class="small"><button type="button" class="secondary small" id="cr-load">Run the crises</button></div>
+      </div>
+      <div class="card">
+        <h2 id="overlap">Holdings that move together</h2>
+        <p class="muted small">Daily moves over the last year. Pairs above 0.8 move almost as one: owning both is less diversification than it looks.</p>
+        <div id="ov-out" class="small"><button type="button" class="secondary small" id="ov-load">Check overlap</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="tenk">What changed in their annual reports</h2>
+      <p class="muted small">Each company's latest 10-K against the year before: how much of the Risk Factors and Legal Proceedings text is new.
+        Research found companies whose reports change a lot tend to do worse afterwards, and the market is slow to notice (Cohen,
+        Malloy &amp; Nguyen, "Lazy Prices", 2020).</p>
+      <div id="tk-out" class="small"><button type="button" class="secondary small" id="tk-load">Compare the reports</button></div>
+    </div>
+  </section>
+
   <!-- Accounts: connections, transfers, cash, brokers, backup -->
   <section id="tab-accounts" class="tab" hidden>
+    <div class="card" id="setup">
+      <div class="card-head"><h2>Setup</h2><span class="muted small" id="su-count"></span></div>
+      <p class="muted small">Each step is done only when its test passes. In order: the backup first, then phone alerts, then each
+        account's feed, then a statement for what no feed can see.</p>
+      <ol class="setup-steps" id="su-steps"></ol>
+      <div id="su-fixes" class="small"></div>
+    </div>
     <div class="grid two">
       <div class="card">
         <h2 id="connections">Connections</h2>

@@ -57,7 +57,7 @@ const hideTip = () => { tooltip.hidden = true; };
 const loaded = {};
 let watchlist = [], holdingsList = [];   // symbols shown in the ticker tape
 // Five sections; Plan, Discover and News hold several pages, shown as a second row.
-const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
+const GROUP_PAGES = { home: ["home"], plan: ["hold", "income", "plan", "review"], discover: ["pulse", "early", "people", "radar", "smart", "analyze", "research", "dashboard", "journal"],
   news: ["mynews", "reading"], portfolio: ["portfolio", "accounts", "taxes"] };
 const groupOf = (name) => Object.keys(GROUP_PAGES).find((g) => GROUP_PAGES[g].includes(name));
 const lastPage = {};
@@ -77,8 +77,9 @@ function selectTab(name) {
   }
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== "tab-" + name; });
   if (name === "portfolio") { loadPortfolio(); loadSchedules(); }
-  if (name === "accounts") { loadConnections(); loadTransfers(); loadCash(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
+  if (name === "accounts") { loadSetup(); loadConnections(); loadTransfers(); loadCashAccounts(); loadBrokers(); loadOffsite(); loadHealth(); loadLive(); }
   if (name === "taxes") loadTaxes();
+  if (name === "review") loadPerformance();
   if (name === "smart" && !loaded.smart) { loaded.smart = true; loadInvestors(); }
   if (name === "journal") { loadJournal(); loadAdvice(); }
   if (name === "pulse") loadPulse();
@@ -1619,6 +1620,8 @@ async function loadHome(quiet = false) {
   $("#home-empty").hidden = hasHoldings;
   if (!quiet) $("#home-chart").innerHTML = hasHoldings ? `<p class="muted small">Loading…</p>` : "";
   loadCash();
+  loadConfidence();
+  loadMoved();
   renderHomeLists();
   loadHomeFeeds();
   if (!quiet || Date.now() - briefState.loadedAt > 600000) loadBrief();
@@ -2501,7 +2504,7 @@ $("#lp-form").addEventListener("submit", async (e) => {
 });
 
 // ---------------------------------------------------------------- cash waiting in your accounts
-async function loadCash() {
+async function loadCashAccounts() {
   let v;
   try { v = await api("/api/cash/accounts"); } catch (err) { $("#cash-out").textContent = err.message; return; }
   $("#cash-acct").innerHTML = v.names.map((n) => `<option>${esc(n)}</option>`).join("");
@@ -2519,7 +2522,7 @@ $("#cash-form").addEventListener("submit", async (e) => {
   const apy = $("#cash-apy").value;
   try {
     await api("/api/cash/accounts", { method: "POST", body: JSON.stringify({ account: $("#cash-acct").value, amount: +$("#cash-amt").value, apy: apy === "" ? null : +apy }) });
-    e.target.reset(); loadCash();
+    e.target.reset(); loadCashAccounts();
   } catch (err) { alert(err.message); }
 });
 
@@ -2667,3 +2670,177 @@ async function loadNewsDesk(refresh = false) {
   } catch (err) { $("#nd-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
 }
 $("#nd-refresh").addEventListener("click", () => loadNewsDesk(true));
+
+// ---------------------------------------------------------------- setup and what's been checked
+const GO = { offsite: ["accounts", "#offsite"], "setup-alerts": ["accounts", "#su-alerts"], "cx-coinbase": ["accounts", "#cx-coinbase"],
+  "cx-rh": ["accounts", "#cx-rh"], "cx-email": ["accounts", "#cx-email"], statement: ["portfolio", "#st-form"], live: ["accounts", "#live"],
+  brokers: ["accounts", "#brokers"], transfers: ["accounts", "#transfers"], health: ["accounts", "#health"], connections: ["accounts", "#cx-email"] };
+function goTo(where) {
+  const [page, sel] = GO[where] || ["accounts", "#setup"];
+  selectTab(page);
+  setTimeout(() => { const el = $(sel); if (!el) return; if (el.tagName === "DETAILS") el.open = true; el.scrollIntoView({ block: "center" }); }, 150);
+}
+async function loadSetup() {
+  let s, c;
+  try { [s, c] = await Promise.all([api("/api/setup"), api("/api/confidence")]); } catch (err) { $("#su-steps").textContent = err.message; return; }
+  $("#su-count").textContent = `${s.done} of ${s.total} done`;
+  $("#su-steps").innerHTML = s.steps.map((st) => `<li class="${st.done ? "done" : ""}">
+      <div class="su-head"><span class="su-mark">${st.done ? "✓" : "○"}</span><b>${esc(st.title)}</b></div>
+      <div class="muted small">${esc(st.why)}</div>
+      <div class="small ${st.done ? "up" : ""}">${esc(st.detail)}</div>
+      ${st.key === "alerts" ? `<form class="inline-form" id="su-alerts"><input id="su-topic" value="${esc(s.ntfy_topic || s.suggested_topic)}" minlength="12" maxlength="64" pattern="[A-Za-z0-9_-]+" aria-label="ntfy topic">
+        <button type="submit" class="small">Save and send a test</button></form>
+        <p class="muted small">Install the free ntfy app, add this topic (keep it secret: anyone with the name can read your alerts), then press the button.</p>` : ""}
+      <div class="row">${st.done ? "" : `<button type="button" class="small secondary su-go" data-go="${esc(st.go)}">Open</button>`}
+        ${st.test ? `<button type="button" class="small su-test" data-key="${esc(st.key)}">Test now</button>` : ""}<span class="small su-out"></span></div></li>`).join("");
+  document.querySelectorAll(".su-go").forEach((b) => b.addEventListener("click", () => goTo(b.dataset.go)));
+  document.querySelectorAll(".su-test").forEach((b) => b.addEventListener("click", async () => {
+    const out = b.parentElement.querySelector(".su-out");
+    b.disabled = true; out.className = "small muted su-out"; out.textContent = "Testing…";
+    try { const r = await api(`/api/setup/test/${encodeURIComponent(b.dataset.key)}`, { method: "POST" }); out.className = "small up su-out"; out.textContent = r.text; setTimeout(loadSetup, 1500); }
+    catch (err) { out.className = "small down su-out"; out.textContent = err.message; }
+    b.disabled = false;
+  }));
+  const f = $("#su-alerts");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const out = f.parentElement.querySelector(".su-out");
+    try { await api("/api/setup/alerts", { method: "POST", body: JSON.stringify({ topic: $("#su-topic").value.trim() }) }); out.className = "small up su-out"; out.textContent = "Test sent: check your phone"; setTimeout(loadSetup, 800); }
+    catch (err) { out.className = "small down su-out"; out.textContent = err.message; }
+  });
+  $("#su-fixes").innerHTML = c.fixes.length ? `<h3 class="small mt">To fix (${c.fixes.length})</h3><ul class="hp-lines">${c.fixes.map((x) =>
+    `<li class="${x.level >= 2 ? "down" : ""}">${x.level >= 2 ? "▲" : "●"} ${esc(x.text)} <button type="button" class="link small su-fix" data-go="${esc(x.where)}">Fix</button></li>`).join("")}</ul>` : "";
+  document.querySelectorAll(".su-fix").forEach((b) => b.addEventListener("click", () => goTo(b.dataset.go)));
+}
+async function loadConfidence() {
+  const box = $("#home-conf");
+  if (!box) return;
+  try {
+    const c = await api("/api/confidence");
+    if (c.score == null) { box.innerHTML = `<p class="muted small">No holdings yet. <button type="button" class="link" id="conf-start">Start the setup</button></p>`; }
+    else {
+      box.innerHTML = `<div class="conf-score"><span class="conf-num ${c.score >= 80 ? "up" : c.score >= 40 ? "" : "down"}">${c.score}%</span>
+        <span class="muted small">of your money (${fmtMoney(c.checked_value, 0)} of ${fmtMoney(c.total_value, 0)}) matched a broker balance today or a statement this month</span></div>
+        ${c.accounts.map((a) => `<div class="conf-row"><span>${esc(a.account)}</span><span class="conf-bar"><i style="width:${a.pct || 0}%"></i></span><span class="small">${a.pct == null ? "—" : a.pct + "%"}</span></div>`).join("")}
+        ${c.fixes.length ? `<p class="small ${c.fixes.some((x) => x.level >= 2) ? "down" : "muted"}">${c.fixes.length} thing${c.fixes.length === 1 ? "" : "s"} to fix: ${esc(c.fixes[0].text)}
+          <button type="button" class="link" id="conf-fix">See all</button></p>` : ""}`;
+    }
+    [["#conf-start", "setup"], ["#conf-fix", "setup"]].forEach(([id]) => { const b = $(id); if (b) b.addEventListener("click", () => goTo("setup-top")); });
+  } catch (err) { box.innerHTML = `<p class="muted small">${esc(err.message)}</p>`; }
+}
+$("#conf-setup").addEventListener("click", () => goTo("setup-top"));
+GO["setup-top"] = ["accounts", "#setup"];
+
+// ---------------------------------------------------------------- review: timing and contribution
+let pfPeriod = "all";
+async function loadPerformance() {
+  $("#pf-verdict").textContent = "Working it out from your trades and daily prices…";
+  try {
+    const r = await api(`/api/performance?period=${pfPeriod}`);
+    if (r.empty) { $("#pf-verdict").textContent = "No trades yet."; $("#pf-out").innerHTML = ""; $("#pf-contrib").innerHTML = ""; return; }
+    $("#pf-verdict").textContent = r.verdict;
+    const row = (k, v, c = "") => `<tr><td>${k}</td><td class="${c}">${v}</td></tr>`;
+    $("#pf-out").innerHTML = `<table class="data method-table">
+      ${row("Put in", fmtMoney(r.put_in, 0))}${row("Taken out", fmtMoney(r.taken_out, 0))}${r.income ? row("Dividends and interest paid to you", fmtMoney(r.income, 0)) : ""}${row("Worth now", fmtMoney(r.value, 0))}
+      ${row("Gain", fmtMoney(r.gain, 0), cls(r.gain))}
+      ${row("Holdings' return (time-weighted)", fmtPct(r.time_weighted) + (r.time_weighted_annual != null ? ` · ${fmtPct(r.time_weighted_annual)}/yr` : ""), cls(r.time_weighted))}
+      ${row("Your dollars' return (money-weighted)", r.money_weighted_annual != null ? fmtPct(r.money_weighted_annual) + "/yr" : "—", cls(r.money_weighted_annual))}
+      ${row("If you'd never sold anything", fmtMoney(r.never_sold_value, 0))}
+      ${row("What your sales did", fmtMoney(r.sales_effect, 0), cls(r.sales_effect))}</table>
+      ${r.unpriced.length ? `<p class="muted">No price history for ${esc(r.unpriced.join(", "))}: valued at trade prices.</p>` : ""}`;
+    const max = Math.max(...r.contribution.map((c) => Math.abs(c.gain)), 1);
+    $("#pf-contrib").innerHTML = r.contribution.slice(0, 15).map((c) => `<div class="ct-row">${logoImg(c.symbol, 18)}<b>${esc(c.symbol)}</b>
+        <span class="ct-bar"><i class="${c.gain >= 0 ? "pos" : "neg"}" style="width:${Math.abs(c.gain) / max * 100}%"></i></span>
+        <span class="${cls(c.gain)}">${fmtMoney(c.gain, 0)}</span></div>`).join("") || `<p class="muted">Nothing yet.</p>`;
+  } catch (err) { $("#pf-verdict").textContent = err.message; }
+}
+document.querySelectorAll("#pf-period button").forEach((b) => b.addEventListener("click", () => {
+  pfPeriod = b.dataset.p;
+  document.querySelectorAll("#pf-period button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadPerformance();
+}));
+
+// ---------------------------------------------------------------- review: crises and overlap
+$("#cr-load").addEventListener("click", async () => {
+  $("#cr-out").innerHTML = `<p class="muted">Fetching prices back to 2007…</p>`;
+  try {
+    const r = await api("/api/crises");
+    $("#cr-out").innerHTML = r.crises.map((c) => `<div class="cr-item"><div class="row"><b>${esc(c.name)}</b>
+        <span class="muted">${esc(c.start)} to ${esc(c.end)} · S&P 500 ${c.market_pct == null ? "—" : fmtPct(c.market_pct)} · back to the peak in ${esc(c.recovery)}</span></div>
+        <div class="cr-big ${cls(c.change)}">${fmtMoney(c.change, 0)} <span class="small">(${fmtPct(c.change_pct)} of ${fmtMoney(r.total, 0)})</span></div>
+        <details><summary class="small">By holding${c.stand_ins ? ` · ${c.stand_ins} use a stand-in` : ""}</summary>
+          <ul class="hp-lines">${c.holdings.map((h) => `<li>${logoImg(h.symbol, 16)} <b>${esc(h.symbol)}</b> <span class="${cls(h.change)}">${fmtPct(h.change_pct)} (${fmtMoney(h.change, 0)})</span>
+            <span class="muted">${esc(h.how)}</span></li>`).join("")}</ul></details></div>`).join("")
+      + `<p class="muted">Write down now what you'll do if this happens: buy more, hold, or trim. Past falls aren't a forecast of the next one.</p>`;
+  } catch (err) { $("#cr-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+$("#ov-load").addEventListener("click", async () => {
+  $("#ov-out").innerHTML = `<p class="muted">Comparing a year of daily moves…</p>`;
+  try {
+    const r = await api("/api/overlap");
+    if (r.symbols.length < 2) { $("#ov-out").innerHTML = `<p class="muted">Needs two or more holdings with a year of prices.</p>`; return; }
+    const shade = (v) => v == null ? "" : `background: color-mix(in srgb, var(--${v >= 0 ? "neg" : "pos"}) ${Math.round(Math.abs(v) * 70)}%, transparent)`;
+    $("#ov-out").innerHTML = `<p>${r.pairs.length ? `<b>${r.pairs.length} pair${r.pairs.length === 1 ? "" : "s"} move almost as one:</b> ${r.pairs.slice(0, 6).map((p) => `${esc(p.a)} & ${esc(p.b)} (${p.rho.toFixed(2)})`).join(", ")}.`
+      : "No pair moves almost as one (all below 0.8)."} Average correlation ${r.average == null ? "—" : r.average.toFixed(2)}.</p>
+      <div class="table-scroll"><table class="data corr"><tr><th></th>${r.symbols.map((s) => `<th>${esc(s.replace(/-USD$/, ""))}</th>`).join("")}</tr>
+      ${r.symbols.map((a) => `<tr><th>${esc(a.replace(/-USD$/, ""))}</th>${r.symbols.map((b) => { const v = (r.matrix[a] || {})[b];
+        return `<td style="${a === b ? "" : shade(v)}">${a === b ? "" : v == null ? "—" : v.toFixed(2)}</td>`; }).join("")}</tr>`).join("")}</table></div>`;
+  } catch (err) { $("#ov-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- what moved today, and why
+async function loadMoved() {
+  const box = $("#home-moved");
+  if (!box) return;
+  try {
+    const m = await api("/api/moved");
+    if (!m.rows.length) { box.innerHTML = `<p class="muted">Nothing yet: prices and holdings load first.</p>`; $("#mv-head").textContent = ""; return; }
+    $("#mv-head").innerHTML = `<span class="${cls(m.total)}">${fmtMoney(m.total, 0)}</span>`;
+    box.innerHTML = m.rows.slice(0, 5).map((r) => `<div class="mv-row${r.big ? " big" : ""}">
+        <div class="row">${logoImg(r.symbol, 18)} <b>${esc(r.symbol)}</b> <span class="${cls(r.change)}">${fmtMoney(r.change, 0)} (${fmtPct(r.change_pct)})</span>
+          ${r.big ? `<span class="mv-flag">${r.typical ? (Math.abs(r.change_pct) / r.typical).toFixed(1) + "× usual" : "big move"}</span>` : ""}</div>
+        ${r.why ? `<div class="muted">${r.why.url ? `<a href="${esc(r.why.url)}" target="_blank" rel="noopener noreferrer">${esc(r.why.title)}</a>` : esc(r.why.title)}
+          · ${r.why.sources} source${r.why.sources === 1 ? "" : "s"}</div>` : r.big ? `<div class="muted">No news found.</div>` : ""}
+        ${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}</div>`).join("");
+  } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+}
+
+// ---------------------------------------------------------------- review: what changed in the annual reports
+$("#tk-load").addEventListener("click", async () => {
+  $("#tk-out").innerHTML = `<p class="muted">Reading each company's last two annual reports from the SEC (a minute the first time)…</p>`;
+  try {
+    const r = await api("/api/tenk");
+    const LV = { big: "Changed a lot: read the new parts", some: "Some new text", little: "Mostly the same as last year" };
+    $("#tk-out").innerHTML = (r.companies.map((c) => {
+      if (c.error) return `<div class="tk-item"><b>${esc(c.symbol)}</b> <span class="muted">${esc(c.error)}</span></div>`;
+      const sec = c.sections.risk, leg = c.sections.legal;
+      const pct = (x) => x == null ? "—" : Math.round(x * 100) + "%";
+      return `<div class="tk-item tk-${esc(c.level)}"><div class="row">${logoImg(c.symbol, 18)} <b>${esc(c.symbol)}</b> <span class="tk-level">${esc(LV[c.level] || "")}</span>
+          <span class="muted">${esc(c.current.form)} filed ${esc(c.current.filed)} vs ${esc(c.previous.filed)} ·
+          <a href="${esc(c.current.url)}" target="_blank" rel="noopener noreferrer">this year's</a> · <a href="${esc(c.previous.url)}" target="_blank" rel="noopener noreferrer">last year's</a></span></div>
+        <div class="muted">Risk Factors: ${pct(sec.new_share)} new (${sec.new_count || 0} new sentences, ${sec.removed_count || 0} dropped), similarity ${sec.similarity == null ? "—" : sec.similarity.toFixed(2)} ·
+          Legal Proceedings: ${pct(leg.new_share)} new</div>
+        ${sec.new && sec.new.length ? `<details${c.level === "big" ? " open" : ""}><summary class="small">What's new in Risk Factors</summary><ul class="hp-lines">${sec.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+        ${leg.new && leg.new.length ? `<details><summary class="small">What's new in Legal Proceedings</summary><ul class="hp-lines">${leg.new.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}</div>`;
+    }).join("") || `<p class="muted">No company stocks to compare (funds and coins don't file 10-Ks).</p>`)
+      + (r.errors.length ? `<p class="muted">Couldn't read: ${esc(r.errors.join("; "))}</p>` : "");
+  } catch (err) { $("#tk-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});
+
+// ---------------------------------------------------------------- ask the company's filings
+$("#ask-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const which = [...($("#ask-10k").checked ? ["10-K"] : []), ...($("#ask-10q").checked ? ["10-Q"] : [])];
+  if (!which.length) { $("#ask-out").innerHTML = `<p class="down">Pick at least one report.</p>`; return; }
+  const sym = symState.sym;
+  $("#ask-out").innerHTML = `<p class="muted">Reading ${esc(sym)}'s ${esc(which.join(" and "))} (about a minute)…</p>`;
+  try {
+    const r = await api("/api/ask-filing", { method: "POST", body: JSON.stringify({ symbol: sym, question: $("#ask-q").value, filings: which }) });
+    if (sym !== symState.sym) return;
+    const text = r.segments.map((g) => esc(g.text) + g.cites.map((n) => `<sup class="cite">[${n}]</sup>`).join("")).join("");
+    $("#ask-out").innerHTML = `<div class="ask-answer">${text.replace(/\n\n/g, "<br><br>")}</div>
+      ${r.sources.length ? `<ol class="ask-sources">${r.sources.map((x) => `<li value="${x.n}"><span class="muted">${esc(x.document)}:</span> “${esc(x.quote)}”</li>`).join("")}</ol>` : `<p class="muted">No passages cited: treat this answer with care.</p>`}
+      <p class="muted">${r.filings.map((f) => `<a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(f.form)} filed ${esc(f.filed)}</a>`).join(" · ")}
+        · ${Math.round((r.usage.input + r.usage.cache_read + r.usage.cache_write) / 1000)}k tokens read${r.usage.cache_read ? " (mostly from cache)" : ""}</p>`;
+  } catch (err) { $("#ask-out").innerHTML = `<p class="down">${esc(err.message)}</p>`; }
+});

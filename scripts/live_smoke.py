@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-from market_tracker import charts, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
+from market_tracker import charts, filings, stress, cryptoradar, dividends, early, events, fees, fundamentals, http, logos, lookthrough, newsdesk, people, pickers, pulse, radar, reading, service, snaptrade
 from market_tracker.investors import INVESTORS, by_key
 from market_tracker.providers import market, news, sec
 
@@ -430,6 +430,31 @@ def _():
     pub = httpx.get("https://api.public.com/userapigateway/trading/account", timeout=20)
     assert pub.status_code in (401, 403), pub.status_code
     return f"Alpaca {alp.status_code}, Public.com {pub.status_code}"
+
+
+@check("Annual reports: AAPL's last two 10-Ks, Risk Factors cut out and compared")
+def _():
+    r = filings.tenk_changes("AAPL")
+    risk = r["sections"]["risk"]
+    assert risk["words"] > 3000 and risk["words_before"] > 3000, (risk["words"], risk["words_before"])
+    assert risk["similarity"] is not None and 0.5 < risk["similarity"] <= 1.0, risk["similarity"]
+    # Apple rewrites little of its Risk Factors in a year: a big "new" share with near-identical
+    # wording means edits are being counted as new text.
+    assert risk["new_share"] < 0.4 or risk["similarity"] < 0.95, (risk["new_share"], risk["similarity"])
+    return (f"{r['current']['form']} {r['current']['filed']} vs {r['previous']['filed']}: Risk Factors {risk['words']:,} words, "
+            f"{risk['new_share']:.0%} new, similarity {risk['similarity']:.2f}; level {r['level']}")
+
+
+@check("Crisis replay: SPY and QQQ daily history back to 2007")
+def _():
+    days = (date.today() - date(2007, 9, 1)).days
+    spy = [(b.date, b.close) for b in market.get_history("SPY", days)]
+    assert spy[0][0] <= "2007-10-09", spy[0][0]
+    fall = stress.window_return(spy, "2007-10-09", "2009-03-09")
+    assert fall is not None and -0.6 < fall < -0.4, fall
+    covid = stress.window_return(spy, "2020-02-19", "2020-03-23")
+    assert -0.4 < covid < -0.25, covid
+    return f"{len(spy):,} days from {spy[0][0]}; 2008 {fall:.0%}, 2020 {covid:.0%}"
 
 
 def main() -> int:

@@ -1395,6 +1395,10 @@ def statement_check(body: StatementIn):
     found = {(s + "-USD" if s + "-USD" in ledger else s): q for s, q in found.items()}
     out = statement.compare(found, {s: q for s, q in ledger.items() if q > 1e-9})
     out["read"] = len(found)
+    if found:
+        from . import confidence
+        with db.connect() as conn:
+            confidence.remember_statement(conn, body.account, out)
     return out
 
 
@@ -1864,6 +1868,212 @@ async def newsdesk_view(refresh: bool = False):
         return await asyncio.to_thread(sentinel.newsdesk_cache.get, key, lambda: sentinel.build_newsdesk(held))
     except (http.DataUnavailable, ValueError) as exc:
         raise HTTPException(502, str(exc))
+
+
+# ------------------------------------------------------------------ setup and how much is checked
+
+@app.get("/api/confidence")
+def confidence_view():
+    """How much of the portfolio (by value) was checked against a broker or a statement lately,
+    and the list of things to fix."""
+    from . import confidence, health
+    with db.connect() as conn:
+        led = db.ledger(conn)
+        syncs, diffs, stmts = confidence.load_inputs(conn)
+        legs = transfers.from_rows(db.transfer_legs(conn))
+        unread = json.loads(db.get_meta(conn, "email_unread", "[]") or "[]")
+    prices = {}
+    if led:
+        try:
+            prices = {p["symbol"]: p["price"] for p in service.portfolio_summary(led, False)["positions"] if p.get("price")}
+        except (ValueError, http.DataUnavailable):
+            prices = {}
+    st = confidence.status(led, prices, syncs, diffs, stmts, confidence.now_utc())
+    fixes = confidence.fix_list(st, transfers.open_items(legs)["open"], unread, health.problems())
+    return dict(st, fixes=fixes)
+
+
+@app.get("/api/setup")
+def setup_view():
+    from . import setup
+    with db.connect() as conn:
+        steps = setup.steps(conn)
+    import os
+    return {"steps": steps, "done": sum(s["done"] for s in steps), "total": len(steps),
+            "ntfy_topic": os.environ.get("NTFY_TOPIC", ""), "suggested_topic": setup.suggest_topic()}
+
+
+class AlertTopicIn(BaseModel):
+    topic: str = Field(min_length=12, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.post("/api/setup/alerts")
+async def setup_alerts(body: AlertTopicIn):
+    """Save the ntfy topic and send a test push to it."""
+    _save_env({"NTFY_TOPIC": body.topic})
+    ok = await asyncio.to_thread(notify.send, notify.Message(title="Plumbline test", body="Alerts reach this phone.", url="", priority=3, tags=("white_check_mark",)))
+    with db.connect() as conn:
+        db.set_meta(conn, "ntfy_tested", "1" if ok else "")
+    if not ok:
+        raise HTTPException(502, "Saved, but the test push didn't go through. Check the topic and try again.")
+    return {"ok": True}
+
+
+@app.post("/api/setup/test/{key}")
+async def setup_test(key: str):
+    """Run one step's test now."""
+    if key in ("coinbase", "robinhood_crypto", "email", "snaptrade"):
+        try:
+            r = await asyncio.to_thread(accounts.run_sync, key)
+        except accounts.SyncError as exc:
+            raise HTTPException(exc.status, str(exc))
+        holdplan.clear_cache()
+        return {"ok": True, "text": f"Worked: {r.get('new', 0)} new trades" + (f", {len(r['differences'])} balance differences to check" if r.get("differences") else ", balances match")}
+    if key == "backup":
+        rec = await asyncio.to_thread(_offsite_run)
+        if not rec["ok"]:
+            raise HTTPException(400, rec["error"])
+        return {"ok": True, "text": "Backed up to " + ", ".join(rec["to"])}
+    if key == "alerts":
+        ok = await asyncio.to_thread(notify.send, notify.Message(title="Plumbline test", body="Alerts reach this phone.", url="", priority=3, tags=("white_check_mark",)))
+        with db.connect() as conn:
+            db.set_meta(conn, "ntfy_tested", "1" if ok else "")
+        if not ok:
+            raise HTTPException(502, "The test push didn't go through.")
+        return {"ok": True, "text": "Test push sent: check your phone"}
+    if key == "finnhub":
+        st = livefeed.hub.status()
+        return {"ok": st["mode"] == "finnhub", "text": f"Stocks: {st['mode']}, last trade {st['last_stock_tick'] or 'none yet'}"}
+    raise HTTPException(404, "No test for that step.")
+
+
+# ------------------------------------------------------------------ review: timing, contribution, crises, overlap
+
+def _closes(sym: str, days: int) -> list[tuple[str, float]]:
+    return [(b.date, b.close) for b in market.get_history(sym, days)]
+
+
+@app.get("/api/performance")
+async def performance_view(period: Literal["ytd", "all"] = "all"):
+    """Your timing (money- against time-weighted return), what never selling would be worth,
+    and each holding's contribution in dollars."""
+    from . import performance
+    today = date.today()
+
+    def run():
+        with db.connect() as conn:
+            txs = db.list_transactions(conn)
+            inc = db.income(conn)
+        r = performance.analyze(txs, _closes, today, date(today.year, 1, 1) if period == "ytd" else None, inc)
+        return dict(r, verdict=performance.verdict(r), period=period)
+    key = ("performance", period, _ledger_key(), today.isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/crises")
+async def crises_view():
+    """Today's holdings through the 2008, 2020 and 2022 falls (stand-ins where a holding is younger)."""
+    from . import stress
+    days = (date.today() - date(2007, 9, 1)).days
+
+    def run():
+        positions, _ = _valued_positions()
+        return {"crises": stress.replay(positions, lambda s: _closes(s, days)),
+                "total": round(sum(p.get("market_value") or 0 for p in positions), 2)}
+    key = ("crises", _ledger_key(), date.today().isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/overlap")
+async def overlap_view():
+    """Correlations of daily moves between your holdings over the last year."""
+    from . import stress
+
+    def run():
+        positions, _ = _valued_positions()
+        syms = [p["symbol"] for p in sorted(positions, key=lambda p: -(p.get("market_value") or 0))][:15]
+        return stress.correlations(syms, lambda s: _closes(s, 400))
+    key = ("overlap", _ledger_key(), date.today().isoformat())
+    try:
+        return await asyncio.to_thread(_analysis_cache.get, key, run)
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/moved")
+async def moved_view():
+    """Today's change in dollars by holding, with the news desk's likely reason for each."""
+    try:
+        return await asyncio.to_thread(sentinel.moved_today)
+    except (http.DataUnavailable, ValueError) as exc:
+        raise HTTPException(502, str(exc))
+
+
+@app.get("/api/tenk")
+async def tenk_view():
+    """Each held company's latest 10-K against last year's: how much of Risk Factors and Legal
+    Proceedings is new, and the new sentences."""
+    from . import filings
+
+    def run():
+        positions, _ = _valued_positions()
+        syms = [p["symbol"] for p in sorted(positions, key=lambda p: -(p.get("market_value") or 0)) if market.asset_class(p["symbol"]) == "stock"][:15]
+        out, errors = [], []
+
+        def one(sym):
+            try:
+                return filings.tenk_changes(sym), None
+            except (http.DataUnavailable, KeyError, ValueError) as exc:
+                return None, f"{sym}: {exc}"
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            for r, err in pool.map(one, syms):
+                if err:
+                    errors.append(err)
+                elif r:
+                    out.append(r)
+        order = {"big": 0, "some": 1, "little": 2}
+        out.sort(key=lambda r: (order.get(r.get("level"), 3), -(((r.get("sections") or {}).get("risk") or {}).get("new_share") or 0)))
+        return {"companies": out, "errors": errors, "skipped": [s for s in syms if s not in {r["symbol"] for r in out}]}
+    key = ("tenk", _ledger_key(), date.today().isoformat())
+    return await asyncio.to_thread(_analysis_cache.get, key, run)
+
+
+class AskIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+    question: str = Field(min_length=3, max_length=600)
+    filings: list[Literal["10-K", "10-Q"]] = Field(default_factory=lambda: ["10-K"], min_length=1, max_length=2)
+
+
+@app.post("/api/ask-filing")
+async def ask_filing(body: AskIn):
+    """A question answered from the company's own 10-K / 10-Q, with the passages cited."""
+    from . import askfiling
+    sym = market.normalize_symbol(body.symbol)
+    if market.asset_class(sym) == "crypto":
+        raise HTTPException(400, "Coins don't file reports with the SEC.")
+    try:
+        out = await asyncio.to_thread(askfiling.ask, sym, body.question.strip(), list(dict.fromkeys(body.filings)))
+    except anthropic.AuthenticationError:
+        raise HTTPException(400, "No working Anthropic API key: add ANTHROPIC_API_KEY to .env (the deep dive uses the same key).")
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "Anthropic's rate limit: try again in a minute.")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(502, f"Claude API error {exc.status_code}: {exc.message}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(502, "Couldn't reach the Claude API.")
+    except http.DataUnavailable as exc:
+        raise HTTPException(502, f"SEC: {exc}")
+    if out.get("error"):
+        raise HTTPException(404, out["error"])
+    if out.get("refused"):
+        raise HTTPException(400, "Claude declined to answer that question.")
+    return out
 
 
 @app.get("/api/accounts")

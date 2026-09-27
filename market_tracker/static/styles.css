@@ -525,3 +525,34 @@ button.link:hover { color: var(--accent); }
 .nd-badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-right: 6px; color: var(--muted); }
 .nd-review .nd-badge { color: var(--bad); }
 .nd-watch .nd-badge { color: var(--s2); }
+.setup-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.setup-steps li { border: 1px solid var(--grid); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; align-content: start; }
+.setup-steps li.done { border-color: var(--good); }
+.su-head { display: flex; gap: 8px; align-items: baseline; }
+.su-mark { font-weight: 700; color: var(--muted); }
+.setup-steps li.done .su-mark { color: var(--good); }
+.conf-score { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+.conf-num { font: 400 34px/1 "Instrument Serif", Georgia, serif; font-variant-numeric: tabular-nums; }
+.conf-row { display: grid; grid-template-columns: 90px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
+.conf-bar { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+.conf-bar i { display: block; height: 100%; background: var(--good); }
+.ct-row { display: grid; grid-template-columns: 18px 64px 1fr 80px; gap: 8px; align-items: center; margin: 4px 0; }
+.ct-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.ct-bar { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.ct-bar i { display: block; height: 100%; }
+.ct-bar i.pos { background: var(--good); }
+.ct-bar i.neg { background: var(--bad); }
+.cr-item { border-top: 1px solid var(--grid); padding: 8px 0; }
+.cr-big { font: 400 26px/1.2 "Instrument Serif", Georgia, serif; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+table.corr td, table.corr th { text-align: center; padding: 3px 6px; font-variant-numeric: tabular-nums; font-size: 12px; }
+.mv-row { padding: 6px 0; border-top: 1px solid var(--grid); display: grid; gap: 2px; }
+.mv-row:first-child { border-top: 0; }
+.mv-flag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--s2); }
+.tk-item { border-top: 1px solid var(--grid); padding: 8px 0; display: grid; gap: 4px; }
+.tk-level { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tk-big .tk-level { color: var(--bad); }
+.tk-some .tk-level { color: var(--s2); }
+.ask-answer { line-height: 1.55; margin: 8px 0; white-space: pre-wrap; }
+sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
+.ask-sources { padding-left: 22px; display: grid; gap: 6px; }

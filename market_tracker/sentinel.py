@@ -196,6 +196,7 @@ class Sentinel:
                 await asyncio.to_thread(health_check)
                 await asyncio.to_thread(settle_orders)
                 await asyncio.to_thread(log_advice_daily)
+                await asyncio.to_thread(big_moves_check)
                 held_now = my_symbols()[0]
                 if held_now:
                     await asyncio.to_thread(newsdesk_cache.get, tuple(sorted(held_now)), lambda: build_newsdesk(sorted(held_now)))
@@ -362,6 +363,41 @@ def build_newsdesk(symbols: list[str]) -> dict:
     return {"desk": desk, "feeds": dict(newsdesk.FEED_STATUS), "at": now.isoformat(timespec="seconds")}
 
 
+def typical_moves(symbols: list[str]) -> dict[str, float | None]:
+    """Each symbol's usual daily move (standard deviation over 60 days), refreshed daily."""
+    from . import moves
+
+    def one(s):
+        try:
+            return moves.typical_move([b.close for b in market.get_history(s, 120)])
+        except (http.DataUnavailable, ValueError):
+            return None
+    return typical_cache.get(("typical", tuple(sorted(symbols)), date.today().isoformat()), lambda: {s: one(s) for s in symbols})
+
+
+def moved_today() -> dict:
+    from . import moves, service
+    with db.connect() as conn:
+        led = db.ledger(conn)
+    if not led:
+        return moves.today([], {}, None)
+    positions = [p for p in service.portfolio_summary(led, False)["positions"] if p.get("quantity")]
+    held = sorted(p["symbol"] for p in positions)
+    desk = newsdesk_cache.peek(tuple(held), 7200)
+    return moves.today(positions, typical_moves(held), (desk or {}).get("desk"))
+
+
+def big_moves_check() -> list[dict]:
+    """Push once a day per holding that moved more than twice its usual amount (and 3%+)."""
+    from . import moves
+    out = moved_today()
+    for r in out["big"]:
+        title, body = moves.push_text(r)
+        raise_headsup(f"bigmove:{r['symbol']}:{date.today().isoformat()}:{'up' if r['change'] > 0 else 'down'}", "news", 2, title, body,
+                      (r.get("why") or {}).get("url", ""), r["symbol"])
+    return out["big"]
+
+
 def raise_headsup(key: str, kind: str, level: int, title: str, body: str = "", url: str = "",
                   symbol: str = "") -> int:
     with db.connect() as conn:
@@ -475,6 +511,7 @@ news_cache = Cache(300)
 reading_cache = Cache(600)
 radar_cache = Cache(300)
 newsdesk_cache = Cache(1200)
+typical_cache = Cache(86400)
 
 
 def build_news(symbols: list[str]) -> dict:
