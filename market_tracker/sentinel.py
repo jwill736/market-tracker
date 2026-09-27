@@ -328,9 +328,12 @@ def thesis_check_weekly(now: datetime | None = None, items_fn=None, check_fn=Non
             if key in sent:
                 continue
             sent.add(key)
-            notify.send(notify.Message(title=f"{f['symbol']}: the reason you bought may be gone",
-                                       body=f"{r}. Logged {f['day']} ({thesis_label(f['source'])}). Check it before adding more.",
-                                       priority=4, tags=("warning",)))
+            if f["source"] == "bottom":
+                title, body = f"{f['symbol']}: in the screen's bottom 50", f"You hold it, and it's {r}. Check it before adding more."
+            else:
+                title = f"{f['symbol']}: the reason you bought may be gone"
+                body = f"{r}. Logged {f['day']} ({thesis_label(f['source'])}). Check it before adding more."
+            notify.send(notify.Message(title=title, body=body, priority=4, tags=("warning",)))
             n += 1
     with db.connect() as conn:
         db.set_meta(conn, "thesis_alerted", json.dumps(sorted(sent)[-500:]))
@@ -347,12 +350,13 @@ def _thesis_found(today: date, items_fn=None) -> list[dict]:
     with db.connect() as conn:
         rows = ideas.logged(conn)
     held = set(my_symbols()[0])
-    if not rows:
-        return []
-    items = (items_fn or (lambda rs: ideas.score(rs, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)], today)["items"]))(rows)
     data = screen.load()
+    bottom = thesis.bottom_held(held, data)
+    if not rows:
+        return bottom
+    items = (items_fn or (lambda rs: ideas.score(rs, lambda s: [(b.date, b.close) for b in market.get_history(s, 800)], today)["items"]))(rows)
     return thesis.check(items, held, today, lambda s: screen.lookup(data, s),
-                        trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap)
+                        trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap) + bottom
 
 
 def crypto_headsups(held: list[str]) -> int:

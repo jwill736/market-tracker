@@ -152,6 +152,10 @@ def for_symbol(symbol: str, screen_data: dict | None = None, get=None, history_f
             val = None
     crowded = {r["theme"]: r["level"] for r in (_cache.get("themes", (0, {"rows": []}))[1]["rows"])}
     f = flags(symbol, row, val, crowded)
+    low = next((r for r in (screen_data or {}).get("bottom", []) if r["symbol"] == symbol), None)
+    if low:
+        f.append({"level": 2, "text": f"In the weekly screen's bottom 50 of companies worth $2B+ (grade {low['score']:.0f}/100): in the replay "
+                                      "since 2012 that group trailed SPY by about 5 points a quarter."})
     short = None
     if market.asset_class(symbol) == "stock" and short_fn is not False:
         from . import shorts

@@ -140,9 +140,13 @@ def daily_items(today: date | None = None) -> list[dict]:
     items: list[dict] = []
 
     def screens():
-        for r in (data or {}).get("top_large", [])[:10]:
+        # The $2B+ and small/mid lists, not the large-company one: in the replay since 2012 the top large companies
+        # trailed SPY, the other two led it (not by enough to rule out luck; that's what the log is for).
+        picks = [("all", r) for r in (data or {}).get("top_all", [])[:10]] + [("small_mid", r) for r in (data or {}).get("small_mid", [])[:5]]
+        for group, r in picks:
             items.append({"symbol": r["symbol"], "source": "qvm", "price": r.get("price"), "reason": f"Screen grade {r['score']:.0f}/100",
-                          "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months", "data": {"grades": r.get("grades")}})
+                          "wrong_if": "Grade falls below 50, or it lags VOO by 15+ points over 12 months",
+                          "data": {"grades": r.get("grades"), "list": group}})
         for r in (data or {}).get("backlog", [])[:5]:
             items.append({"symbol": r["symbol"], "source": "backlog", "price": r.get("price"), "reason": r["why"],
                           "wrong_if": "Backlog stops growing faster than revenue"})

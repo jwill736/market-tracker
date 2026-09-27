@@ -43,6 +43,7 @@ DISQUALIFY = 10             # a component in the bottom 10% of its sector caps t
 REVENUE = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"]
 NET_INCOME = ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]
 SHARES_Q = "WeightedAverageNumberOfDilutedSharesOutstanding"
+BOTTOM_N = 50
 MIN_RPO_BASE = 0.10         # last year's backlog must be at least 10% of revenue, or growth "from nothing" dominates
 
 
@@ -342,6 +343,9 @@ def build(today: date | None = None, get=None, history_fn=None, listed_fn=None, 
             "top_all": [_public(s, rows[s]) for s in ranked if rows[s]["cap"] >= 2e9][:50],
             "small_mid": [_public(s, rows[s]) for s in mid[:150]],
             "backlog": backlog_picks(rows),
+            # The replay (screen_backtest) found the bottom of the ranking far more telling than the top:
+            # the 50 lowest-graded companies worth $2B+ trailed SPY by about 5 points a quarter.
+            "bottom": [_public(s, rows[s]) for s in [x for x in ranked if rows[x]["cap"] >= 2e9][::-1][:BOTTOM_N]],
             "lookup": lookup}
 
 

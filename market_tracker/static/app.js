@@ -2973,7 +2973,7 @@ document.addEventListener("click", async (e) => {
 });
 
 // ---------------------------------------------------------------- ideas: the weekly screen
-const screenState = { data: null, which: "top_large" };
+const screenState = { data: null, which: "top_all" };
 const pctTxt = (x) => x == null ? "—" : Math.round(x * 100) + "%";
 const gradeCell = (g) => g == null ? `<span class="muted">—</span>` : `<span class="gr ${g >= 70 ? "up" : g < 30 ? "down" : ""}">${g}</span>`;
 async function loadScreen() {
@@ -2984,18 +2984,30 @@ function renderScreen() {
   const d = screenState.data;
   $("#sc-meta").textContent = `${d.universe.toLocaleString()} companies · ${d.quarter} · built ${String(d.as_of).slice(0, 10)}`;
   const rows = d[screenState.which] || [];
+  screenNote();
   $("#sc-out").innerHTML = `<div class="table-scroll"><table class="data sc-table"><thead><tr><th>Company</th><th>Grade</th><th title="Operating profit on assets">Quality</th>
     <th>Value</th><th>Momentum</th><th title="Not issuing new shares">No dilution</th><th>12 mo</th><th></th><th></th></tr></thead><tbody>
     ${rows.slice(0, 30).map((r) => `<tr><td><button type="button" class="linkish" data-open="${esc(r.symbol)}">${tick(r.symbol)}</button> <span class="muted">${esc((r.name || "").slice(0, 28))}</span></td>
       <td><b>${r.score != null ? r.score.toFixed(0) : "—"}</b>${r.flaws && r.flaws.length ? ` <span class="chip-warn" title="One grade in the bottom 10% of its sector">flaw</span>` : ""}</td>
       <td>${gradeCell(r.grades.quality)}</td><td>${gradeCell(r.grades.value)}</td><td>${gradeCell(r.grades.momentum)}</td><td>${gradeCell(r.grades.low_issuance)}</td>
       <td class="${cls(r.return_12m)}">${r.return_12m != null ? fmtPct(r.return_12m * 100, 0) : "—"}</td>
-      <td class="muted">${esc(r.sector || "")}</td><td>${sizeBtn(r.symbol, "qvm")}</td></tr>`).join("")}</tbody></table></div>
+      <td class="muted">${esc(r.sector || "")}</td><td>${screenState.which === "bottom" ? "" : sizeBtn(r.symbol, "qvm")}</td></tr>`).join("")}</tbody></table></div>
     <p class="muted">Grades are percentiles within the sector (100 = best). Quality is operating profit on assets; banks and insurers are compared on return on equity, and companies that report no operating profit on net income over assets.</p>`;
   $("#bl-out").innerHTML = (d.backlog || []).map((b) => `<div class="mv-row"><div class="row"><button type="button" class="linkish" data-open="${esc(b.symbol)}">${tick(b.symbol)}</button>
       <span class="muted">${esc((b.name || "").slice(0, 32))}</span> <span class="muted">grade ${b.score != null ? b.score.toFixed(0) : "—"}</span>${sizeBtn(b.symbol, "backlog")}</div>
       <div>${esc(b.why)}</div></div>`).join("") || `<p class="muted">None this week.</p>`;
   document.querySelectorAll("#tab-ideas [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
+}
+// What the replay since 2012 says about the list on screen (filled in once the backtest has loaded).
+const SC_GROUP = { top_all: "all", small_mid: "small_mid", top_large: "large", bottom: "bottom" };
+function screenNote() {
+  const bt = screenState.bt, g = bt && bt.summary[SC_GROUP[screenState.which]];
+  if (!g || !g.growth || g.growth.cagr == null) { $("#sc-note").textContent = ""; return; }
+  const diff = g.growth.cagr - g.growth.cagr_spy, t = g["3m"] && g["3m"].t;
+  $("#sc-note").textContent = screenState.which === "bottom"
+    ? `The avoid list: in the replay since 2012 this group trailed SPY by ${Math.abs(g["3m"].avg_edge).toFixed(1)} points a quarter. If you hold one, look hard at why.`
+    : `In the replay since 2012, the ${g.label.toLowerCase()} ${diff >= 0 ? "beat" : "trailed"} SPY by ${Math.abs(diff).toFixed(1)} points a year`
+      + (t != null && Math.abs(t) < 2 ? ", not enough to rule out luck" : "") + (diff < 0 ? ": for these, VOO has been hard to beat." : ".");
 }
 document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener("click", () => {
   screenState.which = b.dataset.w;
@@ -3007,7 +3019,7 @@ document.querySelectorAll("#sc-which button").forEach((b) => b.addEventListener(
 async function loadHomeIdeas() {
   let r;
   try { r = await api("/api/ideas"); } catch { return; }
-  if (!r.items.length) { $("#home-ideas").hidden = true; return; }
+  if (!r.items.length && !(r.bottom_held || []).length) { $("#home-ideas").hidden = true; return; }
   $("#home-ideas").hidden = false;
   $("#hi-meta").textContent = `${r.items.length} ideas logged${r.logged_by_github ? " · sealed daily on GitHub" : ""}`;
   $("#hi-verdict").textContent = r.verdict;
@@ -3016,7 +3028,9 @@ async function loadHomeIdeas() {
     const done = b["6m"].resolved ? ` · 6-month record: ${b["6m"].beat_voo}% beat VOO (${b["6m"].resolved})` : "";
     return `<li><span class="hb-sec">${esc(b.label)}</span> <span class="${cls(b.so_far.avg_edge)}">${fmtPct(b.so_far.avg_edge)}</span> vs VOO so far,
       ${b.so_far.beat_voo}% ahead (${b.so_far.n} open)${done}</li>`;
-  }).join("") + (r.broken && r.broken.length ? r.broken.map((x) => `<li class="lvl2"><span class="hb-sec">Case broken</span>
+  }).join("") + (r.bottom_held || []).map((x) => `<li class="lvl2"><span class="hb-sec">You hold a bottom-50 stock</span>
+      <button type="button" class="linkish" data-open="${esc(x.symbol)}">${esc(x.symbol)}</button>: ${esc(x.reasons[0])}</li>`).join("")
+    + (r.broken && r.broken.length ? r.broken.map((x) => `<li class="lvl2"><span class="hb-sec">Case broken</span>
       <button type="button" class="linkish" data-open="${esc(x.symbol)}">${esc(x.symbol)}</button>: ${esc(x.reasons.join("; "))}</li>`).join("") : "")
     + `<li class="muted">Open ideas move around; only 6-month results with ${r.min_resolved}+ ideas count as a record.</li>`;
   document.querySelectorAll("#hi-list [data-open]").forEach((el) => el.addEventListener("click", () => openSymbol(el.dataset.open)));
@@ -3028,6 +3042,8 @@ async function loadScreenBacktest() {
   let r;
   try { r = await api("/api/screen/backtest"); } catch { $("#sb-card").hidden = true; return; }
   $("#sb-card").hidden = false;
+  screenState.bt = r;
+  if (screenState.data) screenNote();
   $("#sb-meta").textContent = `${String(r.first).slice(0, 7)} to ${String(r.last).slice(0, 7)} · built ${String(r.as_of).slice(0, 10)}`;
   $("#sb-verdict").textContent = r.verdict;
   const cellH = (x) => x ? `<span class="${cls(x.avg_edge)}">${fmtPct(x.avg_edge)}</span> <span class="muted">· beat ${x.beat_pct}% · worst ${fmtPct(x.worst_edge)}</span>` : "—";

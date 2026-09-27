@@ -108,7 +108,9 @@ def test_sync_imports_the_github_log_once():
 def test_daily_items_survive_a_broken_source(monkeypatch):
     from market_tracker import idealab, screen
     from market_tracker.providers import market
-    monkeypatch.setattr(screen, "load", lambda get=None: {"top_large": [{"symbol": "AAA", "score": 81.0, "price": 10.0, "grades": {}}],
+    monkeypatch.setattr(screen, "load", lambda get=None: {"top_large": [{"symbol": "BIG", "score": 90.0, "price": 1.0, "grades": {}}],
+                                                         "top_all": [{"symbol": "AAA", "score": 81.0, "price": 10.0, "grades": {}}],
+                                                         "small_mid": [{"symbol": "AAA", "score": 81.0, "price": 10.0, "grades": {}}],
                                                          "backlog": [{"symbol": "BBB", "why": "Backlog +40%", "price": 5.0}]})
     monkeypatch.setattr(idealab, "sleepers", lambda today=None: 1 / 0)
     monkeypatch.setattr(idealab, "chatter", lambda: {"rows": [{"symbol": "CCC", "reddit": 99, "stocktwits": True}]})

@@ -2066,8 +2066,9 @@ async def ideas_view():
             data = screen.load()
             out["broken"] = thesis.check(out["items"], held, today, lambda s: screen.lookup(data, s),
                                          trades_fn=lambda s, days: sec.get_insider_trades(s, days), recap_fn=earnings.recap)
+            out["bottom_held"] = thesis.bottom_held(held, data)
         except (http.DataUnavailable, ValueError) as exc:
-            out["broken"], out["broken_error"] = [], str(exc)
+            out["broken"], out["bottom_held"], out["broken_error"] = [], [], str(exc)
         return out
     with db.connect() as conn:
         conn.executescript(ideas.SCHEMA)

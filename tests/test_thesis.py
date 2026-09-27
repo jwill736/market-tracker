@@ -54,3 +54,17 @@ def test_weekly_push_once_per_problem(monkeypatch):
     with db.connect() as conn:
         assert db.get_meta(conn, "thesis_week", "") == "2026-10-04"
     assert sentinel.thesis_check_weekly(early_sunday, check_fn=lambda *a: 1 / 0) == 0
+
+
+def test_bottom_fifty_holdings_are_flagged(monkeypatch):
+    from market_tracker import filings
+    monkeypatch.setattr(filings, "cik_of", lambda s: None)
+    data = {"as_of": "2026-09-27T06:50:00+00:00", "bottom": [{"symbol": "LOSR", "score": 8.0}, {"symbol": "MEH", "score": 12.0}]}
+    got = thesis.bottom_held({"LOSR", "VOO"}, data)
+    assert [g["symbol"] for g in got] == ["LOSR"] and got[0]["day"] == "2026-09-27" and "grade 8/100" in got[0]["reasons"][0]
+    assert thesis.bottom_held({"LOSR"}, None) == []
+    from market_tracker import hype
+    r = hype.for_symbol("LOSR-USD", data, short_fn=False)          # not a stock: no SEC or short lookups
+    assert r["flags"] == []
+    r = hype.for_symbol("LOSR", data, short_fn=lambda s: None)
+    assert any("bottom 50" in f["text"] for f in r["flags"])
