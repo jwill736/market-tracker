@@ -86,6 +86,32 @@ def configured() -> bool:
     return bool(c["key"] and c["salt"] and (c["dir"] or (c["repo"] and c["token"])))
 
 
+def suggested_dir(env=None, home=None) -> dict | None:
+    """A synced folder on this computer to keep the backups in, if there is one: {service, path}.
+    OneDrive first on Windows (it's there on most machines), then the Mac and common folders."""
+    env = os.environ if env is None else env
+    try:
+        return _suggest(env, Path(home) if home else Path.home())
+    except (OSError, RuntimeError):
+        return None
+
+
+def _suggest(env, home: Path) -> dict | None:
+    cands = [("OneDrive", Path(env[v])) for v in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial") if env.get(v)]
+    cloud = home / "Library" / "CloudStorage"
+    if cloud.is_dir():
+        for d in sorted(cloud.iterdir()):
+            for prefix, service in (("OneDrive", "OneDrive"), ("GoogleDrive", "Google Drive"), ("Dropbox", "Dropbox")):
+                if d.name.startswith(prefix):
+                    cands.append((service, d / "My Drive" if (d / "My Drive").is_dir() else d))
+    cands += [("iCloud Drive", home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"), ("OneDrive", home / "OneDrive"),
+              ("Dropbox", home / "Dropbox"), ("Google Drive", home / "Google Drive")]
+    for service, base in cands:
+        if base.is_dir():
+            return {"service": service, "path": str(base / "Plumbline backups")}
+    return None
+
+
 def new_key(passphrase: str) -> dict[str, str]:
     if len(passphrase) < 12:
         raise BackupError("Use a passphrase of at least 12 characters (four random words work well).")

@@ -60,7 +60,7 @@ def test_push_buttons_and_the_act_endpoint(monkeypatch):
     token = auth.sign_action("decide|skipped|trim:BIG")
     r = c.post("/act/" + token)
     assert r.status_code == 200 and r.json()["status"] == "skipped", skip_url
-    assert c.post("/act/" + token[:-2] + "00").status_code == 403
+    assert c.post("/act/" + token[:-1] + ("1" if token[-1] != "1" else "2")).status_code == 403   # always a different signature
     assert c.get("/api/decisions/scorecard").status_code == 401                 # everything else still needs a sign-in
 
 

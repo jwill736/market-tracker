@@ -79,8 +79,24 @@ that sleeps misses the 8:30 brief (keep it plugged in with sleep off, or use the
 `.venv\Scripts\mt shortcut`. It puts Plumbline on your Desktop and in the Start menu (pin it to the taskbar from
 there). Double-clicking it starts the app in the background, with no window to keep open, and opens it in your browser;
 if it's already running, it just opens the browser. **Stop Plumbline** in the Start menu (or `mt stop`) stops it, and
-`mt shortcut --remove` takes the icons away. The icon doesn't update the app: double-click `start.bat` now and then
-for new versions. Combined with `mt service install`, the app is already running at login and the icon only opens it.
+`mt shortcut --remove` takes the icons away. Combined with `mt service install`, the app is already running at login
+and the icon only opens it.
+
+**Updating.** When a new version is out, Home shows it with the list of changes and an **Update now** button (checked
+at most every six hours). It fetches the new version, reinstalls only if its requirements changed, and restarts in
+the background; the page reloads itself when the new version answers, a few seconds later. If anything fails, nothing
+changes and the old version keeps running: a failed reinstall puts the files back as they were. A copy with changes
+of its own (your own commits) isn't updated. Double-clicking `start.bat` / `./start.sh` also updates.
+
+**When something's wrong.** `mt doctor` checks the install and prints one fix per problem: the app uninstalled by
+an update that couldn't finish, a running `mt.exe` that would block the next update, files made from an administrator
+window, another program on the port, no backup, no phone alerts, an old version, and the last error in `plumbline.log`.
+It works even when `mt` itself is broken:
+
+- Windows: `.venv\Scripts\python -m market_tracker.cli doctor`
+- Mac / Linux: `.venv/bin/python -m market_tracker.cli doctor`
+
+The same checks show in the app under Portfolio → Accounts → This computer, with the end of the log.
 
 ## Run it in your browser (no install)
 
@@ -311,7 +327,10 @@ wallet of yours or were spent.
 - **Off-site backup**: every night after 2am, the whole database, encrypted (AES-256-GCM, key from your passphrase by
   scrypt), to a folder (a synced Google Drive / iCloud / Dropbox folder works; the last 14 kept) and/or a private GitHub
   repository (refused if public). Only the passphrase opens a backup; the app keeps a key derived from it, not the
-  passphrase, so it can run while you sleep. Restore replaces the data and keeps the old copy beside it.
+  passphrase, so it can run while you sleep. Restore replaces the data and keeps the old copy beside it. When OneDrive
+  (or Google Drive, Dropbox, iCloud Drive) is on the computer, one button fills in a `Plumbline backups` folder there and
+  creates it; you still choose the passphrase. Until a backup is set up, Decisions shows "Back up your ledger" once there
+  is data to lose.
 - **Connection health**: a push when a sync has failed for 3 hours, when an auto-invest buy has no confirmation email
   after 5 days, or when the backup fails or hasn't run for 3 days.
 - **Live prices**: crypto is tick by tick from Coinbase; stocks poll Yahoo every few seconds until you paste a free Finnhub

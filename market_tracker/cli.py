@@ -529,6 +529,9 @@ def cmd_serve(args) -> int:
     if args.pidfile:
         with open(args.pidfile, "w") as pf:
             pf.write(str(os.getpid()))
+    from . import updater
+    updater.LAUNCH = {"host": args.host, "port": args.port, "lan": args.lan, "log": args.log, "pidfile": args.pidfile}
+    updater.RUNNING = updater.version()
     print(f"Plumbline is running at {url}  (Ctrl+C to stop)")
     if args.open:   # once it answers: started from the desktop icon there's no window saying it's still starting
         threading.Thread(target=lambda: bgservice.wait_until_up(args.port) and webbrowser.open(url), daemon=True).start()
@@ -574,6 +577,21 @@ def cmd_stop(args) -> int:
     """Stop the app started from the desktop icon."""
     from . import bgservice
     return bgservice.stop(args.port)
+
+
+def cmd_doctor(args) -> int:
+    """What's wrong with this install, and how to fix it."""
+    from . import doctor
+    result = doctor.run(args.port, fetch=not args.offline)
+    print(doctor.report(result))
+    return 1 if result["worst"] == "fail" else 0
+
+
+def cmd_relaunch(args) -> int:
+    """After an in-app update: wait for the old app to stop, then start the new version (used by the app itself)."""
+    from . import updater
+    rest = args.rest[1:] if args.rest[:1] == ["--"] else args.rest
+    return updater.relaunch(args.port, rest)
 
 
 def cmd_tenk_rank(args) -> int:
@@ -871,6 +889,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--remove", action="store_true", help="Take the icons away again")
     s.set_defaults(func=cmd_shortcut)
+
+    s = sub.add_parser("doctor", help="Check this install and say how to fix what's wrong")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--offline", action="store_true", help="Don't check GitHub for a new version")
+    s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("relaunch", help=argparse.SUPPRESS)
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("rest", nargs=argparse.REMAINDER)
+    s.set_defaults(func=cmd_relaunch)
 
     s = sub.add_parser("stop", help="Stop the app started from the desktop icon")
     s.add_argument("--port", type=int, default=8000)

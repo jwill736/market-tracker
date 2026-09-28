@@ -28,6 +28,7 @@ rem that can't replace it leaves the app uninstalled.
       echo.
       echo Couldn't install the update. If Plumbline is running in another window, close that window
       echo or use Stop Plumbline in the Start menu, then double-click start.bat again.
+      echo For details: .venv\Scripts\python -m market_tracker.cli doctor
       pause
       exit /b 1
     )

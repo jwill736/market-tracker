@@ -81,6 +81,13 @@
 <main>
   <!-- Home: your money, Robinhood-style -->
   <section id="tab-home" class="tab">
+    <div class="card update-card" id="home-update" hidden>
+      <div class="card-head"><h2>A new version of Plumbline</h2><span class="muted small" id="hu-meta"></span></div>
+      <ul class="small" id="hu-list"></ul>
+      <div class="row"><button type="button" id="hu-go">Update now</button>
+        <button type="button" class="secondary" id="hu-later">Later</button></div>
+      <p class="small" id="hu-msg"></p>
+    </div>
     <div class="card decide-card" id="home-decide" hidden>
       <div class="card-head"><h2>Plumbline's call</h2>
         <span class="muted small"><span id="hd-meta"></span> · <button type="button" class="linkish" id="hd-all">All decisions</button></span></div>
@@ -1029,6 +1036,7 @@
         <p class="muted small">A nightly copy of your ledger, encrypted with a passphrase only you know, saved outside this computer.
           If this machine dies, restoring the file brings everything back.</p>
         <div id="os-status" class="small"></div>
+        <p class="small" id="os-suggest" hidden></p>
         <form class="stack" id="os-form">
           <label class="small">Passphrase (at least 12 characters; not stored in plain text: lose it and the backups can't be opened)
             <input id="os-pass" type="password" autocomplete="new-password" minlength="12"></label>
@@ -1048,6 +1056,10 @@
         <p class="muted small">Pushes to your phone when a sync keeps failing, or when a scheduled buy's confirmation never arrives,
           so a quiet problem doesn't turn into months of wrong numbers.</p>
         <ul class="hp-lines small" id="hl-list"></ul>
+        <h2 class="mt" id="doctor">This computer</h2>
+        <p class="muted small">The install itself: the same checks as <code>mt doctor</code>. <span id="dr-version"></span></p>
+        <ul class="hp-lines small" id="dr-list"></ul>
+        <details class="small" id="dr-logbox" hidden><summary>Last lines of the log</summary><pre class="dr-log" id="dr-log"></pre></details>
         <h2 class="mt" id="live">Live prices</h2>
         <div id="lv-status" class="small"></div>
         <form class="inline-form" id="lv-form"><input id="lv-key" placeholder="Finnhub API key (free at finnhub.io)" autocomplete="off">
