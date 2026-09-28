@@ -1704,7 +1704,7 @@ async function loadHome(quiet = false) {
   loadMoved();
   renderHomeLists();
   loadHomeFeeds();
-  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); loadHomeIdeas(); loadHomeDecisions(); }
+  if (!quiet || Date.now() - briefState.loadedAt > 600000) { loadBrief(); loadWeekly(); loadHomeIdeas(); loadHomeDecisions(); loadUpdate(); }
   if (!hasHoldings) { $("#home-value").textContent = fmtMoney(0, 2); $("#home-gain").innerHTML = "&nbsp;"; return; }
   try {
     const d = await api("/api/portfolio/history?range=" + homeState.range);
@@ -1875,6 +1875,44 @@ function renderHomeLists() {
     }).catch(() => {});
   }
 }
+// ---------------------------------------------------------------- updating the app from the app
+const updState = { target: "" };
+function laterKey() { try { return localStorage.getItem("plumbline-update-later") || ""; } catch { return ""; } }
+async function loadUpdate() {
+  let u;
+  try { u = await api("/api/update"); } catch { return; }
+  const box = $("#home-update");
+  const newest = (u.changes && u.changes[0] && u.changes[0].id) || "";
+  box.hidden = !u.can_update || laterKey() === newest;
+  if (box.hidden) return;
+  updState.target = newest;
+  $("#hu-meta").textContent = `You're on ${u.version} · ${u.behind} change${u.behind === 1 ? "" : "s"}`;
+  $("#hu-list").innerHTML = u.changes.slice(0, 6).map((c) => `<li>${esc(c.title)}</li>`).join("")
+    + (u.behind > 6 ? `<li class="muted">and ${u.behind - 6} more</li>` : "");
+}
+$("#hu-later").addEventListener("click", () => {
+  try { localStorage.setItem("plumbline-update-later", updState.target); } catch { /* private window: hide for now only */ }
+  $("#home-update").hidden = true;
+});
+$("#hu-go").addEventListener("click", async () => {
+  const btn = $("#hu-go"), msg = $("#hu-msg");
+  btn.disabled = true; msg.className = "small muted";
+  msg.textContent = "Updating… a few seconds (a couple of minutes if the new version needs new requirements).";
+  try {
+    const r = await api("/api/update", { method: "POST" });
+    if (!r.updated || r.restarting === "manual") { msg.textContent = r.text; btn.disabled = false; return; }
+    msg.textContent = `${r.text} Restarting…`;
+    await new Promise((res) => setTimeout(res, 2500));
+    const end = Date.now() + 90000;
+    while (Date.now() < end) {
+      try { if ((await api("/api/update/version")).version === r.to) { location.reload(); return; } } catch { /* restarting */ }
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    msg.className = "small down";
+    msg.textContent = "The new version hasn't answered after 90 seconds. Reload this page in a minute; if it still doesn't open, run mt doctor in the app's folder.";
+  } catch (err) { msg.className = "small down"; msg.textContent = err.message; btn.disabled = false; }
+});
+
 async function loadHomeFeeds() {
   try {
     const n = await api("/api/mynews");
@@ -2672,7 +2710,17 @@ async function loadOffsite() {
     $("#os-dir").value = o.dir || ""; $("#os-repo").value = o.repo || "";
     $("#os-token").placeholder = o.has_token ? "GitHub token saved (enter a new one to replace it)" : "GitHub token (fine-grained, Contents: write on that repo only)";
     $("#os-pass").placeholder = o.has_key ? "Passphrase set (enter a new one to change it)" : "";
-    const l = o.last;
+    const l = o.last, sug = o.suggest;
+    $("#os-suggest").hidden = !(sug && !o.dir);
+    if (sug && !o.dir) {
+      $("#os-suggest").innerHTML = `${esc(sug.service)} is on this computer. <button type="button" class="secondary small" id="os-use">Keep the backups in ${esc(sug.service)}</button>`;
+      $("#os-use").addEventListener("click", () => {
+        $("#os-dir").value = sug.path; $("#os-dir").dataset.create = "1";
+        $("#os-msg").className = "small muted";
+        $("#os-msg").textContent = `Now pick a passphrase you'll remember (write it down somewhere safe: without it the backups can't be opened), then Save.`;
+        $("#os-pass").focus();
+      });
+    }
     $("#os-status").innerHTML = !o.configured ? `<p class="muted">Not set up yet.</p>`
       : l ? `<p class="${l.ok ? "up" : "down"}">${l.ok ? "Last copy" : "Last try failed"} ${esc(l.at.slice(0, 16).replace("T", " "))} UTC${l.ok ? " → " + esc(l.to.join(", ")) : ": " + esc(l.error)}</p>`
       : `<p class="muted">Set up: the first copy runs tonight after 2am (or press the button).</p>`;
@@ -2680,7 +2728,7 @@ async function loadOffsite() {
 }
 $("#os-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const body = { dir: $("#os-dir").value, repo: $("#os-repo").value };
+  const body = { dir: $("#os-dir").value, repo: $("#os-repo").value, create_dir: $("#os-dir").dataset.create === "1" };
   if ($("#os-pass").value) body.passphrase = $("#os-pass").value;
   if ($("#os-token").value) body.token = $("#os-token").value;
   $("#os-msg").className = "small muted"; $("#os-msg").textContent = "Saving and backing up…";
@@ -2707,7 +2755,19 @@ $("#os-file").addEventListener("change", async () => {
   } catch (err) { alert(err.message); }
   $("#os-file").value = "";
 });
+const DR_MARK = { ok: "●", warn: "▲", fail: "✖", info: "○" };
+async function loadDoctor() {
+  try {
+    const d = await api("/api/doctor");
+    $("#dr-version").textContent = d.version ? `Version ${d.version}.` : "";
+    $("#dr-list").innerHTML = d.checks.map((c) => `<li class="${c.level === "fail" || c.level === "warn" ? "down" : c.level === "info" ? "muted" : ""}">${DR_MARK[c.level]} ${esc(c.text)}${
+      c.fix && c.level !== "ok" ? `<div class="muted">Fix: ${esc(c.fix)}</div>` : ""}</li>`).join("");
+    $("#dr-logbox").hidden = !d.log.lines.length;
+    $("#dr-log").textContent = d.log.lines.join("\n");
+  } catch (err) { $("#dr-list").textContent = err.message; }
+}
 async function loadHealth() {
+  loadDoctor();
   try {
     const h = await api("/api/health");
     $("#hl-list").innerHTML = h.checks.map((c) => `<li class="${c.ok ? "" : "down"}">${c.ok ? "●" : "▲"} ${esc(c.text)}</li>`).join("")
@@ -3186,7 +3246,7 @@ function wireDecisions(root, items, reload) {
       if (what === "ask") { selectTab("ask"); askQuestion(`Why do you recommend: "${d.title}"? What would you do instead if I disagree?`); return; }
       if (what === "do") {
         const a = d.action;
-        if (a.type === "open") { selectTab(a.page); return; }
+        if (a.type === "open") { if (GO[a.page]) goTo(a.page); else selectTab(a.page); return; }
         openTradeTicket(a.symbol, a.side);
         if (a.dollars) {
           const unit = $("#tt-unit"), qty = $("#tt-qty");

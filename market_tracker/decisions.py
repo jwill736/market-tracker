@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 """
 PRIORITY = {"fix_sync": 95, "sell": 85, "fix_data": 70, "harvest": 60, "switch": 55, "trim": 50, "invest_cash": 45,
-            "shelter": 40, "automate": 35, "wait_long_term": 30, "tax_setup": 25, "optional_idea": 10, "hold": 0}
+            "shelter": 40, "backup_setup": 38, "automate": 35, "wait_long_term": 30, "tax_setup": 25, "optional_idea": 10, "hold": 0}
 EVIDENCE = {"rule": "Your rule or a hard fact", "mixed": "Tested, not proven", "unproven": "Unproven: optional, keep it small"}
 WEAK_SWITCH_PRIORITY = 20       # a switch on the screen grade alone ranks below putting idle cash to work
 IDLE_MIN = 100.0
@@ -55,15 +55,17 @@ def _d(kind, title, lines, evidence, *, symbol="", amount=None, side=None, page=
 
 def build(plan: dict, *, reviews: list[dict] | None = None, idle_cash: float = 0.0, health: list[dict] | None = None,
           freshness: list[dict] | None = None, optional: list[dict] | None = None, bottom_note: str = "", today: date | None = None,
-          shelter: dict | None = None, automate: dict | None = None) -> list[dict]:
+          shelter: dict | None = None, automate: dict | None = None, backup: dict | None = None) -> list[dict]:
     """plan: holdplan.build(); reviews: exitreview.for_holdings(); health: health.problems(); freshness: freshness.check();
     optional: [{symbol, source, amount, why}] already sized (see sizing.py); shelter: shelter.decision();
-    automate: recurring.plan()["suggest"]."""
+    automate: recurring.plan()["suggest"]; backup: backup_prompt() when there's no off-site backup."""
     today = today or date.today()
     out: list[dict] = []
     for p in health or []:
         out.append(_d("fix_sync", f"Fix the {p['name']} connection", [p["text"], "Until it's fixed, trades there aren't coming in and every number here is off."],
                       "rule", key=f"fix_sync:{p['key'].split(':')[1] if ':' in p['key'] else p['key']}", page="accounts"))
+    if backup:
+        out.append(_d("backup_setup", backup["title"], backup["why"], "rule", page="offsite", key="backup_setup"))
     for f in freshness or []:
         if f.get("stale"):
             out.append(_d("fix_data", f"{f['name']} data is {f['age_days']} days old", [f["text"]], "rule", key=f"fix_data:{f['file']}", page="accounts"))
@@ -377,13 +379,26 @@ def gather(today: date | None = None) -> list[dict]:
     except Exception:  # noqa: BLE001 - the rest of the decisions don't wait on these
         pass
     items = build(plan, reviews=reviews, idle_cash=idle, health=health.problems(), freshness=freshness.check(today),
-                  optional=optional, bottom_note=note, today=today, shelter=shelter_d, automate=automate)
+                  optional=optional, bottom_note=note, today=today, shelter=shelter_d, automate=automate,
+                  backup=backup_prompt(bool(txs)))
     from . import confidence, golive
     try:
         tr = golive.trust(confidence.current())
     except Exception:  # noqa: BLE001 - can't check the numbers: don't act on them
         tr = {"trusted": False, "text": "Couldn't check your holdings against your brokers just now; money decisions wait until it can."}
     return golive.gate(items, tr, today)
+
+
+def backup_prompt(has_data: bool) -> dict | None:
+    """Once there's a ledger worth keeping and no off-site backup: set one up (in a synced folder if there is one)."""
+    from . import offsite
+    if not has_data or offsite.configured():
+        return None
+    sug = offsite.suggested_dir()
+    why = ["Your ledger lives only on this computer: if the disk dies or it's stolen, your cost basis and history go with it."]
+    why.append(f"{sug['service']} is on this computer: a nightly encrypted copy there takes a passphrase and one click."
+               if sug else "A nightly encrypted copy to a synced folder or a private GitHub repository takes a passphrase and a minute.")
+    return {"title": f"Back up your ledger to {sug['service']}" if sug else "Turn on the off-site backup", "why": why}
 
 
 def spin_note() -> str:

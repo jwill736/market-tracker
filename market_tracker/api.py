@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
@@ -1730,7 +1731,7 @@ def offsite_view():
     with db.connect() as conn:
         last = json.loads(db.get_meta(conn, "offsite_last", "null") or "null")
     return {"configured": offsite.configured(), "has_key": bool(c["key"]), "dir": c["dir"], "repo": c["repo"],
-            "has_token": bool(c["token"]), "last": last}
+            "has_token": bool(c["token"]), "last": last, "suggest": offsite.suggested_dir()}
 
 
 class OffsiteIn(BaseModel):
@@ -1738,6 +1739,7 @@ class OffsiteIn(BaseModel):
     dir: str | None = Field(default=None, max_length=500)
     repo: str | None = Field(default=None, max_length=200)
     token: str | None = Field(default=None, max_length=500)
+    create_dir: bool = False             # make the suggested synced folder (only that one) if it isn't there yet
 
 
 def _offsite_run() -> dict:
@@ -1764,6 +1766,9 @@ async def offsite_setup(body: OffsiteIn):
             vals.update(await asyncio.to_thread(offsite.new_key, body.passphrase))
         if body.dir is not None:
             d = body.dir.strip()
+            sug = offsite.suggested_dir()
+            if d and body.create_dir and sug and d == sug["path"] and not Path(d).is_dir():
+                Path(d).mkdir(parents=False, exist_ok=True)
             if d and not Path(d).expanduser().is_dir():
                 raise offsite.BackupError(f"The folder {d} doesn't exist on this computer.")
             vals["OFFSITE_DIR"] = d
@@ -1801,6 +1806,50 @@ async def offsite_restore(body: OffsiteRestoreIn):
         raise HTTPException(400, str(exc))
     holdplan.clear_cache()
     return {"restored": True, "previous_kept_as": kept}
+
+
+_update_lock = threading.Lock()
+
+
+@app.get("/api/update")
+def update_view(refresh: bool = False):
+    """Whether a new version of the app is out (checked at most every 6 hours unless refresh)."""
+    from . import updater
+    return updater.cached_status(refresh)
+
+
+@app.get("/api/update/version")
+def update_version():
+    """What's running now (the page waits for the new version after an update)."""
+    from . import updater
+    return {"version": updater.RUNNING if updater.RUNNING is not None else updater.version()}
+
+
+@app.post("/api/update")
+def update_apply():
+    """Install the new version and restart: the page reloads itself when the new version answers."""
+    from . import updater
+    if not _update_lock.acquire(blocking=False):
+        raise HTTPException(409, "An update is already running.")
+    try:
+        out = updater.apply()
+    finally:
+        _update_lock.release()
+    if not out.get("updated"):
+        if out.get("error"):
+            raise HTTPException(400, out["error"])
+        return out
+    out["restarting"] = updater.restart()
+    if out["restarting"] == "manual":
+        out["text"] += " Restart Plumbline to use it."
+    return out
+
+
+@app.get("/api/doctor")
+def doctor_view():
+    """This install's health: the same checks as `mt doctor`, with the end of the log."""
+    from . import doctor
+    return doctor.run(in_app=True)
 
 
 @app.get("/api/health")

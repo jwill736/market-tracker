@@ -618,6 +618,9 @@ sup.cite { color: var(--accent); font-weight: 600; margin-left: 1px; }
 .dc-buttons { align-items: center; }
 
 /* lists without a forward record: research, not advice */
+.dr-log { max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; padding: 8px; border-radius: 6px; background: var(--page); border: 1px solid var(--border); }
+.update-card { border-left: 3px solid var(--accent); }
+.update-card ul { margin: 6px 0 10px; padding-left: 18px; }
 .research-note { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-ink); }
 .tk-level.research { opacity: .8; cursor: help; }
 .tt-cool { margin: 8px 0; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-ink); }
