@@ -58,3 +58,6 @@
 {"data":{},"day":"2026-09-30","price":617.87,"reason":"39 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"FICO","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-09-30","price":340.92,"reason":"54 Reddit mentions","source":"chatter","symbol":"GOOGL","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-09-30","price":291.25,"reason":"75 Reddit mentions","source":"chatter","symbol":"BE","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-01","price":112.5,"reason":"48 Reddit mentions","source":"chatter","symbol":"HOOD","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-01","price":340.74,"reason":"62 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"GOOG","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-01","price":35.89,"reason":"35 Reddit mentions","source":"chatter","symbol":"DB","wrong_if":"Logged to measure chatter, not as a recommendation"}
