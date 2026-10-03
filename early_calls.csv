@@ -260,3 +260,5 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-10-03,03:27,SAND-USD,crypto,35.0,1,0.0788,"Trending on CoinGecko searches (#6), +65.5% in 24 h"
 2026-10-03,10:59,BLAST-USD,crypto,35.0,1,0.000225,"Trending on CoinGecko searches (#10), -41.7% in 24 h"
 2026-10-03,15:35,TAO-USD,"social,crypto",38.7,1,291.41,Trending on StockTwits
+2026-10-03,20:30,PUMP-USD,"social,crypto",51.0,1,0.006325,"PUMP.funs sharp rebound has traders focused on renewed momentum, with some citing buybacks and burns, whale accumulation, and a broader pickup in Solana memecoin activity. Others remain skeptical, cal"
+2026-10-03,20:30,STRK-USD,"social,crypto",46.6,1,0.05084,"STRK is drawing attention after a sharp price rebound and reported breakout, with traders linking renewed interest to Starknets privacy and Bitcoin DeFi efforts, alongside its post-quantum security na"
