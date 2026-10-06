@@ -316,3 +316,15 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-10-06,06:33,SPY,social,31.5,1,774.83,"Reddit mentions 237 in 24 h, up from 41"
 2026-10-06,06:33,TSM,social,31.3,0,485.8,"Reddit mentions 16 in 24 h, up from 1; rank 103 → 30"
 2026-10-06,06:33,WDC,social,31.5,0,441.64,"Reddit mentions 25 in 24 h, up from 4; rank 30 → 14"
+2026-10-06,13:33,AAPL,social,31.4,0,333.21,"Reddit mentions 19 in 24 h, up from 2; rank 60 → 25"
+2026-10-06,13:33,AMD,social,35.6,0,633.96,"Reddit mentions 50 in 24 h, up from 8; rank 24 → 8"
+2026-10-06,13:33,BLFS,filing,35.0,0,38.61,Change in control (8-K): BIOLIFE SOLUTIONS INC
+2026-10-06,13:33,BRUN,"social,filing",57.5,0,15.93,"Boost Runs five-year AI cloud compute agreement with a sovereign AI company, using NVIDIA systems, is driving attention and a sharp share-price gain. Traders welcomed the contract as a positive cataly"
+2026-10-06,13:33,CAP-USD,crypto,35.0,0,0.09856,"Trending on CoinGecko searches (#8), +48.2% in 24 h"
+2026-10-06,13:33,CEG,social,35.0,0,302.985,"Google and Constellations long-term nuclear power collaborationcovering 890 MW of new capacity and a separate 2,700 MW supply agreementis driving attention. Traders largely view the deal as validation"
+2026-10-06,13:33,CRWD,social,35.0,0,282.56,CrowdStrikes new cybersecurity startup accelerator with AWS and NVIDIA is reinforcing the communitys focus on AI-agent security and rising cybersecurity demand. Traders are largely celebrating the sto
+2026-10-06,13:33,GME,social,33.2,0,24.79,"Reddit mentions 22 in 24 h, up from 2; rank 58 → 21"
+2026-10-06,13:33,NFLX,social,30.3,0,67.631,"Reddit mentions 28 in 24 h, up from 6; rank 35 → 17"
+2026-10-06,13:33,NLST,"social,filing",57.5,1,6.62,"Netlists patent-license and litigation settlement with Micron is the dominant catalyst, converting a long-running dispute into a multi-year licensing agreement and resolving pending legal proceedings "
+2026-10-06,13:33,NMR-USD,crypto,35.0,1,16.82,"Trending on CoinGecko searches (#2), +40.1% in 24 h"
+2026-10-06,13:33,XRPN,social,35.0,1,21.856,"Evernorths XRP-treasury merger and warrant-agreement changes are driving attention, as traders debate whether earlier warrant exercise could add share supply and unwind the stocks low-float premium af"
