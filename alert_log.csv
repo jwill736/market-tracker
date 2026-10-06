@@ -31,5 +31,11 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-10-02,big,ORCL,0001341439,ORACLE CORP,RUSCKOWSKI STEPHEN H: $3.5M,
 2026-10-03,cluster,FGBI,0001408534,"First Guaranty Bancshares, Inc.","3 insiders, $995,821",
 2026-10-05,big,BBD,0001160330,BANK BRADESCO,Alvarez Denise Aguiar: $5.8M,
+2026-10-06,13d,ALOY,0001567900,REALLOYS INC.,Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1567900/000110465926114124/0001104659-26-114124-index.htm
+2026-10-06,13d,AMPG,0001518461,"AmpliTech Group, Inc.",Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1518461/000110465926114133/0001104659-26-114133-index.htm
+2026-10-06,13d,FJET,0001947016,"Starfighters Space, Inc.",Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1947016/000110465926114128/0001104659-26-114128-index.htm
+2026-10-06,13d,QNT,0002110105,Quantinuum Inc.,Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/2110105/000110465926114121/0001104659-26-114121-index.htm
+2026-10-06,13d,WAVE,0001846715,Eco Wave Power Global AB (publ),Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1846715/000110465926114131/0001104659-26-114131-index.htm
+2026-10-06,big,AXIA3,0001439124,AXIA Energia S.A.,Batista de Lima Filho Pedro: $5.3M,
 2026-10-06,big,BORR,0001715497,Borr Drilling Ltd,Troim Tor Olav: $6.2M,
 2026-10-06,cluster,ALP,0001095435,Alpha Compute Corp,"3 insiders, $273,329",
