@@ -75,3 +75,6 @@
 {"data":{},"day":"2026-10-06","price":100.19,"reason":"screen grade 80/100 (quality, value, momentum, no dilution); quiet: 24 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"LNTH","wrong_if":"Insiders sell, or the screen grade falls below 50"}
 {"data":{},"day":"2026-10-06","price":33.99,"reason":"screen grade 80/100 (quality, value, momentum, no dilution); quiet: 22 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"HRTG","wrong_if":"Insiders sell, or the screen grade falls below 50"}
 {"data":{},"day":"2026-10-06","price":378.73,"reason":"51 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"TSLA","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-07","price":649.42,"reason":"148 Reddit mentions","source":"chatter","symbol":"AMD","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-07","price":2.06,"reason":"97 Reddit mentions","source":"chatter","symbol":"HTZ","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-07","price":287.01,"reason":"47 Reddit mentions","source":"chatter","symbol":"MRVL","wrong_if":"Logged to measure chatter, not as a recommendation"}
