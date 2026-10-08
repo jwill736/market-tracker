@@ -78,3 +78,5 @@
 {"data":{},"day":"2026-10-07","price":649.42,"reason":"148 Reddit mentions","source":"chatter","symbol":"AMD","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-10-07","price":2.06,"reason":"97 Reddit mentions","source":"chatter","symbol":"HTZ","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-10-07","price":287.01,"reason":"47 Reddit mentions","source":"chatter","symbol":"MRVL","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-08","price":23.81,"reason":"146 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"APLD","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-08","price":5.89,"reason":"127 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"BULL","wrong_if":"Logged to measure chatter, not as a recommendation"}
