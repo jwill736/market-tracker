@@ -94,3 +94,6 @@
 {"data":{},"day":"2026-10-13","price":23.89,"reason":"screen grade 79/100 (quality, value, momentum, no dilution); quiet: 22 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"NVGS","wrong_if":"Insiders sell, or the screen grade falls below 50"}
 {"data":{},"day":"2026-10-13","price":1487.33,"reason":"86 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"SNDK","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-10-13","price":146.62,"reason":"39 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"CBRS","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-14","price":331.43,"reason":"38 Reddit mentions","source":"chatter","symbol":"JPM","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-14","price":341.27,"reason":"32 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"AAPL","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-14","price":4.42,"reason":"27 Reddit mentions","source":"chatter","symbol":"API","wrong_if":"Logged to measure chatter, not as a recommendation"}
