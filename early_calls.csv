@@ -594,3 +594,15 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-10-15,09:47,NOW,social,30.2,0,139.98,"Reddit mentions 25 in 24 h, up from 5; rank 42 → 31"
 2026-10-15,09:47,SOFI,social,30.5,0,14.22,"Reddit mentions 15 in 24 h, up from 1; rank 97 → 52"
 2026-10-15,09:47,VT,social,32.0,0,157.67,"Reddit mentions 17 in 24 h, up from 1; rank 433 → 46"
+2026-10-15,14:26,AAOI,social,51.0,1,78.94,"AAOI is drawing attention after a steep selloff, with traders pointing to a B. Riley price-target cut and a broader pullback in AI and optical stocks rather than a new company announcement. The commun"
+2026-10-15,14:26,ADBE,social,35.0,0,252.8,Trending on StockTwits
+2026-10-15,14:26,AMD,social,37.6,0,538.76,"Reddit mentions 69 in 24 h, up from 4"
+2026-10-15,14:26,AMZN,social,40.0,0,252.311,"Reddit mentions 31 in 24 h, up from 1; rank 39 → 28"
+2026-10-15,14:26,ARR,social,40.0,0,13.808,"Reddit mentions 55 in 24 h, up from 1; rank 58 → 17"
+2026-10-15,14:26,AUPH,social,35.0,0,17.09,Trending on StockTwits
+2026-10-15,14:26,FMC,social,35.0,0,5.33,Trending on StockTwits
+2026-10-15,14:26,INTC,social,42.6,0,92.44,Trending on StockTwits
+2026-10-15,14:26,SMCI,social,35.0,0,33.21,Trending on StockTwits
+2026-10-15,14:26,SOL-USD,"social,crypto",41.6,0,103.09,"Reddit mentions 6 in 24 h, up from 1; rank 55 → 4"
+2026-10-15,14:26,SPCX,social,44.6,0,145.3,Trending on StockTwits
+2026-10-15,14:26,VG,"social,filing",57.5,0,12.065,Venture Globals equipment agreements with GE Vernova and Baker Hughes to support up to 10 GW of off-grid power for AI data centers are drawing attention. Traders are divided between viewing the plan a
