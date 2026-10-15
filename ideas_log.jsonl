@@ -97,3 +97,6 @@
 {"data":{},"day":"2026-10-14","price":331.43,"reason":"38 Reddit mentions","source":"chatter","symbol":"JPM","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-10-14","price":341.27,"reason":"32 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"AAPL","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-10-14","price":4.42,"reason":"27 Reddit mentions","source":"chatter","symbol":"API","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-15","price":10.82,"reason":"screen grade 80/100 (quality, value, momentum, no dilution); quiet: 23 headlines this week, among the quietest third of these companies; Short sellers are active: 14% of shares sold short, 8.5 days of trading to cover (2026-09-30).","source":"sleeper","symbol":"AMCX","wrong_if":"Insiders sell, or the screen grade falls below 50"}
+{"data":{},"day":"2026-10-15","price":69.69,"reason":"175 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"CRWV","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-10-15","price":422.25,"reason":"99 Reddit mentions","source":"chatter","symbol":"TSM","wrong_if":"Logged to measure chatter, not as a recommendation"}
