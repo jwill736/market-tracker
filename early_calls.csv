@@ -572,3 +572,15 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-10-15,00:34,TLT,social,40.0,1,78.89,"Reddit mentions 41 in 24 h, up from 1; rank 479 → 19"
 2026-10-15,00:34,TSM,social,55.9,1,430.0,Trending on StockTwits
 2026-10-15,00:34,WMT,social,45.3,1,116.16,Trending on StockTwits
+2026-10-15,05:05,AAPL,social,41.4,1,342.96,"Apples relative strength near record highs while semiconductors and broader tech sold off is dominating discussion, with some traders calling it a defensive safe haven helping support indexes. Others "
+2026-10-15,05:05,ASML,social,39.5,0,1650.0,"Reddit mentions 66 in 24 h, up from 8; rank 32 → 12"
+2026-10-15,05:05,BE,social,42.8,1,239.34,Trending on StockTwits
+2026-10-15,05:05,BTC-USD,"social,crypto",46.2,0,81558.24,"Reddit mentions 87 in 24 h, up from 21"
+2026-10-15,05:05,CD,social,35.9,0,6.53,"Reddit mentions 19 in 24 h, up from 0; rank 622 → 41"
+2026-10-15,05:05,GLND,social,38.4,0,3.9,"Reddit mentions 23 in 24 h, up from 0; rank 0 → 32"
+2026-10-15,05:05,HOOD,social,37.5,0,101.08,"Reddit mentions 35 in 24 h, up from 3; rank 81 → 23"
+2026-10-15,05:05,MU,social,43.0,1,914.13,"Micron is caught in a broad memory-chip selloff as traders cite Chinas CXMT competition and a sharp South Korean market decline, alongside worries about AI valuations and interest rates. The community"
+2026-10-15,05:05,NVDA,social,49.7,1,221.3,"Nvidia is under pressure in a broader semiconductor and tech selloff, with hotter-than-expected inflation reviving concerns about Fed tightening and weakness in South Korean chip stocks weighing on th"
+2026-10-15,05:05,SGOV,social,35.9,0,100.54,"Reddit mentions 19 in 24 h, up from 0; rank 512 → 42"
+2026-10-15,05:05,SNDK,social,43.3,1,1403.34,"SanDisks steep selloff alongside memory and semiconductor peers is being linked to fears of Chinese memory competition and broader risk-off pressure on the AI trade, with Korean-market volatility and "
+2026-10-15,05:05,VOO,social,40.0,1,707.43,"Reddit mentions 59 in 24 h, up from 2; rank 31 → 14"
