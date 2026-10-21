@@ -53,3 +53,5 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-10-16,cluster,BORR,0001715497,Borr Drilling Ltd,"3 insiders, $49.7M",
 2026-10-19,big,APLD,0001144879,Applied Digital Corp.,Zhang Jason Gechen: $5.7M,
 2026-10-20,cluster,DX,0000826675,DYNEX CAPITAL INC,"3 insiders, $195,210",
+2026-10-21,13d,CIFR,0001819989,Cipher Digital Inc.,Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1819989/000110465926117904/0001104659-26-117904-index.htm
+2026-10-21,big,FBK,0001649749,FB Financial Corp,INGRAM ORRIN H II: $1.5M,
