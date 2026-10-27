@@ -56,4 +56,7 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-10-21,13d,CIFR,0001819989,Cipher Digital Inc.,Ken Griffin: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1819989/000110465926117904/0001104659-26-117904-index.htm
 2026-10-21,big,FBK,0001649749,FB Financial Corp,INGRAM ORRIN H II: $1.5M,
 2026-10-22,cluster,RAPP,0002012593,"Rapport Therapeutics, Inc.","5 insiders, $1.6M",
+2026-10-27,big,AIOK,0002095591,AI OKTO Corp.,Panagiotidis Petros Panagiotis: $1.1M,
+2026-10-27,big,MSM,0001003078,MSC INDUSTRIAL DIRECT CO INC,JACOBSON MITCHELL: $29.0M,
 2026-10-27,big,PLUR,0001158780,Pluri Inc.,Manieu Alexandre Weinstein: $1.3M,
+2026-10-27,cluster,STC,0000094344,STEWART INFORMATION SERVICES CORP,"5 insiders, $460,970",
