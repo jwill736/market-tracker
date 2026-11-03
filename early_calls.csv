@@ -1137,3 +1137,5 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-11-03,02:38,RAMP,filing,35.0,1,38.5,"Change in control (8-K): LiveRamp Holdings, Inc."
 2026-11-03,02:38,SOXL,social,30.5,1,68.17,"Reddit mentions 31 in 24 h, up from 7; rank 46 → 16"
 2026-11-03,02:38,UPST,social,31.1,1,21.31,"Upstart is facing a sharp selloff ahead of quarterly earnings, with traders citing a Bank of America downgrade and uncertainty over results and guidance; claims of an earnings leak or coordinated shor"
+2026-11-03,09:59,INTC,social,39.8,0,59.97,"Reddit mentions 73 in 24 h, up from 9; rank 20 → 7"
+2026-11-03,09:59,SNDK,social,35.0,1,1075.08,"SanDisks steep selloff despite strong results and an upbeat demand outlook has traders debating whether memory-sector weakness, including Kioxias cautious outlook, signals a peak in the AI-driven cycl"
