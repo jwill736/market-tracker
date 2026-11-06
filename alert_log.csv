@@ -80,5 +80,10 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-05,cluster,UPBD,0000933036,"UPBOUND GROUP, INC.","6 insiders, $1.3M",
 2026-11-06,13d,,0002122354,Third Point Private Capital Income Fund,Dan Loeb: SCHEDULE 13D,https://www.sec.gov/Archives/edgar/data/2122354/000089914026001217/0000899140-26-001217-index.htm
 2026-11-06,13d,,0002025369,Third Point Private Capital Partners,Dan Loeb: SCHEDULE 13D/A,https://www.sec.gov/Archives/edgar/data/2025369/000089914026001213/0000899140-26-001213-index.htm
+2026-11-06,13d,CVI,0001376139,CVR ENERGY INC,Carl Icahn: SCHEDULE 13D/A,https://www.sec.gov/Archives/edgar/data/1376139/000119312526451979/0001193125-26-451979-index.htm
+2026-11-06,13d,TEM,0001717115,"Tempus AI, Inc.",Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1717115/000110465926123788/0001104659-26-123788-index.htm
+2026-11-06,big,ANVS,0001477845,"Annovis Bio, Inc.",Hoffman Michael B: $5.0M,
+2026-11-06,big,CVS,0000064803,CVS HEALTH Corp,Shah Prem S: $2.0M,
+2026-11-06,big,KOD,0001468748,Kodiak Sciences Inc.,BAKER BROS. ADVISORS LP: $24.3M,
 2026-11-06,cluster,LKQ,0001065696,LKQ CORP,"3 insiders, $792,615",
 2026-11-06,cluster,PAM,0001469395,Pampa Energy Inc.,"3 insiders, $38.0M",
