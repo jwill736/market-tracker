@@ -99,4 +99,15 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-11,big,TXO,0001559432,"TXO Partners, L.P.",SIMPSON BOB R: $3.1M,
 2026-11-11,cluster,FUN,0001999001,Six Flags Entertainment Corporation/NEW,"3 insiders, $15.1M",
 2026-11-11,cluster,SLQT,0001794783,"SelectQuote, Inc.","5 insiders, $446,272",
+2026-11-12,13d,BOLT,0001641281,"Bolt Biotherapeutics, Inc.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1641281/000103738926000063/0001037389-26-000063-index.htm
+2026-11-12,13d,CMT,0001026655,CORE MOLDING TECHNOLOGIES INC,Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1026655/000103738926000064/0001037389-26-000064-index.htm
+2026-11-12,13d,GASS,0001328919,StealthGas Inc.,Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1328919/000103738926000065/0001037389-26-000065-index.htm
+2026-11-12,13d,MOMO,0001610601,Hello Group Inc.,Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1610601/000103738926000066/0001037389-26-000066-index.htm
+2026-11-12,13d,PETS,0001040130,PETMED EXPRESS INC,Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1040130/000103738926000067/0001037389-26-000067-index.htm
+2026-11-12,13d,RCMT,0000700841,"RCM TECHNOLOGIES, INC.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/700841/000103738926000068/0001037389-26-000068-index.htm
+2026-11-12,13d,SFIX,0001576942,"Stitch Fix, Inc.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1576942/000103738926000069/0001037389-26-000069-index.htm
+2026-11-12,13d,TLYS,0001524025,"TILLY'S, INC.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1524025/000103738926000070/0001037389-26-000070-index.htm
+2026-11-12,13d,WINA,0000908315,WINMARK CORP,Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/908315/000103738926000071/0001037389-26-000071-index.htm
+2026-11-12,13d,XBIO,0001534525,"Xenetic Biosciences, Inc.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1534525/000103738926000072/0001037389-26-000072-index.htm
+2026-11-12,big,TEAM,0001650372,Atlassian Corp,Cannon-Brookes Michael: $2.0M,
 2026-11-12,cluster,DOX,0001062579,AMDOCS LTD,"3 insiders, $287,997",
