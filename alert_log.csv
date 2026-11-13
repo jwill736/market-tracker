@@ -111,6 +111,14 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-12,13d,XBIO,0001534525,"Xenetic Biosciences, Inc.",Jim Simons (founder): SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1534525/000103738926000072/0001037389-26-000072-index.htm
 2026-11-12,big,TEAM,0001650372,Atlassian Corp,Cannon-Brookes Michael: $2.0M,
 2026-11-12,cluster,DOX,0001062579,AMDOCS LTD,"3 insiders, $287,997",
+2026-11-13,13d,ABSI,0001672688,Absci Corp,Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1672688/000110465926126821/0001104659-26-126821-index.htm
+2026-11-13,13d,BEAM,0001745999,Beam Therapeutics Inc.,Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1745999/000110465926126822/0001104659-26-126822-index.htm
+2026-11-13,13d,CERS,0001020214,CERUS CORP,Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1020214/000110465926126824/0001104659-26-126824-index.htm
+2026-11-13,13d,CRSP,0001674416,CRISPR Therapeutics AG,Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1674416/000110465926126825/0001104659-26-126825-index.htm
+2026-11-13,13d,PRME,0001894562,"Prime Medicine, Inc.",Cathie Wood: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/1894562/000110465926126830/0001104659-26-126830-index.htm
+2026-11-13,13d,PSNL,0001527753,"Personalis, Inc.",Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1527753/000110465926126828/0001104659-26-126828-index.htm
+2026-11-13,13d,RXRX,0001601830,"RECURSION PHARMACEUTICALS, INC.",Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1601830/000110465926126833/0001104659-26-126833-index.htm
+2026-11-13,13d,WGS,0001818331,GeneDx Holdings Corp.,Cathie Wood: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1818331/000110465926126827/0001104659-26-126827-index.htm
 2026-11-13,cluster,DTI,0001884516,Drilling Tools International Corp,"4 insiders, $270,103",
 2026-11-13,cluster,LRMR,0001374690,"Larimar Therapeutics, Inc.","6 insiders, $372,294",
 2026-11-13,cluster,MP,0001801368,MP Materials Corp. / DE,"3 insiders, $3.4M",
