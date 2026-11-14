@@ -125,3 +125,6 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-13,cluster,DTI,0001884516,Drilling Tools International Corp,"4 insiders, $270,103",
 2026-11-13,cluster,LRMR,0001374690,"Larimar Therapeutics, Inc.","6 insiders, $372,294",
 2026-11-13,cluster,MP,0001801368,MP Materials Corp. / DE,"3 insiders, $3.4M",
+2026-11-14,13d,CTRI,0001981599,"Centuri Holdings, Inc.",Carl Icahn: SCHEDULE 13D/A,https://www.sec.gov/Archives/edgar/data/1981599/000153949726002987/0001539497-26-002987-index.htm
+2026-11-14,big,IOND,0002007691,Ionic Digital Inc.,Abbate Michael: $1.3M,
+2026-11-14,big,STWD,0001465128,"STARWOOD PROPERTY TRUST, INC.",STERNLICHT BARRY S: $14.7M,
