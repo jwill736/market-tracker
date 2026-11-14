@@ -128,3 +128,7 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-14,13d,CTRI,0001981599,"Centuri Holdings, Inc.",Carl Icahn: SCHEDULE 13D/A,https://www.sec.gov/Archives/edgar/data/1981599/000153949726002987/0001539497-26-002987-index.htm
 2026-11-14,big,IOND,0002007691,Ionic Digital Inc.,Abbate Michael: $1.3M,
 2026-11-14,big,STWD,0001465128,"STARWOOD PROPERTY TRUST, INC.",STERNLICHT BARRY S: $14.7M,
+2026-11-14,cluster,BW,0001630805,"Babcock & Wilcox Enterprises, Inc.","3 insiders, $101,212",
+2026-11-14,cluster,HPP,0001482512,"Hudson Pacific Properties, Inc.","3 insiders, $897,734",
+2026-11-14,cluster,KGS,0001767042,"Kodiak Gas Services, Inc.","3 insiders, $544,115",
+2026-11-14,cluster,TRTX,0001630472,"TPG RE Finance Trust, Inc.","3 insiders, $379,549",
