@@ -132,3 +132,15 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-14,cluster,HPP,0001482512,"Hudson Pacific Properties, Inc.","3 insiders, $897,734",
 2026-11-14,cluster,KGS,0001767042,"Kodiak Gas Services, Inc.","3 insiders, $544,115",
 2026-11-14,cluster,TRTX,0001630472,"TPG RE Finance Trust, Inc.","3 insiders, $379,549",
+2026-11-17,13d,BAC,0000070858,BANK OF AMERICA CORP /DE/,Warren Buffett: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/70858/000119312526464211/0001193125-26-464211-index.htm
+2026-11-17,13d,BSP,0002004711,Bending Spoons S.p.A.,Warren Buffett: SCHEDULE 13G,https://www.sec.gov/Archives/edgar/data/2004711/000119312526464218/0001193125-26-464218-index.htm
+2026-11-17,13d,CBRS,0002021728,Cerebras Systems Inc.,Philippe Laffont: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/2021728/000091957426008160/0000919574-26-008160-index.htm
+2026-11-17,13d,DAL,0000027904,"DELTA AIR LINES, INC.",Warren Buffett: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/27904/000119312526464189/0001193125-26-464189-index.htm
+2026-11-17,13d,FPS,0002080126,"Forgent Power Solutions, Inc.",Philippe Laffont: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/2080126/000091957426008162/0000919574-26-008162-index.htm
+2026-11-17,13d,KR,0000056873,KROGER CO,Warren Buffett: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/56873/000119312526464214/0001193125-26-464214-index.htm
+2026-11-17,13d,TDSPRV,0001051512,TELEPHONE & DATA SYSTEMS INC /DE/,Dan Loeb: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1051512/000089914026001375/0000899140-26-001375-index.htm
+2026-11-17,13d,VRSN,0001014473,VERISIGN INC/CA,Warren Buffett: SCHEDULE 13G/A,https://www.sec.gov/Archives/edgar/data/1014473/000119312526464219/0001193125-26-464219-index.htm
+2026-11-17,big,BRSP,0001717547,"BrightSpire Capital, Inc.",Mazzei Michael: $1.0M,
+2026-11-17,big,KURA,0001422143,"Kura Oncology, Inc.",WILSON TROY EDWARD: $1.5M,
+2026-11-17,big,SKYD,0002041610,Skydance Corp,Cardinale Gerald J.: $1.0M,
+2026-11-17,cluster,ADIG,0002105139,ADI GLOBAL DISTRIBUTION INC.,"5 insiders, $325,603",
