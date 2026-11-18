@@ -149,3 +149,5 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-17,cluster,CSQR,0002105398,"Csquare, Inc.","4 insiders, $488,349",
 2026-11-17,cluster,KEEL,0001812477,Keel Infrastructure Corp.,"3 insiders, $154,520",
 2026-11-17,cluster,TH,0001712189,Target Hospitality Corp.,"3 insiders, $608,241",
+2026-11-18,13d,BRK-B,0001067983,BERKSHIRE HATHAWAY INC,Warren Buffett: SCHEDULE 13D/A,https://www.sec.gov/Archives/edgar/data/1067983/000119312526465884/0001193125-26-465884-index.htm
+2026-11-18,big,STUB,0001337634,"StubHub Holdings, Inc.",Raab Andrew John: $2.0M,
