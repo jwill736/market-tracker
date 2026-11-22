@@ -1632,3 +1632,5 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-11-22,00:52,MS,social,32.0,1,165.67,"Reddit mentions 38 in 24 h, up from 8; rank 97 → 11"
 2026-11-22,00:52,UTZ,filing,35.0,1,14.29,"Change in control (8-K): Utz Brands, Inc."
 2026-11-22,00:52,VVV-USD,crypto,30.5,1,25.0851,"Trending on CoinGecko searches (#2), +20.9% in 24 h"
+2026-11-22,10:38,BTC-USD,"social,crypto",56.2,1,60685.04,"Bitcoins sharp selloff and rebound after a wave of leveraged-position liquidations are driving attention, with traders split between calling a potential washout and warning that the bounce may fade. P"
+2026-11-22,10:38,ETH-USD,social,31.7,1,1706.98,"Ethereum is drawing attention amid a sharp crypto-wide selloff and volatile rebound, with traders split over whether the recovery marks a bottom or a temporary bounce before further declines. The disc"
