@@ -180,3 +180,8 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-20,cluster,TLSI,0001826667,"TriSalus Life Sciences, Inc.","3 insiders, $294,205",
 2026-11-21,cluster,CRMD,0001410098,CorMedix Inc.,"3 insiders, $536,100",
 2026-11-21,cluster,PICS,0001841644,PicS N.V.,"3 insiders, $556,660",
+2026-11-23,big,BORR,0001715497,Borr Drilling Ltd,Troim Tor Olav: $30.5M,
+2026-11-23,big,HOS,0000866829,"HORNBECK OFFSHORE SERVICES, INC.",HORNBECK TODD M: $1.0M,
+2026-11-23,cluster,GNL,0001526113,"Global Net Lease, Inc.","7 insiders, $636,281",
+2026-11-23,cluster,PCT,0001830033,"PureCycle Technologies, Inc.","3 insiders, $558,846",
+2026-11-23,cluster,TROX,0001530804,Tronox Holdings plc,"3 insiders, $140,114",
