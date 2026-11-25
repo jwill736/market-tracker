@@ -319,3 +319,6 @@
 {"data":{},"day":"2026-11-24","price":3.24,"reason":"Mazzei Michael (Director) bought $1.0M (not a yearly habit); quiet: 24 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"BRSP","wrong_if":"Insiders sell, or the screen grade falls below 50"}
 {"data":{},"day":"2026-11-24","price":19.76,"reason":"144 Reddit mentions","source":"chatter","symbol":"HR","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-11-24","price":48.02,"reason":"46 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"HPE","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-11-25","price":11.38,"reason":"3 insiders bought $18.7M (2026-11-11 to 2026-11-16) (not a yearly habit); quiet: 27 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"STWD","wrong_if":"Insiders sell, or the screen grade falls below 50"}
+{"data":{},"day":"2026-11-25","price":295.28,"reason":"148 Reddit mentions, trending on StockTwits","source":"chatter","symbol":"DELL","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-11-25","price":354.07,"reason":"93 Reddit mentions","source":"chatter","symbol":"AAPL","wrong_if":"Logged to measure chatter, not as a recommendation"}
