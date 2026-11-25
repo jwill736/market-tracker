@@ -198,4 +198,7 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-25,big,PLTR,0001321655,Palantir Technologies Inc.,THIEL PETER: $122.3M,
 2026-11-25,big,SNDA,0001043000,"SONIDA SENIOR LIVING, INC.",Simanovsky Michael: $5.0M,
 2026-11-25,cluster,ALT,0001326190,"Altimmune, Inc.","5 insiders, $110,731",
+2026-11-25,cluster,COHR,0000820318,COHERENT CORP.,"3 insiders, $16.4M",
+2026-11-25,cluster,KMT,0000055242,KENNAMETAL INC,"3 insiders, $322,508",
+2026-11-25,cluster,PRE,0001876431,Prenetics Global Ltd,"3 insiders, $1.3M",
 2026-11-25,cluster,UMH,0000752642,"UMH PROPERTIES, INC.","4 insiders, $131,093",
