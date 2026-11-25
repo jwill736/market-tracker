@@ -194,5 +194,8 @@ alerted,kind,symbol,issuer_cik,company,detail,url
 2026-11-24,cluster,ENOV,0001420800,Enovis CORP,"3 insiders, $298,035",
 2026-11-24,cluster,ETN,0001551182,Eaton Corp plc,"3 insiders, $316,223",
 2026-11-24,cluster,TMS,0002048951,Teamshares Inc,"3 insiders, $924,055",
+2026-11-25,big,KDK,0001853138,"Kodiak AI, Inc.",Burnette Donald L.: $2.2M,
 2026-11-25,big,PLTR,0001321655,Palantir Technologies Inc.,THIEL PETER: $122.3M,
 2026-11-25,big,SNDA,0001043000,"SONIDA SENIOR LIVING, INC.",Simanovsky Michael: $5.0M,
+2026-11-25,cluster,ALT,0001326190,"Altimmune, Inc.","5 insiders, $110,731",
+2026-11-25,cluster,UMH,0000752642,"UMH PROPERTIES, INC.","4 insiders, $131,093",
