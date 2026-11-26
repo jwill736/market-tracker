@@ -1718,3 +1718,6 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-11-26,05:28,SGOV,social,30.2,1,100.68,"Reddit mentions 38 in 24 h, up from 10; rank 59 → 21"
 2026-11-26,05:28,TLT,social,35.5,1,82.24,Trending on StockTwits
 2026-11-26,05:28,VTI,social,35.7,1,353.2,Trending on StockTwits
+2026-11-26,15:35,BTC-USD,"social,crypto",40.1,0,60396.7,"Reddit mentions 174 in 24 h, up from 109"
+2026-11-26,15:35,BYND,social,31.4,1,4.45,"Reddit mentions 19 in 24 h, up from 2; rank 133 → 28"
+2026-11-26,15:35,ZEC-USD,"social,crypto",35.9,1,691.65,"Zcash is drawing attention amid a sharp pullback from recent highs, with traders debating whether broader crypto weakness and leveraged-position unwinds are driving the decline or whether ZEC has lost"
