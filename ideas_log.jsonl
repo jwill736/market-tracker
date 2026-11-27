@@ -324,3 +324,4 @@
 {"data":{},"day":"2026-11-25","price":354.07,"reason":"93 Reddit mentions","source":"chatter","symbol":"AAPL","wrong_if":"Logged to measure chatter, not as a recommendation"}
 {"data":{},"day":"2026-11-26","price":8.23,"reason":"3 insiders bought $523,185 (2026-11-13 to 2026-11-19) (not a yearly habit); quiet: 28 headlines this week, among the quietest third of these companies","source":"sleeper","symbol":"CTVA","wrong_if":"Insiders sell, or the screen grade falls below 50"}
 {"data":{},"day":"2026-11-26","price":42.57,"reason":"41 Reddit mentions","source":"chatter","symbol":"CRWV","wrong_if":"Logged to measure chatter, not as a recommendation"}
+{"data":{},"day":"2026-11-27","price":137.76,"reason":"28 Reddit mentions","source":"chatter","symbol":"DTE","wrong_if":"Logged to measure chatter, not as a recommendation"}
