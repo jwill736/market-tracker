@@ -1732,3 +1732,5 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-11-28,00:23,PS,social,36.6,1,33.35,"Reddit mentions 37 in 24 h, up from 4; rank 79 → 10"
 2026-11-28,00:23,SAP,social,35.9,0,213.65,"Reddit mentions 19 in 24 h, up from 0; rank 0 → 20"
 2026-11-28,00:23,TSLA,social,33.1,1,400.0,"Reddit mentions 48 in 24 h, up from 10; rank 23 → 6"
+2026-11-28,05:57,CFG-USD,crypto,33.7,1,0.0643,"Trending on CoinGecko searches (#2), +27.4% in 24 h"
+2026-11-28,05:57,WLFI-USD,"social,crypto",62.5,1,0.02119,"WLFI is drawing attention after a steep selloff, with traders debating whether heavy token or insider selling and alleged trading-access problems contributed; some call it a Trump-linked scam, while b"
