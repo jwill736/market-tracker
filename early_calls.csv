@@ -1734,3 +1734,8 @@ day,time,symbol,kinds,strength,early,price,headline
 2026-11-28,00:23,TSLA,social,33.1,1,400.0,"Reddit mentions 48 in 24 h, up from 10; rank 23 → 6"
 2026-11-28,05:57,CFG-USD,crypto,33.7,1,0.0643,"Trending on CoinGecko searches (#2), +27.4% in 24 h"
 2026-11-28,05:57,WLFI-USD,"social,crypto",62.5,1,0.02119,"WLFI is drawing attention after a steep selloff, with traders debating whether heavy token or insider selling and alleged trading-access problems contributed; some call it a Trump-linked scam, while b"
+2026-11-28,15:11,BTC-USD,"social,crypto",38.3,0,59292.77,"Reddit mentions 129 in 24 h, up from 79"
+2026-11-28,15:11,EU,"social,filing",48.2,1,0.5406,"Reddit mentions 15 in 24 h, up from 4; rank 40 → 20"
+2026-11-28,15:11,MS,social,30.0,0,170.88,"Reddit mentions 17 in 24 h, up from 2; rank 80 → 16"
+2026-11-28,15:11,NP,social,30.7,1,28.51,"Reddit mentions 18 in 24 h, up from 2; rank 120 → 15"
+2026-11-28,15:11,TRUMP-USD,"social,crypto",57.9,1,0.7415,"Discussion centers on the TRUMP memecoin's steep slide below $1 and repeated new lows around the Trump-holder gala: some traders had expected the event to spark a rally, while many say the selloff con"
